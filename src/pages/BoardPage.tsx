@@ -6,27 +6,47 @@ import {
   themeQuartz,
   type ColDef,
   type ICellRendererParams,
-  type ValueFormatterParams,
   type CellValueChangedEvent,
 } from "ag-grid-community";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
-import {
-  STAGES,
-  currentStageIdx,
-  currentVanCode,
-  isVanCode,
-  nextVanCode,
-  prevVanCode,
-  vanRange,
-} from "@contracts/vans";
+import { isVanCode, nextVanCode } from "@contracts/vans";
 import type { Member, PoolItem, Task } from "@db/schema";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
-const POOL_TYPE_LABEL: Record<PoolItem["type"], string> = {
-  epic: "Epic",
-  ready: "可装车",
+/** 委托稀有度（六级），颜色只是标记不做筛选 */
+const RARITIES = [
+  "common",
+  "uncommon",
+  "rare",
+  "epic",
+  "legendary",
+  "mythic",
+] as const;
+type Rarity = (typeof RARITIES)[number];
+const RARITY_LABEL: Record<Rarity, string> = {
+  common: "普通",
+  uncommon: "优秀",
+  rare: "稀有",
+  epic: "史诗",
+  legendary: "传说",
+  mythic: "神话",
+};
+/** 稀有度文字着色；神话为彩虹渐变流动动画（见 index.css） */
+const RARITY_CLASS: Record<Rarity, string> = {
+  common: "",
+  uncommon: "text-green-600",
+  rare: "text-blue-600",
+  epic: "text-purple-600",
+  legendary: "text-orange-500",
+  mythic: "rarity-mythic-text",
+};
+/** pool.list 返回的委托条目：postedRounds 是服务端推导的挂账轮数，不在表里 */
+type PoolRow = PoolItem & {
+  rarity: Rarity;
+  postedVan: string | null;
+  postedRounds: number;
 };
 const POOL_STATUS_LABEL: Record<PoolItem["status"], string> = {
   open: "待切片",
@@ -38,37 +58,60 @@ const POOL_STATUS_LABEL: Record<PoolItem["status"], string> = {
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export default function BoardPage() {
-  const [van, setVan] = useState(currentVanCode());
+  // 班次由「发新车」创建；van 是用户显式选中的班次，null = 未手动选过
+  const [van, setVan] = useState<string | null>(null);
   const utils = trpc.useUtils();
 
-  const tasksQ = trpc.van.tasks.byVan.useQuery({ van });
-  const statsQ = trpc.van.stats.byVan.useQuery({ van });
+  const vansQ = trpc.van.vans.list.useQuery();
+
+  const vans = useMemo(() => vansQ.data ?? [], [vansQ.data]);
+  // 渲染期派生当前班次：显式选中失效（含初始 null）时回退到最新一班，
+  // 不写回 state，避免 effect 内 setState 造成级联渲染
+  const curVan = van !== null && vans.includes(van) ? van : (vans[0] ?? null);
+
+  const tasksQ = trpc.van.tasks.byVan.useQuery(
+    { van: curVan ?? "" },
+    { enabled: curVan !== null },
+  );
+  const statsQ = trpc.van.stats.byVan.useQuery(
+    { van: curVan ?? "" },
+    { enabled: curVan !== null },
+  );
   const poolQ = trpc.van.pool.list.useQuery();
   const membersQ = trpc.van.members.list.useQuery();
-  const vansQ = trpc.van.tasks.vans.useQuery();
 
   const tasks = useMemo(() => tasksQ.data ?? [], [tasksQ.data]);
   const pool = useMemo(() => poolQ.data ?? [], [poolQ.data]);
   const members = useMemo(() => membersQ.data ?? [], [membersQ.data]);
   const stats = statsQ.data;
 
-  // 班次快速跳转：历史班次列表，且始终包含当前班次
-  const vanOptions = useMemo(() => {
-    const list = vansQ.data ?? [];
-    return list.includes(van) ? list : [van, ...list];
-  }, [vansQ.data, van]);
+  // 班次列表最新在前：‹ 往旧（索引 +1），› 往新（索引 -1）
+  const vanIdx = curVan === null ? -1 : vans.indexOf(curVan);
 
   const refresh = () => utils.invalidate();
   const onError = (e: { message: string }) => toast.error(e.message);
 
   // 任一查询失败时显示错误横幅，不再静默回退空数组（避免误导性空态）
-  const failedQ = [tasksQ, statsQ, poolQ, membersQ].find((q) => q.isError);
+  const failedQ = [tasksQ, statsQ, poolQ, membersQ, vansQ].find(
+    (q) => q.isError,
+  );
   const refetchAll = () => {
     tasksQ.refetch();
     statsQ.refetch();
     poolQ.refetch();
     membersQ.refetch();
+    vansQ.refetch();
   };
+
+  // 发新车：表空时创建当月首班，否则字母 +1；成功后选中新班次
+  const dispatchM = trpc.van.vans.dispatch.useMutation({
+    onSuccess: (list) => {
+      setVan(list[0] ?? null);
+      toast.success(`新班车 ${list[0]} 已发出`);
+      refresh();
+    },
+    onError,
+  });
 
   const updateTaskM = trpc.van.tasks.update.useMutation({
     onSuccess: refresh,
@@ -129,23 +172,23 @@ export default function BoardPage() {
         width: 170,
         editable: true,
         cellEditor: "agSelectCellEditor",
-        // 选项显示「id 标题」而非裸 id，选中后由 valueParser 解析回 id；
-        // Epic 需切片后才能装车，不进选项；「（无）」表示解除关联
+        // 选项显示「id 标题」而非裸 id，选中后由 valueParser 解析回 id；「（无）」表示解除关联
         cellEditorParams: {
-          values: [
-            "（无）",
-            ...pool
-              .filter((p) => p.type !== "epic")
-              .map((p) => `${p.id} ${p.title}`),
-          ],
+          values: ["（无）", ...pool.map((p) => `${p.id} ${p.title}`)],
         },
         valueParser: (p) => {
           if (p.newValue === "（无）") return null;
           const id = Number(String(p.newValue).split(" ")[0]);
           return Number.isInteger(id) && id > 0 ? id : null;
         },
-        valueFormatter: (p: ValueFormatterParams<Task>) =>
-          pool.find((x) => x.id === p.value)?.title ?? "",
+        // 委托标题按稀有度着色（从大厅列表查 rarity）
+        cellRenderer: (p: ICellRendererParams<Task>) => {
+          const item = pool.find((x) => x.id === p.value);
+          if (!item) return null;
+          return (
+            <span className={RARITY_CLASS[item.rarity]}>{item.title}</span>
+          );
+        },
       },
       {
         field: "ownerName",
@@ -233,58 +276,61 @@ export default function BoardPage() {
     >[0]);
   };
 
-  const nextVan = nextVanCode(van);
-  const activeStages = currentStageIdx();
-
   return (
     <div className="mx-auto max-w-[1400px] px-6 py-5">
-      {/* ── 头部：班次导航 + 阶段 ── */}
+      {/* ── 头部：班次导航 + 发新车 ── */}
       <header className="mb-4 flex flex-wrap items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <span className="led led-blue" />
           <h1 className="text-lg font-bold tracking-wide">快递发车台</h1>
-          <div className="flex items-center gap-1 rounded-md border border-border bg-card px-1 py-0.5">
-            <button
-              className="px-2 text-gray-400 hover:text-foreground"
-              onClick={() => setVan(prevVanCode(van))}
-            >
-              ‹
-            </button>
-            <span className="px-1 font-mono text-sm font-bold">{van}</span>
-            <button
-              className="px-2 text-gray-400 hover:text-foreground"
-              onClick={() => setVan(nextVan)}
-            >
-              ›
-            </button>
-            <select
-              className="ml-1 rounded border border-border bg-background px-1 py-0.5 font-mono text-xs"
-              value={van}
-              onChange={(e) => setVan(e.target.value)}
-              title="快速跳转到指定班次"
-            >
-              {vanOptions.map((v) => (
-                <option key={v} value={v}>
-                  {v}
-                </option>
-              ))}
-            </select>
-          </div>
-          <span className="text-xs text-muted-foreground">
-            {vanRange(van)}（周一至周五）
-          </span>
-        </div>
-        <div className="flex items-center gap-4">
-          {STAGES.map((s, i) => (
-            <div
-              key={s.name}
-              className={`flex items-center gap-1.5 ${activeStages.includes(i) ? "stage-active" : ""}`}
-            >
-              <span className="stage-dot">{i + 1}</span>
-              <span className="stage-name">{s.name}</span>
+          {vansQ.data !== undefined && vans.length === 0 ? (
+            <span className="text-sm text-muted-foreground">
+              还没有班车，点右侧「发新车」
+            </span>
+          ) : (
+            <div className="flex items-center gap-1 rounded-md border border-border bg-card px-1 py-0.5">
+              <button
+                className="px-2 text-gray-400 hover:text-foreground disabled:opacity-30"
+                disabled={vanIdx < 0 || vanIdx >= vans.length - 1}
+                onClick={() => setVan(vans[vanIdx + 1])}
+              >
+                ‹
+              </button>
+              <span className="px-1 font-mono text-sm font-bold">
+                {curVan ?? "——"}
+              </span>
+              <button
+                className="px-2 text-gray-400 hover:text-foreground disabled:opacity-30"
+                disabled={vanIdx <= 0}
+                onClick={() => setVan(vans[vanIdx - 1])}
+              >
+                ›
+              </button>
+              {curVan !== null && (
+                <select
+                  className="ml-1 rounded border border-border bg-background px-1 py-0.5 font-mono text-xs"
+                  value={curVan}
+                  onChange={(e) => setVan(e.target.value)}
+                  title="快速跳转到指定班次"
+                >
+                  {vans.map((v) => (
+                    <option key={v} value={v}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              )}
             </div>
-          ))}
+          )}
         </div>
+        <button
+          className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-40"
+          disabled={dispatchM.isPending}
+          title="发一班新车（当月字母序号 +1）"
+          onClick={() => dispatchM.mutate({})}
+        >
+          发新车
+        </button>
       </header>
 
       {/* ── 加载失败横幅（含重试） ── */}
@@ -327,24 +373,53 @@ export default function BoardPage() {
           value={stats ? `${stats.reviewNeeded} 个` : "–"}
           tone={stats && stats.reviewNeeded > 0 ? "warn" : undefined}
         />
+        {/* 稀有度构成：done/total，按稀有度色着色（无关联委托的任务不计入） */}
+        <div>
+          <div className="label-caps">稀有度构成</div>
+          <div className="text-base font-bold">
+            {stats && stats.rarity.length > 0
+              ? stats.rarity.map((r, i) => (
+                  <span
+                    key={r.rarity}
+                    className={RARITY_CLASS[r.rarity as Rarity] ?? ""}
+                  >
+                    {i > 0 && (
+                      <span className="text-muted-foreground"> · </span>
+                    )}
+                    {RARITY_LABEL[r.rarity as Rarity] ?? r.rarity} {r.done}/
+                    {r.total}
+                  </span>
+                ))
+              : "–"}
+          </div>
+        </div>
         <div className="ml-auto flex items-center gap-2">
           <button
-            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent"
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-40"
+            disabled={curVan === null}
             onClick={() =>
-              addTaskM.mutate({ van, title: "新快件（双击单元格编辑）" })
+              curVan !== null &&
+              addTaskM.mutate({
+                van: curVan,
+                title: "新快件（双击单元格编辑）",
+              })
             }
           >
             ＋ 装车
           </button>
           <button
-            className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90"
+            className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-40"
+            disabled={curVan === null}
             onClick={() => {
-              if (window.confirm(`把 ${van} 的滞留件转到 ${nextVan}？`)) {
-                carryM.mutate({ fromVan: van, toVan: nextVan });
+              // 目标班次固定为编码 +1；若尚未发新车，服务端会顺带创建
+              if (curVan === null) return;
+              const toVan = nextVanCode(curVan);
+              if (window.confirm(`把 ${curVan} 的滞留件转到下一班车？`)) {
+                carryM.mutate({ fromVan: curVan, toVan });
               }
             }}
           >
-            滞留件转下一班 → {nextVan}
+            滞留件转下一班
           </button>
         </div>
       </div>
@@ -369,7 +444,7 @@ export default function BoardPage() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         {/* ── 表 1：任务大厅 ── */}
-        <PoolPanel pool={pool} van={van} onChanged={refresh} />
+        <PoolPanel pool={pool} van={curVan} onChanged={refresh} />
         {/* ── 表 3：成员运力速览 ── */}
         <MembersPanel
           members={members}
@@ -402,25 +477,26 @@ function Stat({
   );
 }
 
-/* ── 任务大厅面板（PM 维护，周四下班前写入） ── */
+/* ── 任务大厅面板（PM 维护委托，可接取到当前班次） ── */
 function PoolPanel({
   pool,
   van,
   onChanged,
 }: {
-  pool: PoolItem[];
-  van: string;
+  pool: PoolRow[];
+  van: string | null;
   onChanged: () => void;
 }) {
   const [title, setTitle] = useState("");
-  const [type, setType] = useState<PoolItem["type"]>("ready");
+  const [rarity, setRarity] = useState<Rarity>("common");
   const [targetVan, setTargetVan] = useState("");
   // 行内编辑中的委托草稿，null 表示没有行处于编辑态
   const [editing, setEditing] = useState<{
     id: number;
     title: string;
+    rarity: Rarity;
     targetVan: string;
-    status: PoolItem["status"];
+    status: PoolRow["status"];
     note: string;
   } | null>(null);
   const onError = (e: { message: string }) => toast.error(e.message);
@@ -443,6 +519,14 @@ function PoolPanel({
     onSuccess: onChanged,
     onError,
   });
+  // 接取：以委托标题 + poolItemId 在当前选中班次创建任务
+  const takeM = trpc.van.tasks.add.useMutation({
+    onSuccess: () => {
+      toast.success("已接取，双击行内编辑指派负责人和档位");
+      onChanged();
+    },
+    onError,
+  });
 
   const targetVanInvalid = targetVan !== "" && !isVanCode(targetVan);
   const editingVanInvalid =
@@ -455,6 +539,7 @@ function PoolPanel({
     updateM.mutate({
       id: editing.id,
       title: editing.title.trim(),
+      rarity: editing.rarity,
       status: editing.status,
       targetVan: editing.targetVan === "" ? null : editing.targetVan,
       note: editing.note === "" ? null : editing.note,
@@ -466,7 +551,7 @@ function PoolPanel({
       <h2 className="mb-3 text-sm font-bold">
         任务大厅{" "}
         <span className="text-xs font-normal text-muted-foreground">
-          （Epic 需切片后才能装车）
+          （稀有度只是标记，凭直觉定级）
         </span>
       </h2>
       <div className="mb-3">
@@ -479,15 +564,19 @@ function PoolPanel({
           />
           <select
             className="rounded-md border border-input bg-background px-2 py-1.5 text-sm"
-            value={type}
-            onChange={(e) => setType(e.target.value as PoolItem["type"])}
+            value={rarity}
+            onChange={(e) => setRarity(e.target.value as Rarity)}
+            title="委托稀有度"
           >
-            <option value="ready">可装车</option>
-            <option value="epic">Epic</option>
+            {RARITIES.map((r) => (
+              <option key={r} value={r}>
+                {RARITY_LABEL[r]}
+              </option>
+            ))}
           </select>
           <input
             className="w-24 rounded-md border border-input bg-background px-2 py-1.5 font-mono text-sm"
-            placeholder={van}
+            placeholder={van ?? "目标班次"}
             value={targetVan}
             onChange={(e) => setTargetVan(e.target.value.toUpperCase())}
           />
@@ -498,7 +587,7 @@ function PoolPanel({
             onClick={() =>
               addM.mutate({
                 title: title.trim(),
-                type,
+                rarity,
                 targetVan: targetVan || undefined,
               })
             }
@@ -528,6 +617,23 @@ function PoolPanel({
                   }
                   placeholder="委托名称"
                 />
+                <select
+                  className="rounded-md border border-input bg-background px-2 py-1 text-sm"
+                  value={editing.rarity}
+                  onChange={(e) =>
+                    setEditing({
+                      ...editing,
+                      rarity: e.target.value as Rarity,
+                    })
+                  }
+                  title="委托稀有度"
+                >
+                  {RARITIES.map((r) => (
+                    <option key={r} value={r}>
+                      {RARITY_LABEL[r]}
+                    </option>
+                  ))}
+                </select>
                 <input
                   className="w-24 rounded-md border border-input bg-background px-2 py-1 font-mono text-sm"
                   value={editing.targetVan}
@@ -537,7 +643,7 @@ function PoolPanel({
                       targetVan: e.target.value.toUpperCase(),
                     })
                   }
-                  placeholder={van}
+                  placeholder={van ?? "目标班次"}
                 />
                 <select
                   className="rounded-md border border-input bg-background px-2 py-1 text-sm"
@@ -586,12 +692,17 @@ function PoolPanel({
             </li>
           ) : (
             <li key={p.id} className="flex items-center gap-2 text-sm">
-              <span
-                className={`status-badge ${p.type === "epic" ? "status-doing" : "status-todo"}`}
-              >
-                {POOL_TYPE_LABEL[p.type]}
+              <span className={`flex-1 truncate ${RARITY_CLASS[p.rarity]}`}>
+                {p.title}
               </span>
-              <span className="flex-1 truncate">{p.title}</span>
+              {p.status === "open" && p.postedRounds > 0 && (
+                <span
+                  className="text-xs text-amber-600"
+                  title={`挂出于 ${p.postedVan ?? "未知班次"}`}
+                >
+                  挂 {p.postedRounds} 轮
+                </span>
+              )}
               {p.targetVan && (
                 <span className="font-mono text-xs text-muted-foreground">
                   {p.targetVan}
@@ -601,11 +712,23 @@ function PoolPanel({
                 {POOL_STATUS_LABEL[p.status]}
               </span>
               <button
+                className="text-xs text-gray-400 hover:text-foreground disabled:opacity-40"
+                disabled={van === null}
+                title={van === null ? "请先发新车" : `接取到 ${van}`}
+                onClick={() =>
+                  van !== null &&
+                  takeM.mutate({ van, title: p.title, poolItemId: p.id })
+                }
+              >
+                接取
+              </button>
+              <button
                 className="text-xs text-gray-400 hover:text-foreground"
                 onClick={() =>
                   setEditing({
                     id: p.id,
                     title: p.title,
+                    rarity: p.rarity,
                     targetVan: p.targetVan ?? "",
                     status: p.status,
                     note: p.note ?? "",

@@ -12,18 +12,37 @@ export const members = sqliteTable("members", {
     .default(sql`(unixepoch())`),
 });
 
-/** 需求池：PM 维护，Epic 需切片后才能上车 */
+/** 班次：由「发新车」动作手动创建，code 即班次编码（如 DV2607A） */
+export const vans = sqliteTable("vans", {
+  code: text("code").primaryKey(),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/** 委托稀有度：普通 / 优秀 / 稀有 / 史诗 / 传说 / 神话 */
+export const RARITIES = [
+  "common",
+  "uncommon",
+  "rare",
+  "epic",
+  "legendary",
+  "mythic",
+] as const;
+export type Rarity = (typeof RARITIES)[number];
+
+/** 任务大厅：PM 维护的委托；稀有度仅作标记（颜色），不做任何上车拦截 */
 export const poolItems = sqliteTable("pool_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   title: text("title").notNull(),
-  type: text("type", { enum: ["epic", "ready"] })
-    .notNull()
-    .default("ready"),
+  rarity: text("rarity", { enum: RARITIES }).notNull().default("common"),
   status: text("status", { enum: ["open", "scheduled", "done"] })
     .notNull()
     .default("open"),
-  /** 目标班次：PM 期望上车的周次，仅意向（如 DV2607A） */
+  /** 目标班次：PM 期望上车的班次，仅意向（如 DV2607A） */
   targetVan: text("target_van"),
+  /** 挂出时的班次（录入时填当时最新班次，表空则为 null） */
+  postedVan: text("posted_van"),
   note: text("note"),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()
@@ -64,5 +83,6 @@ export const tasks = sqliteTable(
 );
 
 export type Member = typeof members.$inferSelect;
+export type Van = typeof vans.$inferSelect;
 export type PoolItem = typeof poolItems.$inferSelect;
 export type Task = typeof tasks.$inferSelect;

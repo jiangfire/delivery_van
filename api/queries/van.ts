@@ -1,8 +1,16 @@
 import { and, asc, desc, eq, ne } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "./connection";
-import { members, poolItems, tasks, type Task } from "../../db/schema";
-import { nextVanCode, todayStr } from "../../contracts/vans";
+import {
+  members,
+  poolItems,
+  tasks,
+  vans,
+  RARITIES,
+  type PoolItem,
+  type Task,
+} from "../../db/schema";
+import { firstVanCodeOf, nextVanCode, todayStr } from "../../contracts/vans";
 
 /* ── 纯函数（无库可测） ── */
 
@@ -55,6 +63,54 @@ export function toStrandedTask(
     doneAt: null,
     note: task.note,
   };
+}
+
+/**
+ * 稀有度分桶：把任务按所属委托的稀有度聚合为 { rarity, total, done } 列表。
+ * 无关联委托（poolItemId 为空或委托不存在）的任务不计入；
+ * 只返回有任务的桶，顺序按 RARITIES 定义。
+ */
+export function rarityStatsOf(
+  rows: Pick<Task, "poolItemId" | "status">[],
+  rarityById: ReadonlyMap<number, PoolItem["rarity"]>,
+): { rarity: PoolItem["rarity"]; total: number; done: number }[] {
+  const buckets = new Map<
+    PoolItem["rarity"],
+    { total: number; done: number }
+  >();
+  for (const t of rows) {
+    if (t.poolItemId === null) continue;
+    const rarity = rarityById.get(t.poolItemId);
+    if (!rarity) continue;
+    const b = buckets.get(rarity) ?? { total: 0, done: 0 };
+    b.total += 1;
+    if (t.status === "done") b.done += 1;
+    buckets.set(rarity, b);
+  }
+  return RARITIES.filter((r) => buckets.has(r)).map((r) => ({
+    rarity: r,
+    ...buckets.get(r)!,
+  }));
+}
+
+/* ── 班次（手动发新车，不再绑定周五） ── */
+
+/** 全部班次编码（最新在前），来自 vans 表 */
+export async function listVans(): Promise<string[]> {
+  const rows = await getDb()
+    .select({ code: vans.code })
+    .from(vans)
+    .orderBy(desc(vans.code));
+  return rows.map((r) => r.code);
+}
+
+/** 发新车：表空时建当月首班车，否则在最新班次基础上 +1；返回最新列表 */
+export async function dispatchVan(): Promise<string[]> {
+  const list = await listVans();
+  const code =
+    list.length === 0 ? firstVanCodeOf(new Date()) : nextVanCode(list[0]);
+  await getDb().insert(vans).values({ code });
+  return listVans();
 }
 
 /* ── 成员 ── */
@@ -113,26 +169,49 @@ export async function updateMemberCapacity(id: number, capacity: number) {
   return listMembers();
 }
 
-/* ── 需求池 ── */
+/* ── 任务大厅（委托池） ── */
 
-export async function listPoolItems() {
-  return getDb().select().from(poolItems).orderBy(desc(poolItems.id));
+export type PoolItemWithRounds = PoolItem & { postedRounds: number };
+
+export async function listPoolItems(): Promise<PoolItemWithRounds[]> {
+  const db = getDb();
+  const items = await db.select().from(poolItems).orderBy(desc(poolItems.id));
+  // 挂账轮数 = 晚于 posted_van 创建的班次数；按 created_at 升序定位后取尾部数量
+  const vanRows = await db
+    .select({ code: vans.code })
+    .from(vans)
+    .orderBy(asc(vans.createdAt));
+  return items.map((item) => {
+    let postedRounds = 0;
+    if (item.status === "open" && item.postedVan !== null) {
+      const idx = vanRows.findIndex((v) => v.code === item.postedVan);
+      // posted_van 不在 vans 表中（脏数据）时按 0 处理
+      if (idx >= 0) postedRounds = vanRows.length - idx - 1;
+    }
+    return { ...item, postedRounds };
+  });
 }
 
 export async function addPoolItem(input: {
   title: string;
-  type: "epic" | "ready";
+  rarity: PoolItem["rarity"];
   targetVan?: string | null;
   note?: string;
 }) {
-  await getDb()
-    .insert(poolItems)
-    .values({
-      title: input.title,
-      type: input.type,
-      targetVan: input.targetVan ?? null,
-      note: input.note ?? null,
-    });
+  const db = getDb();
+  // 挂出时记当时最新班次（还没有班车则为 null），用于挂账轮数统计
+  const latest = await db
+    .select({ code: vans.code })
+    .from(vans)
+    .orderBy(desc(vans.code))
+    .limit(1);
+  await db.insert(poolItems).values({
+    title: input.title,
+    rarity: input.rarity,
+    targetVan: input.targetVan ?? null,
+    postedVan: latest[0]?.code ?? null,
+    note: input.note ?? null,
+  });
   return listPoolItems();
 }
 
@@ -140,7 +219,7 @@ export async function updatePoolItem(
   id: number,
   patch: Partial<{
     title: string;
-    type: "epic" | "ready";
+    rarity: PoolItem["rarity"];
     status: "open" | "scheduled" | "done";
     targetVan: string | null;
     note: string | null;
@@ -177,20 +256,6 @@ async function syncPoolStatus(
     .where(eq(poolItems.id, poolItemId));
 }
 
-/** Epic 委托不可直接装车，需先切片为 ready 委托（抛错时任务不落库） */
-async function assertNotEpic(db: ReturnType<typeof getDb>, poolItemId: number) {
-  const [item] = await db
-    .select({ type: poolItems.type })
-    .from(poolItems)
-    .where(eq(poolItems.id, poolItemId));
-  if (item?.type === "epic") {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "Epic 委托需切片后才能装车",
-    });
-  }
-}
-
 /* ── 任务 ── */
 
 export async function listTasksByVan(van: string) {
@@ -199,15 +264,6 @@ export async function listTasksByVan(van: string) {
     .from(tasks)
     .where(eq(tasks.vanCode, van))
     .orderBy(asc(tasks.id));
-}
-
-/** 出现过的所有班次（新→旧），用于前端切换 */
-export async function listVans() {
-  const rows = await getDb()
-    .selectDistinct({ vanCode: tasks.vanCode })
-    .from(tasks)
-    .orderBy(desc(tasks.vanCode));
-  return rows.map((r) => r.vanCode);
 }
 
 /** 计算某负责人在该班次已占用的档位合计（可排除某个任务自身） */
@@ -256,7 +312,6 @@ export async function addTask(input: {
 }) {
   await checkCapacity(input.van, input.ownerName, input.size);
   const db = getDb();
-  if (input.poolItemId) await assertNotEpic(db, input.poolItemId);
   await db.insert(tasks).values({
     vanCode: input.van,
     title: input.title,
@@ -296,12 +351,9 @@ export async function updateTask(
     await checkCapacity(current.vanCode, owner, size as 1 | 3 | 5 | null, id);
   }
 
-  // 换委托：新委托不能是 Epic
+  // 换委托：记录是否变更，供下方同步新旧委托状态
   const poolChanged =
     patch.poolItemId !== undefined && patch.poolItemId !== current.poolItemId;
-  if (poolChanged && patch.poolItemId != null) {
-    await assertNotEpic(db, patch.poolItemId);
-  }
 
   // 完成日期：打勾时随手填的自动化——置完成且无日期时记今天，取消完成则清空
   if (patch.status === "done" && patch.doneAt === undefined) {
@@ -370,6 +422,17 @@ export async function carryOver(fromVan: string, toVan: string) {
       });
     }
 
+    // 目标班次尚未发出时顺带创建：发新车与结转一步完成
+    const vanExists = tx
+      .select({ code: vans.code })
+      .from(vans)
+      .where(eq(vans.code, toVan))
+      .limit(1)
+      .all();
+    if (vanExists.length === 0) {
+      tx.insert(vans).values({ code: toVan }).run();
+    }
+
     const unfinished = tx
       .select()
       .from(tasks)
@@ -393,6 +456,12 @@ export async function weeklyStats(van: string) {
   const carriedIn = rows.filter((t) => t.carriedFrom !== null).length;
   const reviewNeeded = rows.filter((t) => t.carryCount >= 2).length;
 
+  // 稀有度分桶：任务 → 所属委托稀有度（无关联委托的任务不计入）
+  const poolRows = await getDb()
+    .select({ id: poolItems.id, rarity: poolItems.rarity })
+    .from(poolItems);
+  const rarityById = new Map(poolRows.map((r) => [r.id, r.rarity]));
+
   const memberRows = await listMembers();
   const byMember = memberRows.map((m) => {
     const mine = rows.filter((t) => t.ownerName === m.name);
@@ -415,6 +484,7 @@ export async function weeklyStats(van: string) {
     reviewNeeded,
     completionRate: total === 0 ? null : done / total,
     carryRate: total === 0 ? null : carriedIn / total,
+    rarity: rarityStatsOf(rows, rarityById),
     members: byMember,
   };
 }

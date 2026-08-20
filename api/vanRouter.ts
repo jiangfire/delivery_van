@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { createRouter, publicQuery } from "./middleware";
 import { VAN_CODE_RE } from "../contracts/vans";
+import { RARITIES } from "../db/schema";
 import {
   addMember,
   addPoolItem,
   addTask,
   carryOver,
+  dispatchVan,
   listMembers,
   listPoolItems,
   listTasksByVan,
@@ -23,8 +25,17 @@ const vanCode = z
   .regex(VAN_CODE_RE, "班次编码格式应为 DV2607A（年+月+当月第几班）");
 const sizeTier = z.union([z.literal(1), z.literal(3), z.literal(5)]);
 const idField = z.number().int().positive();
+const rarity = z.enum(RARITIES);
 
 export const vanRouter = createRouter({
+  /* ── 班次（手动发新车） ── */
+  vans: createRouter({
+    list: publicQuery.query(() => listVans()),
+    dispatch: publicQuery
+      .input(z.object({}).optional())
+      .mutation(() => dispatchVan()),
+  }),
+
   /* ── 成员（表 3：产能速览的数据源） ── */
   members: createRouter({
     list: publicQuery.query(() => listMembers()),
@@ -43,14 +54,14 @@ export const vanRouter = createRouter({
       .mutation(({ input }) => updateMemberCapacity(input.id, input.capacity)),
   }),
 
-  /* ── 需求池（表 1，PM 维护） ── */
+  /* ── 任务大厅（委托池，PM 维护） ── */
   pool: createRouter({
     list: publicQuery.query(() => listPoolItems()),
     add: publicQuery
       .input(
         z.object({
           title: z.string().min(1).max(255),
-          type: z.enum(["epic", "ready"]),
+          rarity: rarity.default("common"),
           targetVan: vanCode.nullable().optional(),
           note: z.string().optional(),
         }),
@@ -61,7 +72,7 @@ export const vanRouter = createRouter({
         z.object({
           id: idField,
           title: z.string().min(1).max(255).optional(),
-          type: z.enum(["epic", "ready"]).optional(),
+          rarity: rarity.optional(),
           status: z.enum(["open", "scheduled", "done"]).optional(),
           targetVan: vanCode.nullable().optional(),
           note: z.string().nullable().optional(),
@@ -76,12 +87,11 @@ export const vanRouter = createRouter({
       .mutation(({ input }) => removePoolItem(input.id)),
   }),
 
-  /* ── 任务（表 2：周次任务表） ── */
+  /* ── 任务（表 2：班次任务表） ── */
   tasks: createRouter({
     byVan: publicQuery
       .input(z.object({ van: vanCode }))
       .query(({ input }) => listTasksByVan(input.van)),
-    vans: publicQuery.query(() => listVans()),
     add: publicQuery
       .input(
         z.object({

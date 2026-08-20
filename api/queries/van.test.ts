@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { assertWithinCapacity, poolStatusOf, toStrandedTask } from "./van";
-import type { Task } from "../../db/schema";
+import {
+  assertWithinCapacity,
+  poolStatusOf,
+  rarityStatsOf,
+  toStrandedTask,
+} from "./van";
+import type { PoolItem, Task } from "../../db/schema";
 
 describe("assertWithinCapacity", () => {
   it("合计未超过运力时放行", () => {
@@ -33,6 +38,41 @@ describe("poolStatusOf", () => {
     expect(poolStatusOf(["todo"])).toBe("scheduled");
     expect(poolStatusOf(["done", "doing"])).toBe("scheduled");
     expect(poolStatusOf(["doing", "todo"])).toBe("scheduled");
+  });
+});
+
+describe("rarityStatsOf", () => {
+  const rarityById = new Map<number, PoolItem["rarity"]>([
+    [1, "epic"],
+    [2, "rare"],
+    [3, "common"],
+  ]);
+  const task = (
+    poolItemId: number | null,
+    status: Task["status"],
+  ): Pick<Task, "poolItemId" | "status"> => ({ poolItemId, status });
+
+  it("按所属委托的稀有度分桶，统计 total 与 done", () => {
+    const stats = rarityStatsOf(
+      [task(1, "done"), task(1, "todo"), task(2, "done")],
+      rarityById,
+    );
+    expect(stats).toEqual([
+      { rarity: "rare", total: 1, done: 1 },
+      { rarity: "epic", total: 2, done: 1 },
+    ]);
+  });
+
+  it("无关联委托或委托不存在的任务不计入", () => {
+    const stats = rarityStatsOf(
+      [task(null, "done"), task(999, "done"), task(3, "todo")],
+      rarityById,
+    );
+    expect(stats).toEqual([{ rarity: "common", total: 1, done: 0 }]);
+  });
+
+  it("空任务列表返回空数组", () => {
+    expect(rarityStatsOf([], rarityById)).toEqual([]);
   });
 });
 

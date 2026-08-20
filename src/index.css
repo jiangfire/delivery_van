@@ -112,33 +112,29 @@ body {
   }
 }
 
-.stage-dot {
-  width: 20px;
-  height: 20px;
-  border-radius: 50%;
-  border: 1px solid hsl(var(--border));
-  background: #fff;
-  font-size: 10px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 600;
-  color: hsl(var(--muted-foreground));
-  flex-shrink: 0;
+/* 神话稀有度：彩虹渐变流动文字（要花里胡哨） */
+.rarity-mythic-text {
+  background: linear-gradient(
+    90deg,
+    #ff004c,
+    #ff8a00,
+    #ffee00,
+    #00e676,
+    #00b0ff,
+    #a500ff,
+    #ff004c
+  );
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  font-weight: 700;
+  animation: mythic-flow 2.5s linear infinite;
 }
-.stage-active .stage-dot {
-  background: var(--train-accent);
-  border-color: var(--train-accent);
-  color: #fff;
-}
-.stage-active .stage-name {
-  color: hsl(var(--foreground));
-  font-weight: 600;
-}
-.stage-name {
-  color: hsl(var(--muted-foreground));
-  font-size: 12px;
-  white-space: nowrap;
+@keyframes mythic-flow {
+  to {
+    background-position: -300% 0;
+  }
 }
 
 .size-badge {

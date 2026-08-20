@@ -16,12 +16,19 @@ export async function ensureSchema() {
     )
   `);
   await db.run(sql`
+    CREATE TABLE IF NOT EXISTS vans (
+      code text PRIMARY KEY,
+      created_at integer NOT NULL DEFAULT (unixepoch())
+    )
+  `);
+  await db.run(sql`
     CREATE TABLE IF NOT EXISTS pool_items (
       id integer PRIMARY KEY AUTOINCREMENT,
       title text NOT NULL,
-      type text NOT NULL DEFAULT 'ready',
+      rarity text NOT NULL DEFAULT 'common',
       status text NOT NULL DEFAULT 'open',
       target_van text,
+      posted_van text,
       note text,
       created_at integer NOT NULL DEFAULT (unixepoch())
     )
