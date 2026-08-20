@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  # 代码门禁：格式 + 静态检查 + 单测
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prettier --check .
+      - run: npm run lint
+      - run: npm run check
+      - run: npm test
+
+  # Docker 构建与冒烟：验证多阶段构建与容器内启动链路
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t delivery_van .
+      - name: 启动容器并冒烟
+        run: |
+          docker run -d --name dv -p 3000:3000 delivery_van
+          # 首次启动要装原生模块外的建表等初始化，给一点余量
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/trpc/ping > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://localhost:3000/ | grep -q 'lang="zh-CN"'
+          curl -sf http://localhost:3000/api/trpc/ping | grep -q ok
+          docker logs dv
+      - name: 清理
+        if: always()
+        run: docker rm -f dv
