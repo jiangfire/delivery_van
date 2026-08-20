@@ -1,7 +1,11 @@
 FROM node:22-slim AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# better-sqlite3 的 npm 包自带 linux-x64 等平台的 prebuilds（lib/binding.js 优先加载 prebuilds/），
+# 无需在镜像里编译原生模块；--ignore-scripts 跳过 npm 因 binding.gyp 触发的隐式 node-gyp rebuild，
+# 否则 slim 镜像无 Python/编译链会构建失败（本机 npm 恰好禁用了 install 脚本，所以本地一直正常）。
+# esbuild 的平台二进制走 optionalDependencies 安装，不受 --ignore-scripts 影响。
+RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 
