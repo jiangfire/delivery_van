@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { VAN_CODE_RE, firstVanCodeOf, isVanCode, nextVanCode } from "./vans";
+import {
+  VAN_CODE_RE,
+  firstVanCodeOf,
+  isVanCode,
+  nextVanCode,
+  parse,
+} from "./vans";
 
 describe("isVanCode / VAN_CODE_RE", () => {
   it("接受合法编码（字母 A–Z）", () => {
@@ -45,5 +51,28 @@ describe("firstVanCodeOf", () => {
     expect(firstVanCodeOf(new Date(2026, 6, 15))).toBe("DV2607A");
     expect(firstVanCodeOf(new Date(2026, 0, 1))).toBe("DV2601A");
     expect(firstVanCodeOf(new Date(2026, 11, 31))).toBe("DV2612A");
+  });
+});
+
+describe("parse", () => {
+  it("解析合法编码并返回 year、month、nth", () => {
+    const result = parse("DV2607A");
+    expect(result).toEqual({ year: 2026, month: 7, nth: 1 });
+  });
+
+  it("解析年末编码", () => {
+    const result = parse("DV2612Z");
+    expect(result).toEqual({ year: 2026, month: 12, nth: 26 });
+  });
+
+  it("解析中间字母", () => {
+    const result = parse("DV2607M");
+    expect(result).toEqual({ year: 2026, month: 7, nth: 13 });
+  });
+
+  it("非法编码抛出错误", () => {
+    expect(() => parse("2026-W27")).toThrow("非法班次编码");
+    expect(() => parse("DV2607a")).toThrow("非法班次编码");
+    expect(() => parse("")).toThrow("非法班次编码");
   });
 });
