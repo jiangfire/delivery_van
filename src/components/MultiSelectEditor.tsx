@@ -17,7 +17,7 @@ export default function MultiSelectEditor({
   members: string[];
   onAddMember?: (name: string) => void;
   onChange: (v: string[]) => void;
-  onClose: () => void;
+  onClose: (finalValue?: string[]) => void;
   pos: { top: number; left: number };
 }) {
   const [selected, setSelected] = useState<string[]>(initial);
@@ -32,7 +32,7 @@ export default function MultiSelectEditor({
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        onClose();
+        onClose(selected);
       }
     };
     // 延迟绑定，避免当前点击触发关闭
@@ -43,16 +43,16 @@ export default function MultiSelectEditor({
       clearTimeout(timer);
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [onClose]);
+  }, [onClose, selected]);
 
   // Escape 关闭
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onClose(selected);
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [onClose, selected]);
 
   const toggle = useCallback((name: string) => {
     setSelected((prev) =>
@@ -291,7 +291,7 @@ export default function MultiSelectEditor({
           onMouseDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            onClose();
+            onClose(selected);
           }}
         >
           确定

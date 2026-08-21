@@ -31,7 +31,7 @@ export default function RarityEditor({
 }: {
   initial: string;
   onChange: (v: string) => void;
-  onClose: () => void;
+  onClose: (finalValue?: string) => void;
   pos: { top: number; left: number };
 }) {
   const [value, setValue] = useState(initial);
@@ -45,7 +45,7 @@ export default function RarityEditor({
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        onClose();
+        onClose(value);
       }
     };
     const timer = setTimeout(() => {
@@ -55,22 +55,22 @@ export default function RarityEditor({
       clearTimeout(timer);
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [onClose]);
+  }, [onClose, value]);
 
   // Escape 关闭
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onClose(value);
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [onClose, value]);
 
   const select = useCallback(
     (v: string) => {
       setValue(v);
-      // 单选：选择后立即关闭
-      onClose();
+      // 单选：选择后立即关闭，直接传值避免 effect 时序问题
+      onClose(v);
     },
     [onClose],
   );

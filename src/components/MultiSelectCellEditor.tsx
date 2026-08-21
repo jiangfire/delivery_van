@@ -43,11 +43,6 @@ export default class MultiSelectCellEditor implements ICellEditorComp<
 
     this.div.addEventListener("mousedown", (e) => e.stopPropagation());
 
-    const handleClose = () => {
-      // 先同步值到 AG Grid，再停止编辑
-      this.params.stopEditing();
-    };
-
     this.root = createRoot(wrapper);
     this.root.render(
       <MultiSelectEditor
@@ -58,7 +53,10 @@ export default class MultiSelectCellEditor implements ICellEditorComp<
         onChange={(v: string[]) => {
           this.value = v;
         }}
-        onClose={handleClose}
+        onClose={(finalValue?: string[]) => {
+          if (finalValue !== undefined) this.value = finalValue;
+          this.params.stopEditing();
+        }}
       />,
     );
   }

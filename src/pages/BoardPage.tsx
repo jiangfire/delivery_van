@@ -17,6 +17,7 @@ import type { TaskWithOwners } from "../../api/queries/van";
 import MultiSelectCellEditor from "@/components/MultiSelectCellEditor";
 import RarityCellEditor from "@/components/RarityCellEditor";
 import RequesterCellEditor from "@/components/RequesterCellEditor";
+import DateCellEditorComp from "@/components/DateCellEditorComp";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -300,11 +301,7 @@ export default function BoardPage() {
         width: 130,
         editable: (p) => p.data?.status === "done",
         editField: "doneAt",
-        cellEditor: "agDateCellEditor",
-        cellEditorParams: {
-          min: "2020-01-01",
-          max: "2030-12-31",
-        },
+        cellEditor: DateCellEditorComp,
         valueGetter: (p) => p.data?.doneAt ?? "",
         valueSetter: (p) => {
           if (p.data) {
@@ -424,7 +421,20 @@ export default function BoardPage() {
     const task = e.data;
     if (!task) return;
 
-    const key = (e.colDef as TaskColDef).editField;
+    // 优先用 colId 映射，兜底用 editField
+    const colId = e.column.getId();
+    const colIdMap: Record<string, string> = {
+      _rarity: "rarity",
+      _requester: "requester",
+      _owners: "owners",
+      _size: "size",
+      _status: "status",
+      _doneAt: "doneAt",
+      _acceptance: "acceptance",
+      _note: "note",
+      title: "title",
+    };
+    const key = colIdMap[colId] ?? (e.colDef as TaskColDef).editField;
     if (!key) return;
     let value: unknown = e.newValue;
 

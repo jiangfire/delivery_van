@@ -17,7 +17,7 @@ export default function RequesterSelect({
   members: string[];
   onAddMember?: (name: string) => void;
   onChange: (v: string) => void;
-  onClose: () => void;
+  onClose: (finalValue?: string) => void;
   pos: { top: number; left: number };
 }) {
   const [value, setValue] = useState(initial);
@@ -32,7 +32,7 @@ export default function RequesterSelect({
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        onClose();
+        onClose(value);
       }
     };
     const timer = setTimeout(() => {
@@ -42,16 +42,16 @@ export default function RequesterSelect({
       clearTimeout(timer);
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [onClose]);
+  }, [onClose, value]);
 
   // Escape 关闭
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") onClose(value);
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose]);
+  }, [onClose, value]);
 
   const submitNew = useCallback(() => {
     const trimmed = newName.trim();
@@ -59,14 +59,16 @@ export default function RequesterSelect({
     if (!members.includes(trimmed)) {
       onAddMember?.(trimmed);
     }
+    // 添加后直接选中并关闭编辑器
     setValue(trimmed);
     setNewName("");
-  }, [newName, members, onAddMember]);
+    onClose(trimmed);
+  }, [newName, members, onAddMember, onClose]);
 
   const selectAndClose = useCallback(
     (v: string) => {
       setValue(v);
-      onClose();
+      onClose(v);
     },
     [onClose],
   );

@@ -1,18 +1,16 @@
 import { createRoot } from "react-dom/client";
 import type { ICellEditorComp } from "ag-grid-community";
-import RarityEditor from "./RarityEditor";
+import DateCellEditor from "./DateCellEditor";
 
 /**
- * 稀有度下拉编辑器：显示中文标签，返回英文值。
- * 使用 Portal 渲染下拉面板到 body。
+ * 送达日期单元格编辑器（AG Grid ICellEditorComp 适配）。
+ * 使用 Portal 渲染日期选择弹框到 body。
  */
-export default class RarityCellEditor implements ICellEditorComp<string> {
+export default class DateCellEditorComp implements ICellEditorComp<string> {
   private value: string = "";
   private div!: HTMLDivElement;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private root: any = null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private params: any;
 
   getGui(): HTMLElement {
     return this.div;
@@ -20,8 +18,7 @@ export default class RarityCellEditor implements ICellEditorComp<string> {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   init(params: any) {
-    this.params = params;
-    this.value = params.value ?? "common";
+    this.value = params.value ?? "";
 
     this.div = document.createElement("div");
     this.div.style.cssText = "padding: 0; background: transparent;";
@@ -40,15 +37,12 @@ export default class RarityCellEditor implements ICellEditorComp<string> {
 
     this.root = createRoot(wrapper);
     this.root.render(
-      <RarityEditor
+      <DateCellEditor
         initial={this.value}
         pos={pos}
-        onChange={(v: string) => {
-          this.value = v;
-        }}
-        onClose={(finalValue?: string) => {
-          if (finalValue !== undefined) this.value = finalValue;
-          this.params.stopEditing();
+        onClose={(v: string | null) => {
+          this.value = v ?? "";
+          params.stopEditing();
         }}
       />,
     );
