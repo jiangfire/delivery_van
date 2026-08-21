@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 
 const RARITIES = [
   "common",
@@ -20,16 +21,18 @@ const RARITY_LABEL: Record<string, string> = {
 
 /**
  * 稀有度下拉编辑器组件：显示中文标签，返回英文值。
+ * 使用 Portal 渲染到 body，逃出 backdrop-filter 层叠上下文。
  */
 export default function RarityEditor({
   initial,
   onChange,
+  pos,
 }: {
   initial: string;
   onChange: (v: string) => void;
+  pos: { top: number; left: number };
 }) {
   const [value, setValue] = useState(initial);
-  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     onChange(value);
@@ -39,18 +42,20 @@ export default function RarityEditor({
     setValue(v);
   }, []);
 
-  return (
+  const panel = (
     <div
-      ref={panelRef}
       style={{
+        position: "fixed",
+        top: pos.top,
+        left: pos.left,
         minWidth: 120,
-        background: "rgba(255,255,255,0.95)",
-        backdropFilter: "blur(16px) saturate(180%)",
-        border: "1px solid rgba(0,0,0,0.08)",
-        borderRadius: 14,
-        boxShadow: "0 8px 32px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.04)",
+        background: "rgba(255,255,255,0.97)",
+        border: "1px solid rgba(0,0,0,0.1)",
+        borderRadius: 12,
+        boxShadow: "0 12px 40px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.06)",
         padding: "4px 0",
         overflow: "hidden",
+        zIndex: 99999,
       }}
       onMouseDown={(e) => e.stopPropagation()}
     >
@@ -60,7 +65,7 @@ export default function RarityEditor({
           style={{
             display: "flex",
             alignItems: "center",
-            padding: "6px 12px",
+            padding: "6px 14px",
             cursor: "pointer",
             fontSize: 13,
             background: value === r ? "rgba(14,165,233,0.06)" : "transparent",
@@ -85,4 +90,6 @@ export default function RarityEditor({
       ))}
     </div>
   );
+
+  return createPortal(panel, document.body);
 }

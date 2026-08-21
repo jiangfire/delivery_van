@@ -4,6 +4,7 @@ import RarityEditor from "./RarityEditor";
 
 /**
  * 稀有度下拉编辑器：显示中文标签，返回英文值。
+ * 使用 Portal 渲染下拉面板到 body。
  */
 export default class RarityCellEditor implements ICellEditorComp<string> {
   private value: string = "";
@@ -25,12 +26,19 @@ export default class RarityCellEditor implements ICellEditorComp<string> {
     const wrapper = document.createElement("div");
     this.div.appendChild(wrapper);
 
+    const cellRect = this.div.parentElement?.getBoundingClientRect() ?? {
+      bottom: 0,
+      left: 0,
+    };
+    const pos = { top: cellRect.bottom + 2, left: cellRect.left };
+
     this.div.addEventListener("mousedown", (e) => e.stopPropagation());
 
     this.root = createRoot(wrapper);
     this.root.render(
       <RarityEditor
         initial={this.value}
+        pos={pos}
         onChange={(v: string) => {
           this.value = v;
         }}

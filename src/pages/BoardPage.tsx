@@ -16,6 +16,7 @@ import { nextVanCode } from "@contracts/vans";
 import type { TaskWithOwners } from "../../api/queries/van";
 import MultiSelectCellEditor from "@/components/MultiSelectCellEditor";
 import RarityCellEditor from "@/components/RarityCellEditor";
+import RequesterCellEditor from "@/components/RequesterCellEditor";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -175,6 +176,11 @@ export default function BoardPage() {
         width: 90,
         editable: true,
         editField: "requester",
+        cellEditor: RequesterCellEditor,
+        cellEditorParams: {
+          members: memberNames,
+          onAddMember: (name: string) => addMemberM.mutate({ name }),
+        },
         valueGetter: (p) => p.data?.requester ?? "",
         valueSetter: (p) => {
           if (p.data) {

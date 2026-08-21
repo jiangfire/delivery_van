@@ -1,15 +1,13 @@
 import { createRoot } from "react-dom/client";
 import type { ICellEditorComp } from "ag-grid-community";
-import MultiSelectEditor from "./MultiSelectEditor";
+import RequesterSelect from "./RequesterSelect";
 
 /**
- * AG Grid 自定义单元格编辑器：成员多选下拉。
- * 使用 Portal 渲染下拉面板到 body，逃出 backdrop-filter 层叠上下文。
+ * 提出人下拉编辑器：单选成员。
+ * 使用 Portal 渲染下拉面板到 body。
  */
-export default class MultiSelectCellEditor implements ICellEditorComp<
-  string[]
-> {
-  private value: string[] = [];
+export default class RequesterCellEditor implements ICellEditorComp<string> {
+  private value: string = "";
   private div!: HTMLDivElement;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private root: any = null;
@@ -20,7 +18,7 @@ export default class MultiSelectCellEditor implements ICellEditorComp<
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   init(params: any) {
-    this.value = Array.isArray(params.value) ? [...params.value] : [];
+    this.value = params.value ?? "";
     const members: string[] = params.members ?? [];
     const onAddMember: ((name: string) => void) | undefined =
       params.onAddMember;
@@ -31,31 +29,29 @@ export default class MultiSelectCellEditor implements ICellEditorComp<
     const wrapper = document.createElement("div");
     this.div.appendChild(wrapper);
 
-    // 从 cell DOM 计算弹出位置
     const cellRect = this.div.parentElement?.getBoundingClientRect() ?? {
       bottom: 0,
       left: 0,
     };
     const pos = { top: cellRect.bottom + 2, left: cellRect.left };
 
-    // 阻止 AG Grid 捕获点击事件导致编辑器关闭
     this.div.addEventListener("mousedown", (e) => e.stopPropagation());
 
     this.root = createRoot(wrapper);
     this.root.render(
-      <MultiSelectEditor
+      <RequesterSelect
         initial={this.value}
         members={members}
         onAddMember={onAddMember}
         pos={pos}
-        onChange={(v: string[]) => {
+        onChange={(v: string) => {
           this.value = v;
         }}
       />,
     );
   }
 
-  getValue(): string[] {
+  getValue(): string {
     return this.value;
   }
 

@@ -1,23 +1,25 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { createPortal } from "react-dom";
 
 /**
  * 多选下拉编辑器：成员多选，勾选式操作，已选显示为标签。
- * 支持就地添加新成员（onAddMember 回调）。
+ * 使用 React Portal 渲染到 body，逃出 backdrop-filter 层叠上下文。
  */
 export default function MultiSelectEditor({
   initial,
   members,
   onAddMember,
   onChange,
+  pos,
 }: {
   initial: string[];
   members: string[];
   onAddMember?: (name: string) => void;
   onChange: (v: string[]) => void;
+  pos: { top: number; left: number };
 }) {
   const [selected, setSelected] = useState<string[]>(initial);
   const [newName, setNewName] = useState("");
-  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     onChange(selected);
@@ -36,81 +38,78 @@ export default function MultiSelectEditor({
   const submitNew = useCallback(() => {
     const trimmed = newName.trim();
     if (!trimmed) return;
-    // 去重：已在列表中的不重复添加
     if (!members.includes(trimmed)) {
       onAddMember?.(trimmed);
     }
-    // 无论新旧，直接选中
     setSelected((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
     setNewName("");
   }, [newName, members, onAddMember]);
 
-  return (
+  const panel = (
     <div
-      ref={panelRef}
       style={{
+        position: "fixed",
+        top: pos.top,
+        left: pos.left,
         minWidth: 220,
-        background: "rgba(255,255,255,0.95)",
-        backdropFilter: "blur(16px) saturate(180%)",
-        border: "1px solid rgba(0,0,0,0.08)",
-        borderRadius: 14,
-        boxShadow: "0 8px 32px rgba(0,0,0,0.1), 0 2px 8px rgba(0,0,0,0.04)",
+        background: "rgba(255,255,255,0.97)",
+        border: "1px solid rgba(0,0,0,0.1)",
+        borderRadius: 12,
+        boxShadow: "0 12px 40px rgba(0,0,0,0.15), 0 2px 8px rgba(0,0,0,0.06)",
         padding: 0,
         overflow: "hidden",
+        zIndex: 99999,
       }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      {/* 头部：已选标签 + 清空 */}
-      <div
-        style={{
-          padding: "8px 10px 6px",
-          display: "flex",
-          flexWrap: "wrap",
-          gap: 4,
-          borderBottom:
-            selected.length > 0 ? "1px solid rgba(0,0,0,0.05)" : "none",
-          minHeight: selected.length > 0 ? 32 : 0,
-        }}
-      >
-        {selected.map((t) => (
-          <span
-            key={t}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 3,
-              padding: "2px 8px",
-              borderRadius: 6,
-              background: "linear-gradient(135deg, #0ea5e9, #0284c7)",
-              color: "#fff",
-              fontSize: 11,
-              fontWeight: 600,
-              lineHeight: "16px",
-            }}
-          >
-            {t}
-            <button
+      {selected.length > 0 && (
+        <div
+          style={{
+            padding: "8px 10px 6px",
+            display: "flex",
+            flexWrap: "wrap",
+            gap: 4,
+            borderBottom: "1px solid rgba(0,0,0,0.05)",
+          }}
+        >
+          {selected.map((t) => (
+            <span
+              key={t}
               style={{
-                background: "none",
-                border: "none",
-                color: "inherit",
-                cursor: "pointer",
-                padding: 0,
-                lineHeight: 1,
-                fontSize: 12,
-                opacity: 0.8,
-              }}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                toggle(t);
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 3,
+                padding: "2px 8px",
+                borderRadius: 6,
+                background: "linear-gradient(135deg, #0ea5e9, #0284c7)",
+                color: "#fff",
+                fontSize: 11,
+                fontWeight: 600,
+                lineHeight: "16px",
               }}
             >
-              ×
-            </button>
-          </span>
-        ))}
-        {selected.length > 0 && (
+              {t}
+              <button
+                style={{
+                  background: "none",
+                  border: "none",
+                  color: "inherit",
+                  cursor: "pointer",
+                  padding: 0,
+                  lineHeight: 1,
+                  fontSize: 12,
+                  opacity: 0.8,
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  toggle(t);
+                }}
+              >
+                ×
+              </button>
+            </span>
+          ))}
           <button
             style={{
               background: "none",
@@ -129,17 +128,12 @@ export default function MultiSelectEditor({
           >
             清空
           </button>
-        )}
-      </div>
-      {/* 成员列表 */}
+        </div>
+      )}
       <div style={{ maxHeight: 200, overflowY: "auto", padding: "4px 0" }}>
         {members.length === 0 && (
           <div
-            style={{
-              padding: "6px 12px 2px",
-              fontSize: 12,
-              color: "#94a3b8",
-            }}
+            style={{ padding: "6px 12px 2px", fontSize: 12, color: "#94a3b8" }}
           >
             暂无成员，可直接添加 ↓
           </div>
@@ -157,7 +151,6 @@ export default function MultiSelectEditor({
                 cursor: "pointer",
                 fontSize: 13,
                 background: checked ? "rgba(14,165,233,0.06)" : "transparent",
-                transition: "background 0.12s ease",
               }}
               onMouseEnter={(e) => {
                 if (!checked)
@@ -186,7 +179,6 @@ export default function MultiSelectEditor({
           );
         })}
       </div>
-      {/* 底部：添加新成员 */}
       {onAddMember && (
         <div
           style={{
@@ -249,4 +241,6 @@ export default function MultiSelectEditor({
       )}
     </div>
   );
+
+  return createPortal(panel, document.body);
 }
