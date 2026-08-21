@@ -10,8 +10,8 @@ const TEST_DB = path.join(__dirname, "e2e", "test.db");
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
-  /* 常规防抖动兜底；已知竞态（编辑提交后立即 reload 会中止在途请求）已在测试内用响应屏障消除 */
-  retries: 1,
+  /* 已知竞态均在测试内根治（编辑提交用 waitForTaskUpdate 等待落库），失败即真实回归，不做重试掩盖 */
+  retries: 0,
   /* 测试共享一个测试库、班次跨用例累积，必须串行执行 */
   workers: 1,
   use: {

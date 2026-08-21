@@ -70,6 +70,12 @@ export default function BoardPage() {
     () => tasks.some((t) => t.status === "carried"),
     [tasks],
   );
+  /**
+   * 操作禁用口径 = 归档 或 数据未到位。归档是单向的（结转过就不会变回），
+   * 切班后无缓存数据的加载窗口里保守视为只读，避免按钮短暂可点；
+   * 已访问过的班次有缓存（哪怕过期），归档判定依然正确。
+   */
+  const vanReadonly = vanArchived || tasksQ.isLoading;
 
   const vanIdx = curVan === null ? -1 : vans.indexOf(curVan);
   const refresh = () => utils.invalidate();
@@ -146,7 +152,7 @@ export default function BoardPage() {
         field: "title",
         headerName: "标题",
         flex: 2,
-        editable: !vanArchived,
+        editable: !vanReadonly,
         editField: "title",
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
@@ -158,7 +164,7 @@ export default function BoardPage() {
         colId: "_rarity",
         headerName: "稀有度",
         width: 80,
-        editable: !vanArchived,
+        editable: !vanReadonly,
         editField: "rarity",
         cellEditor: RarityCellEditor,
         valueGetter: (p) => p.data?.rarity ?? "",
@@ -184,7 +190,7 @@ export default function BoardPage() {
         colId: "_requester",
         headerName: "提出人",
         width: 90,
-        editable: !vanArchived,
+        editable: !vanReadonly,
         editField: "requester",
         cellEditor: RequesterCellEditor,
         cellEditorParams: () => ({
@@ -209,7 +215,7 @@ export default function BoardPage() {
         colId: "_owners",
         headerName: "负责人",
         width: 200,
-        editable: !vanArchived,
+        editable: !vanReadonly,
         editField: "owners",
         cellEditor: MultiSelectCellEditor,
         cellEditorParams: () => ({
@@ -257,7 +263,7 @@ export default function BoardPage() {
         colId: "_size",
         headerName: "档位",
         width: 86,
-        editable: !vanArchived,
+        editable: !vanReadonly,
         editField: "size",
         cellEditor: "agSelectCellEditor",
         cellEditorParams: { values: ["1", "3", "5"] },
@@ -282,7 +288,7 @@ export default function BoardPage() {
         colId: "_status",
         headerName: "状态",
         width: 100,
-        editable: !vanArchived,
+        editable: !vanReadonly,
         editField: "status",
         cellEditor: "agSelectCellEditor",
         cellEditorParams: { values: ["todo", "doing", "done"] },
@@ -308,7 +314,7 @@ export default function BoardPage() {
         colId: "_doneAt",
         headerName: "送达日期",
         width: 130,
-        editable: (p) => !vanArchived && p.data?.status === "done",
+        editable: (p) => !vanReadonly && p.data?.status === "done",
         editField: "doneAt",
         cellEditor: DateCellEditorComp,
         valueGetter: (p) => p.data?.doneAt ?? "",
@@ -344,7 +350,7 @@ export default function BoardPage() {
         colId: "_acceptance",
         headerName: "验收标准",
         flex: 1.4,
-        editable: !vanArchived,
+        editable: !vanReadonly,
         editField: "acceptance",
         valueGetter: (p) => p.data?.acceptance ?? "",
         valueSetter: (p) => {
@@ -359,7 +365,7 @@ export default function BoardPage() {
         colId: "_note",
         headerName: "备注",
         flex: 1,
-        editable: !vanArchived,
+        editable: !vanReadonly,
         editField: "note",
         valueGetter: (p) => p.data?.note ?? "",
         valueSetter: (p) => {
@@ -411,7 +417,7 @@ export default function BoardPage() {
           return (
             <button
               className="btn btn-danger text-xs"
-              disabled={vanArchived}
+              disabled={vanReadonly}
               title={vanArchived ? "班次已结转归档，不可删除" : undefined}
               onClick={() => {
                 if (window.confirm(`删除快件「${d.title}」？`)) {
@@ -425,7 +431,7 @@ export default function BoardPage() {
         },
       },
     ],
-    [memberNamesKey, memberNames, removeTask, addMember, vanArchived],
+    [memberNamesKey, memberNames, removeTask, addMember, vanReadonly],
   );
 
   /* ── 单元格编辑回调 ── */
@@ -602,7 +608,7 @@ export default function BoardPage() {
           <div className="ml-auto flex items-center gap-2">
             <button
               className="btn btn-glass px-4 py-2 text-sm"
-              disabled={curVan === null || vanArchived || addTaskM.isPending}
+              disabled={curVan === null || vanReadonly || addTaskM.isPending}
               title={
                 vanArchived
                   ? "班次已结转归档，不可新增快件"
@@ -624,7 +630,7 @@ export default function BoardPage() {
             </button>
             <button
               className="btn btn-glass px-4 py-2 text-sm"
-              disabled={curVan === null || vanArchived}
+              disabled={curVan === null || vanReadonly}
               title={vanArchived ? "本班次已结转过，请勿重复操作" : undefined}
               onClick={() => {
                 if (curVan === null) return;
