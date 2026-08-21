@@ -56,6 +56,8 @@ export const tasks = sqliteTable(
     title: text("title").notNull(),
     /** 稀有度标记（颜色），不做任何拦截 */
     rarity: text("rarity", { enum: RARITIES }).notNull().default("common"),
+    /** 提出人：谁提的需求 */
+    requester: text("requester"),
     /** @deprecated 已迁移至 task_owners 关联表 */
     ownerName: text("owner_name"),
     /** 档位：1 / 3 / 5 天 */

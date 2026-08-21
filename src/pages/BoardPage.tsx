@@ -15,19 +15,12 @@ import { trpc } from "@/lib/trpc";
 import { nextVanCode } from "@contracts/vans";
 import type { TaskWithOwners } from "../../api/queries/van";
 import MultiSelectCellEditor from "@/components/MultiSelectCellEditor";
+import RarityCellEditor from "@/components/RarityCellEditor";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
 /* ── 稀有度配置 ── */
-const RARITIES = [
-  "common",
-  "uncommon",
-  "rare",
-  "epic",
-  "legendary",
-  "mythic",
-] as const;
-type Rarity = (typeof RARITIES)[number];
+type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "mythic";
 const RARITY_LABEL: Record<Rarity, string> = {
   common: "普通",
   uncommon: "优秀",
@@ -156,10 +149,7 @@ export default function BoardPage() {
         width: 80,
         editable: true,
         editField: "rarity",
-        cellEditor: "agSelectCellEditor",
-        cellEditorParams: {
-          values: RARITIES as unknown as string[],
-        },
+        cellEditor: RarityCellEditor,
         valueGetter: (p) => p.data?.rarity ?? "",
         valueSetter: (p) => {
           if (p.data) {
@@ -176,6 +166,27 @@ export default function BoardPage() {
               {RARITY_LABEL[d.rarity]}
             </span>
           );
+        },
+      },
+      // 提出人列
+      {
+        colId: "_requester",
+        headerName: "提出人",
+        width: 90,
+        editable: true,
+        editField: "requester",
+        valueGetter: (p) => p.data?.requester ?? "",
+        valueSetter: (p) => {
+          if (p.data) {
+            p.data.requester = (p.newValue as string) || null;
+            return true;
+          }
+          return false;
+        },
+        cellRenderer: (p: ICellRendererParams<TaskRow>) => {
+          const d = p.data;
+          if (!d?.requester) return null;
+          return <span className="text-sm">{d.requester}</span>;
         },
       },
       {
@@ -425,7 +436,7 @@ export default function BoardPage() {
         return;
       }
     }
-    if (key === "acceptance" || key === "note") {
+    if (key === "acceptance" || key === "note" || key === "requester") {
       if (value === "" || value === undefined) value = null;
     }
 
@@ -568,7 +579,7 @@ export default function BoardPage() {
         </div>
 
         {/* ── 快件表格 ── */}
-        <div className="glass-card mb-6 p-2">
+        <div className="glass-card mb-6 p-2" style={{ isolation: "isolate" }}>
           <div style={{ height: 520 }}>
             <AgGridReact<TaskRow>
               theme={themeQuartz}

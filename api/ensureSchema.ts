@@ -57,6 +57,12 @@ export async function ensureSchema() {
   } catch {
     // 列已存在，忽略
   }
+  // 兼容旧库：tasks 表可能没有 requester 列，幂等添加
+  try {
+    db.run(sql`ALTER TABLE tasks ADD COLUMN requester text`);
+  } catch {
+    // 列已存在，忽略
+  }
   await db.run(
     sql`CREATE INDEX IF NOT EXISTS tasks_van_code_idx ON tasks (van_code)`,
   );

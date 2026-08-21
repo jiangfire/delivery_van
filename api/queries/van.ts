@@ -23,6 +23,7 @@ export function toStrandedTask(
     vanCode: toVan,
     title: task.title,
     rarity: task.rarity,
+    requester: task.requester,
     ownerName: null,
     size: task.size,
     acceptance: task.acceptance,
@@ -125,6 +126,7 @@ export async function listTasksByVan(van: string): Promise<TaskWithOwners[]> {
       vanCode: tasks.vanCode,
       title: tasks.title,
       rarity: tasks.rarity,
+      requester: tasks.requester,
       ownerName: tasks.ownerName,
       size: tasks.size,
       acceptance: tasks.acceptance,
@@ -164,6 +166,7 @@ export async function addTask(input: {
   van: string;
   title: string;
   rarity?: Rarity;
+  requester?: string;
   owners?: string[];
   size?: 1 | 3 | 5 | null;
   acceptance?: string | null;
@@ -175,6 +178,7 @@ export async function addTask(input: {
       vanCode: input.van,
       title: input.title,
       rarity: input.rarity ?? "common",
+      requester: input.requester ?? null,
       size: input.size ?? null,
       acceptance: input.acceptance ?? null,
     })
@@ -190,6 +194,7 @@ export async function updateTask(
   patch: Partial<{
     title: string;
     rarity: Rarity;
+    requester: string | null;
     owners: string[];
     size: 1 | 3 | 5 | null;
     acceptance: string | null;

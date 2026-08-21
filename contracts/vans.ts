@@ -49,8 +49,12 @@ export function firstVanCodeOf(date: Date): string {
 }
 
 export function todayStr(): string {
+  // 使用中国时区（UTC+8）获取今天的日期，避免服务器 UTC 时差导致日期偏移
   const t = new Date();
-  return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(
-    t.getDate(),
+  const zhDate = new Date(
+    t.toLocaleString("en-US", { timeZone: "Asia/Shanghai" }),
+  );
+  return `${zhDate.getFullYear()}-${String(zhDate.getMonth() + 1).padStart(2, "0")}-${String(
+    zhDate.getDate(),
   ).padStart(2, "0")}`;
 }

@@ -36,6 +36,7 @@ describe("toStrandedTask", () => {
     vanCode: "DV2607A",
     title: "创建/核销优惠券接口联调通过",
     rarity: "epic",
+    requester: "张经理",
     ownerName: "张三",
     size: 3,
     acceptance: "接口联调通过",
