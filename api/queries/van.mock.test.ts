@@ -41,6 +41,7 @@ import {
   removePoolItem,
   addTask,
   updateTask,
+  updatePoolItem,
   removeTask,
 } from "./van";
 
@@ -488,6 +489,8 @@ describe("任务管理", () => {
       const result = await updateTask(1, { owners: ["张三", "李四"] });
 
       expect(result).toEqual([]);
+      // 回归测试：仅更新 owners 时不应调用 db.update(tasks)，否则 Drizzle 会抛 No values to set
+      expect(mockDb.update).not.toHaveBeenCalled();
     });
 
     it("换委托时同步新旧委托状态", async () => {
@@ -591,6 +594,54 @@ describe("任务管理", () => {
       await expect(removeTask(999)).rejects.toThrow(TRPCError);
       await expect(removeTask(999)).rejects.toThrow("不存在");
     });
+  });
+});
+
+describe("委托管理（updatePoolItem）", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("正常更新委托稀有度", async () => {
+    const poolQuery = createQueryable([{ id: 1 }]);
+    const listQuery = createQueryable([]);
+    let callCount = 0;
+
+    mockDb = {
+      select: vi.fn().mockImplementation(() => {
+        callCount++;
+        return callCount === 1 ? poolQuery : listQuery;
+      }),
+      update: vi.fn().mockReturnValue({
+        set: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            then: (resolve: (value: any) => any) =>
+              Promise.resolve(undefined).then(resolve),
+          }),
+        }),
+      }),
+    };
+
+    const result = await updatePoolItem(1, { rarity: "epic" });
+
+    expect(result).toBeDefined();
+    expect(result.length).toBeGreaterThan(0);
+    expect(mockDb.update).toHaveBeenCalled();
+  });
+
+  it("空 patch 时跳过写入，直接返回列表（回归：防止 No values to set）", async () => {
+    const listQuery = createQueryable([{ id: 1, rarity: "common" }]);
+
+    mockDb = {
+      select: vi.fn().mockReturnValue(listQuery),
+      update: vi.fn(),
+    };
+
+    const result = await updatePoolItem(1, {});
+
+    expect(result).toBeDefined();
+    expect(result.length).toBeGreaterThan(0);
+    expect(mockDb.update).not.toHaveBeenCalled();
   });
 });
 

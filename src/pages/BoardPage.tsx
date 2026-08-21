@@ -171,11 +171,6 @@ export default function BoardPage() {
 
   const { mutate: removeTask } = removeTaskM;
 
-  /* ── 新建表单状态 ── */
-  const [newTaskTitle, setNewTaskTitle] = useState("");
-  const [newPoolTitle, setNewPoolTitle] = useState("");
-  const [newPoolRarity, setNewPoolRarity] = useState<Rarity>("common");
-
   /* ── 合并表格数据：委托（open）在前，任务在后 ── */
   const unifiedData = useMemo<UnifiedRow[]>(() => {
     const openPool = pool
@@ -211,6 +206,7 @@ export default function BoardPage() {
       },
       // 委托专用列
       {
+        colId: "_rarity",
         headerName: "稀有度",
         width: 80,
         editable: (p) => p.data?.kind === "pool",
@@ -238,6 +234,7 @@ export default function BoardPage() {
         },
       },
       {
+        colId: "_targetVan",
         headerName: "目标班次",
         width: 100,
         editable: (p) => p.data?.kind === "pool",
@@ -254,6 +251,7 @@ export default function BoardPage() {
         },
       },
       {
+        colId: "_postedRounds",
         headerName: "挂账",
         width: 60,
         editable: false,
@@ -265,7 +263,7 @@ export default function BoardPage() {
 
       // 负责人列（多选下拉）
       {
-        field: "kind",
+        colId: "_owners",
         headerName: "负责人",
         width: 200,
         editable: (p) => p.data?.kind === "task",
@@ -313,7 +311,7 @@ export default function BoardPage() {
         },
       },
       {
-        field: "kind",
+        colId: "_size",
         headerName: "档位",
         width: 86,
         editable: (p) => p.data?.kind === "task",
@@ -341,7 +339,7 @@ export default function BoardPage() {
         },
       },
       {
-        field: "kind",
+        colId: "_status",
         headerName: "状态",
         width: 100,
         editable: (p) => p.data?.kind === "task",
@@ -368,7 +366,7 @@ export default function BoardPage() {
         },
       },
       {
-        field: "kind",
+        colId: "_doneAt",
         headerName: "送达日期",
         width: 130,
         editable: (p) => p.data?.kind === "task",
@@ -402,7 +400,7 @@ export default function BoardPage() {
         },
       },
       {
-        field: "kind",
+        colId: "_acceptance",
         headerName: "验收标准",
         flex: 1.4,
         editable: (p) => p.data?.kind === "task",
@@ -418,7 +416,7 @@ export default function BoardPage() {
         },
       },
       {
-        field: "kind",
+        colId: "_note",
         headerName: "备注",
         flex: 1,
         editable: (p) => p.data?.kind === "task",
@@ -701,74 +699,7 @@ export default function BoardPage() {
           </div>
         </div>
 
-        {/* ── 新建行 ── */}
-        <div className="glass-card mb-5 flex flex-wrap items-center gap-3 px-5 py-4">
-          <input
-            className="input-liquid w-56 px-3 py-2 text-sm"
-            placeholder="新快件标题"
-            value={newTaskTitle}
-            onChange={(e) => setNewTaskTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && newTaskTitle.trim() && curVan) {
-                addTaskM.mutate({ van: curVan, title: newTaskTitle.trim() });
-                setNewTaskTitle("");
-              }
-            }}
-          />
-          <button
-            className="btn btn-primary px-4 py-2 text-sm"
-            disabled={!newTaskTitle.trim() || !curVan || addTaskM.isPending}
-            onClick={() => {
-              if (!curVan) return;
-              addTaskM.mutate({ van: curVan, title: newTaskTitle.trim() });
-              setNewTaskTitle("");
-            }}
-          >
-            新建快件
-          </button>
-          <span className="text-muted-foreground/40 mx-1">|</span>
-          <input
-            className="input-liquid w-56 px-3 py-2 text-sm"
-            placeholder="新委托标题"
-            value={newPoolTitle}
-            onChange={(e) => setNewPoolTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && newPoolTitle.trim()) {
-                addPoolM.mutate({
-                  title: newPoolTitle.trim(),
-                  rarity: newPoolRarity,
-                  targetVan: curVan,
-                });
-                setNewPoolTitle("");
-              }
-            }}
-          />
-          <select
-            className="select-liquid bg-transparent px-3 py-2 text-xs"
-            value={newPoolRarity}
-            onChange={(e) => setNewPoolRarity(e.target.value as Rarity)}
-          >
-            {RARITIES.map((r) => (
-              <option key={r} value={r}>
-                {RARITY_LABEL[r]}
-              </option>
-            ))}
-          </select>
-          <button
-            className="btn btn-primary px-4 py-2 text-sm"
-            disabled={!newPoolTitle.trim() || addPoolM.isPending}
-            onClick={() => {
-              addPoolM.mutate({
-                title: newPoolTitle.trim(),
-                rarity: newPoolRarity,
-                targetVan: curVan,
-              });
-              setNewPoolTitle("");
-            }}
-          >
-            新建委托
-          </button>
-        </div>
+        {/* ── 表格 ── */}
 
         {/* ── 主表格：委托 + 快件统一展示 ── */}
         <div className="glass-card mb-6 p-2">
@@ -792,9 +723,48 @@ export default function BoardPage() {
                   : `pool-${p.data.data.id}`
               }
               localeText={{
-                noRowsToShow: "还没有委托或快件，在上方录入开始",
+                noRowsToShow: "还没有委托或快件，点右下角 + 添加",
               }}
             />
+          </div>
+          {/* 表格底部新建栏 */}
+          <div className="flex items-center gap-2 border-t border-white/30 px-3 py-2">
+            <button
+              className="btn btn-ghost flex items-center gap-1 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
+              disabled={curVan === null || addTaskM.isPending}
+              title="在表格末尾新增一行快件"
+              onClick={() => {
+                if (!curVan) return;
+                addTaskM.mutate(
+                  { van: curVan, title: "新快件" },
+                  {
+                    onSuccess: () => {
+                      // 刷新后自动进入最后一行的标题编辑
+                      toast.success("已添加，点击标题可编辑");
+                    },
+                  },
+                );
+              }}
+            >
+              + 快件
+            </button>
+            <button
+              className="btn btn-ghost flex items-center gap-1 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
+              disabled={addPoolM.isPending}
+              title="在表格末尾新增一行委托"
+              onClick={() => {
+                addPoolM.mutate(
+                  { title: "新委托", rarity: "common", targetVan: curVan },
+                  {
+                    onSuccess: () => {
+                      toast.success("已添加，点击标题可编辑");
+                    },
+                  },
+                );
+              }}
+            >
+              + 委托
+            </button>
           </div>
         </div>
 

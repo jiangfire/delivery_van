@@ -181,6 +181,10 @@ export async function updatePoolItem(
     note: string | null;
   }>,
 ) {
+  if (Object.keys(patch).length === 0) {
+    // 仅状态推导联动时 patch 可能为空，跳过无意义写入
+    return listPoolItems();
+  }
   await getDb().update(poolItems).set(patch).where(eq(poolItems.id, id));
   return listPoolItems();
 }
@@ -337,7 +341,9 @@ export async function updateTask(
 
   // 分离 task_owners 字段（不写入 tasks 表）
   const { owners, ...taskPatch } = patch;
-  await db.update(tasks).set(taskPatch).where(eq(tasks.id, id));
+  if (Object.keys(taskPatch).length > 0) {
+    await db.update(tasks).set(taskPatch).where(eq(tasks.id, id));
+  }
 
   // 更新负责人标签
   if (owners !== undefined) {

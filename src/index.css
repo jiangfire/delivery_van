@@ -490,6 +490,13 @@ body {
   --ag-font-weight-normal: 400;
   --ag-row-hover-transition: background-color 0.2s ease;
 }
+/* AG Grid 弹出编辑器 z-index 修复（backdrop-filter 会创建层叠上下文） */
+.ag-popup {
+  z-index: 9999 !important;
+}
+.ag-popup .ag-popup-editor {
+  z-index: 9999 !important;
+}
 
 /* ══════════════════════════════════════
    有机动效
