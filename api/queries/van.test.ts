@@ -1,28 +1,6 @@
 import { describe, expect, it } from "vitest";
-import {
-  assertWithinCapacity,
-  poolStatusOf,
-  rarityStatsOf,
-  toStrandedTask,
-} from "./van";
+import { poolStatusOf, rarityStatsOf, toStrandedTask } from "./van";
 import type { PoolItem, Task } from "../../db/schema";
-
-describe("assertWithinCapacity", () => {
-  it("合计未超过运力时放行", () => {
-    expect(() => assertWithinCapacity("张三", 3, 1, 5)).not.toThrow();
-    expect(() => assertWithinCapacity("张三", 0, 5, 5)).not.toThrow();
-  });
-
-  it("合计超过运力时报错并给出量化信息", () => {
-    expect(() => assertWithinCapacity("张三", 3, 3, 5)).toThrow(/张三/);
-    expect(() => assertWithinCapacity("张三", 3, 3, 5)).toThrow(/6.*5/);
-  });
-
-  it("运力被扣减（请假）后按新运力校验", () => {
-    expect(() => assertWithinCapacity("李四", 1, 3, 3)).toThrow();
-    expect(() => assertWithinCapacity("李四", 1, 1, 3)).not.toThrow();
-  });
-});
 
 describe("poolStatusOf", () => {
   it("无任务 → open（待切片）", () => {

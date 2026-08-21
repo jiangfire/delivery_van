@@ -16,25 +16,6 @@ import { firstVanCodeOf, nextVanCode, todayStr } from "../../contracts/vans";
 /* ── 纯函数（无库可测） ── */
 
 /**
- * 负荷校验（设计方案 3.3）：映射任务时每人档位合计 ≤ 当周运力。
- * assignedTotal 为该负责人在本班次已占用的档位合计。
- */
-export function assertWithinCapacity(
-  ownerName: string,
-  assignedTotal: number,
-  addedSize: number,
-  capacity: number,
-): void {
-  const after = assignedTotal + addedSize;
-  if (after > capacity) {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: `${ownerName} 本班次超载：${assignedTotal} + ${addedSize} = ${after} 天 > 运力 ${capacity} 天`,
-    });
-  }
-}
-
-/**
  * 委托状态联动（任务大厅）：由名下全部任务状态推导委托状态。
  * 无任务 → open（待切片）；有任务且全部 done → done（已完成）；否则 scheduled（已排期）。
  */
@@ -143,33 +124,6 @@ export async function updateMemberCapacity(id: number, capacity: number) {
   const [member] = await db.select().from(members).where(eq(members.id, id));
   if (!member)
     throw new TRPCError({ code: "NOT_FOUND", message: `成员 ${id} 不存在` });
-
-  // 调低运力时校验：通过 task_owners JOIN 查该成员各班次的档位合计
-  if (capacity < member.capacity) {
-    const taskRows = await db
-      .select({ vanCode: tasks.vanCode, size: tasks.size })
-      .from(taskOwners)
-      .innerJoin(tasks, eq(taskOwners.taskId, tasks.id))
-      .where(eq(taskOwners.ownerName, member.name));
-    const byVan = new Map<string, number>();
-    for (const r of taskRows)
-      byVan.set(r.vanCode, (byVan.get(r.vanCode) ?? 0) + (r.size ?? 0));
-    let peakVan = "";
-    let peak = 0;
-    for (const [van, total] of byVan) {
-      if (total > peak) {
-        peak = total;
-        peakVan = van;
-      }
-    }
-    if (capacity < peak) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: `${member.name} 在 ${peakVan} 已排 ${peak} 天，运力不能调低到 ${capacity} 天`,
-      });
-    }
-  }
-
   await db.update(members).set({ capacity }).where(eq(members.id, id));
   return listMembers();
 }
@@ -297,44 +251,6 @@ export async function listTasksByVan(van: string): Promise<TaskWithOwners[]> {
   }));
 }
 
-/** 计算某负责人在该班次已占用的档位合计（单次 JOIN 查询，可排除某个任务） */
-async function assignedTotalOf(
-  van: string,
-  ownerName: string,
-  excludeTaskId?: number,
-) {
-  const conditions = [
-    eq(taskOwners.ownerName, ownerName),
-    eq(tasks.vanCode, van),
-    excludeTaskId ? ne(tasks.id, excludeTaskId) : undefined,
-  ];
-  const [row] = await getDb()
-    .select({ total: sql<number>`coalesce(sum(${tasks.size}), 0)` })
-    .from(taskOwners)
-    .innerJoin(tasks, eq(taskOwners.taskId, tasks.id))
-    .where(and(...conditions));
-  return row?.total ?? 0;
-}
-
-/** 若负责人在成员表中，则按运力做负荷校验；自由输入的名字不校验 */
-async function checkCapacity(
-  van: string,
-  owners: string[],
-  size: number | null | undefined,
-  excludeTaskId?: number,
-) {
-  if (!size) return;
-  for (const name of owners) {
-    const [member] = await getDb()
-      .select()
-      .from(members)
-      .where(eq(members.name, name));
-    if (!member) continue;
-    const assigned = await assignedTotalOf(van, name, excludeTaskId);
-    assertWithinCapacity(name, assigned, size, member.capacity);
-  }
-}
-
 /** 替换任务的负责人标签（先删后插） */
 async function replaceOwners(
   db: ReturnType<typeof getDb>,
@@ -371,7 +287,6 @@ export async function addTask(input: {
       });
     }
   }
-  await checkCapacity(input.van, input.owners ?? [], input.size);
   const db = getDb();
   const [inserted] = await db
     .insert(tasks)
@@ -409,14 +324,6 @@ export async function updateTask(
   if (!current)
     throw new TRPCError({ code: "NOT_FOUND", message: `任务 ${id} 不存在` });
 
-  // 负荷校验：负责人或档位变化时，按合并后的值检查
-  if (patch.owners !== undefined || patch.size !== undefined) {
-    const owners =
-      patch.owners !== undefined ? patch.owners : await getOwnerNames(id);
-    const size = patch.size !== undefined ? patch.size : current.size;
-    await checkCapacity(current.vanCode, owners, size as 1 | 3 | 5 | null, id);
-  }
-
   // 换委托：记录是否变更，供下方同步新旧委托状态
   const poolChanged =
     patch.poolItemId !== undefined && patch.poolItemId !== current.poolItemId;
@@ -450,15 +357,6 @@ export async function updateTask(
   for (const poolId of poolIdsToSync) await syncPoolStatus(db, poolId);
 
   return listTasksByVan(current.vanCode);
-}
-
-/** 获取任务的负责人名称列表 */
-async function getOwnerNames(taskId: number): Promise<string[]> {
-  const rows = await getDb()
-    .select({ ownerName: taskOwners.ownerName })
-    .from(taskOwners)
-    .where(eq(taskOwners.taskId, taskId));
-  return rows.map((r) => r.ownerName);
 }
 
 export async function removeTask(id: number) {
