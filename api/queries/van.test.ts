@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rarityStatsOf, toStrandedTask } from "./van";
+import { rarityStatsOf, taskStatsOf, toStrandedTask } from "./van";
 import type { Task } from "../../db/schema";
 
 describe("rarityStatsOf", () => {
@@ -27,6 +27,51 @@ describe("rarityStatsOf", () => {
   it("只返回有任务的桶", () => {
     const stats = rarityStatsOf([task("common", "todo")]);
     expect(stats).toEqual([{ rarity: "common", total: 1, done: 0 }]);
+  });
+});
+
+describe("taskStatsOf", () => {
+  const row = (
+    status: Task["status"],
+    carriedFrom: string | null = null,
+    carryCount = 0,
+  ): Pick<Task, "status" | "carriedFrom" | "carryCount"> => ({
+    status,
+    carriedFrom,
+    carryCount,
+  });
+
+  it("滞留率 = 结转出去的任务数 / 总数（结转后旧车数据随之更新）", () => {
+    const stats = taskStatsOf([
+      row("done"),
+      row("done"),
+      row("carried"),
+      row("carried"),
+    ]);
+    expect(stats.total).toBe(4);
+    expect(stats.done).toBe(2);
+    expect(stats.carriedOut).toBe(2);
+    expect(stats.remaining).toBe(2);
+    expect(stats.completionRate).toBe(0.5);
+    expect(stats.carryRate).toBe(0.5);
+  });
+
+  it("carriedIn 统计本班承接的上一班滞留件，连续滞留 ≥2 触发复盘计数", () => {
+    const stats = taskStatsOf([
+      row("todo", "DV2607A", 1),
+      row("todo", "DV2607A", 2),
+      row("doing"),
+    ]);
+    expect(stats.carriedIn).toBe(2);
+    expect(stats.reviewNeeded).toBe(1);
+    expect(stats.carryRate).toBe(0);
+  });
+
+  it("空班次速率为 null 而非 0", () => {
+    const stats = taskStatsOf([]);
+    expect(stats.total).toBe(0);
+    expect(stats.completionRate).toBeNull();
+    expect(stats.carryRate).toBeNull();
   });
 });
 

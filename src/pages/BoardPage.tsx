@@ -65,6 +65,11 @@ export default function BoardPage() {
   const tasks = useMemo(() => tasksQ.data ?? [], [tasksQ.data]);
   const members = useMemo(() => membersQ.data ?? [], [membersQ.data]);
   const stats = statsQ.data;
+  /** 当前班次是否已结转归档（存在 carried 任务）→ 整班只读 */
+  const vanArchived = useMemo(
+    () => tasks.some((t) => t.status === "carried"),
+    [tasks],
+  );
 
   const vanIdx = curVan === null ? -1 : vans.indexOf(curVan);
   const refresh = () => utils.invalidate();
@@ -127,17 +132,21 @@ export default function BoardPage() {
   });
 
   const { mutate: removeTask } = removeTaskM;
+  const { mutate: addMember } = addMemberM;
 
   /* ── 列定义 ── */
   const memberNames = useMemo(() => members.map((m) => m.name), [members]);
 
+  // columnDefs 引用必须稳定：AG Grid 收到新数组会重建列并销毁正在编辑的编辑器。
+  // 成员列表按「内容」记忆（后台刷新不改内容时保持原引用），编辑参数延迟到编辑时求值。
+  const memberNamesKey = memberNames.join("\n");
   const columnDefs = useMemo<TaskColDef[]>(
     () => [
       {
         field: "title",
         headerName: "标题",
         flex: 2,
-        editable: true,
+        editable: !vanArchived,
         editField: "title",
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
@@ -149,7 +158,7 @@ export default function BoardPage() {
         colId: "_rarity",
         headerName: "稀有度",
         width: 80,
-        editable: true,
+        editable: !vanArchived,
         editField: "rarity",
         cellEditor: RarityCellEditor,
         valueGetter: (p) => p.data?.rarity ?? "",
@@ -175,13 +184,13 @@ export default function BoardPage() {
         colId: "_requester",
         headerName: "提出人",
         width: 90,
-        editable: true,
+        editable: !vanArchived,
         editField: "requester",
         cellEditor: RequesterCellEditor,
-        cellEditorParams: {
+        cellEditorParams: () => ({
           members: memberNames,
-          onAddMember: (name: string) => addMemberM.mutate({ name }),
-        },
+          onAddMember: (name: string) => addMember({ name }),
+        }),
         valueGetter: (p) => p.data?.requester ?? "",
         valueSetter: (p) => {
           if (p.data) {
@@ -200,13 +209,13 @@ export default function BoardPage() {
         colId: "_owners",
         headerName: "负责人",
         width: 200,
-        editable: true,
+        editable: !vanArchived,
         editField: "owners",
         cellEditor: MultiSelectCellEditor,
-        cellEditorParams: {
+        cellEditorParams: () => ({
           members: memberNames,
-          onAddMember: (name: string) => addMemberM.mutate({ name }),
-        },
+          onAddMember: (name: string) => addMember({ name }),
+        }),
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
           if (!d) return null;
@@ -218,7 +227,7 @@ export default function BoardPage() {
               </span>
             );
           return (
-            <span className="flex flex-wrap gap-1">
+            <span className="flex h-full flex-wrap items-center content-center gap-1">
               {owners.map((o) => (
                 <span
                   key={o}
@@ -248,7 +257,7 @@ export default function BoardPage() {
         colId: "_size",
         headerName: "档位",
         width: 86,
-        editable: true,
+        editable: !vanArchived,
         editField: "size",
         cellEditor: "agSelectCellEditor",
         cellEditorParams: { values: ["1", "3", "5"] },
@@ -273,7 +282,7 @@ export default function BoardPage() {
         colId: "_status",
         headerName: "状态",
         width: 100,
-        editable: true,
+        editable: !vanArchived,
         editField: "status",
         cellEditor: "agSelectCellEditor",
         cellEditorParams: { values: ["todo", "doing", "done"] },
@@ -290,7 +299,7 @@ export default function BoardPage() {
           if (!d || !d.status) return null;
           return (
             <span className={`status-badge status-${d.status}`}>
-              {d.status}
+              {d.status === "carried" ? "🔁 结转" : d.status}
             </span>
           );
         },
@@ -299,7 +308,7 @@ export default function BoardPage() {
         colId: "_doneAt",
         headerName: "送达日期",
         width: 130,
-        editable: (p) => p.data?.status === "done",
+        editable: (p) => !vanArchived && p.data?.status === "done",
         editField: "doneAt",
         cellEditor: DateCellEditorComp,
         valueGetter: (p) => p.data?.doneAt ?? "",
@@ -335,7 +344,7 @@ export default function BoardPage() {
         colId: "_acceptance",
         headerName: "验收标准",
         flex: 1.4,
-        editable: true,
+        editable: !vanArchived,
         editField: "acceptance",
         valueGetter: (p) => p.data?.acceptance ?? "",
         valueSetter: (p) => {
@@ -350,7 +359,7 @@ export default function BoardPage() {
         colId: "_note",
         headerName: "备注",
         flex: 1,
-        editable: true,
+        editable: !vanArchived,
         editField: "note",
         valueGetter: (p) => p.data?.note ?? "",
         valueSetter: (p) => {
@@ -363,6 +372,7 @@ export default function BoardPage() {
       },
       // 结转记录列
       {
+        colId: "_carry",
         headerName: "结转记录",
         width: 120,
         editable: false,
@@ -375,7 +385,7 @@ export default function BoardPage() {
           const d = p.data;
           if (!d || !d.carriedFrom) return null;
           return (
-            <span className="flex items-center gap-1 text-xs">
+            <span className="flex h-full items-center gap-1 text-xs">
               <span className="carry-badge" title={`滞留自 ${d.carriedFrom}`}>
                 📦 {d.carriedFrom}
               </span>
@@ -401,6 +411,8 @@ export default function BoardPage() {
           return (
             <button
               className="btn btn-danger text-xs"
+              disabled={vanArchived}
+              title={vanArchived ? "班次已结转归档，不可删除" : undefined}
               onClick={() => {
                 if (window.confirm(`删除快件「${d.title}」？`)) {
                   removeTask({ id: d.id });
@@ -413,7 +425,7 @@ export default function BoardPage() {
         },
       },
     ],
-    [memberNames, removeTask, addMemberM],
+    [memberNamesKey, memberNames, removeTask, addMember, vanArchived],
   );
 
   /* ── 单元格编辑回调 ── */
@@ -507,6 +519,14 @@ export default function BoardPage() {
                     ))}
                   </select>
                 )}
+                {vanArchived && (
+                  <span
+                    className="carry-badge ml-2"
+                    title="结转后整班归档只读，如需调整请在最新班次操作"
+                  >
+                    已结转 · 归档
+                  </span>
+                )}
               </div>
             )}
           </div>
@@ -582,7 +602,30 @@ export default function BoardPage() {
           <div className="ml-auto flex items-center gap-2">
             <button
               className="btn btn-glass px-4 py-2 text-sm"
-              disabled={curVan === null}
+              disabled={curVan === null || vanArchived || addTaskM.isPending}
+              title={
+                vanArchived
+                  ? "班次已结转归档，不可新增快件"
+                  : "在本班次末尾新增一行快件"
+              }
+              onClick={() => {
+                if (!curVan) return;
+                addTaskM.mutate(
+                  { van: curVan, title: "新快件" },
+                  {
+                    onSuccess: () => {
+                      toast.success("已添加，点击标题可编辑");
+                    },
+                  },
+                );
+              }}
+            >
+              + 快件
+            </button>
+            <button
+              className="btn btn-glass px-4 py-2 text-sm"
+              disabled={curVan === null || vanArchived}
+              title={vanArchived ? "本班次已结转过，请勿重复操作" : undefined}
               onClick={() => {
                 if (curVan === null) return;
                 const toVan = nextVanCode(curVan);
@@ -612,30 +655,9 @@ export default function BoardPage() {
               }}
               getRowId={(p) => `task-${p.data.id}`}
               localeText={{
-                noRowsToShow: "还没有快件，点下方 + 添加",
+                noRowsToShow: "还没有快件，点上方「+ 快件」添加",
               }}
             />
-          </div>
-          {/* 表格底部新建栏 */}
-          <div className="flex items-center gap-2 border-t border-white/30 px-3 py-2">
-            <button
-              className="btn btn-ghost flex items-center gap-1 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
-              disabled={curVan === null || addTaskM.isPending}
-              title="在表格末尾新增一行快件"
-              onClick={() => {
-                if (!curVan) return;
-                addTaskM.mutate(
-                  { van: curVan, title: "新快件" },
-                  {
-                    onSuccess: () => {
-                      toast.success("已添加，点击标题可编辑");
-                    },
-                  },
-                );
-              }}
-            >
-              + 快件
-            </button>
           </div>
         </div>
 

@@ -439,10 +439,14 @@ describe("快件管理", () => {
 
   describe("removeTask", () => {
     it("正常删除快件", async () => {
+      const taskQuery = createQueryable([{ id: 1, vanCode: "DV2607A" }]);
+      const lockQuery = createQueryable([]);
+      let callCount = 0;
       mockDb = {
-        select: vi
-          .fn()
-          .mockReturnValue(createQueryable([{ id: 1, vanCode: "DV2607A" }])),
+        select: vi.fn().mockImplementation(() => {
+          callCount++;
+          return callCount === 1 ? taskQuery : lockQuery;
+        }),
         delete: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
             then: (resolve: (value: any) => any) =>
@@ -463,6 +467,61 @@ describe("快件管理", () => {
 
       await expect(removeTask(999)).rejects.toThrow(TRPCError);
       await expect(removeTask(999)).rejects.toThrow("不存在");
+    });
+
+    it("已结转归档的班次不可删除快件", async () => {
+      const taskQuery = createQueryable([{ id: 1, vanCode: "DV2607A" }]);
+      const lockQuery = createQueryable([{ id: 1 }]);
+      let callCount = 0;
+      mockDb = {
+        select: vi.fn().mockImplementation(() => {
+          callCount++;
+          return callCount === 1 ? taskQuery : lockQuery;
+        }),
+      };
+
+      await expect(removeTask(1)).rejects.toThrow(TRPCError);
+      await expect(removeTask(1)).rejects.toThrow("已结转归档");
+    });
+  });
+
+  describe("结转归档只读", () => {
+    beforeEach(() => {
+      vi.clearAllMocks();
+    });
+
+    it("已结转归档的班次不可新增快件", async () => {
+      mockDb = {
+        select: vi.fn().mockReturnValue(createQueryable([{ id: 9 }])),
+      };
+
+      await expect(addTask({ van: "DV2607A", title: "补录" })).rejects.toThrow(
+        TRPCError,
+      );
+      await expect(addTask({ van: "DV2607A", title: "补录" })).rejects.toThrow(
+        "已结转归档",
+      );
+    });
+
+    it("已结转归档的班次不可修改快件", async () => {
+      const taskQuery = createQueryable([
+        { id: 1, vanCode: "DV2607A", status: "carried" },
+      ]);
+      const lockQuery = createQueryable([{ id: 1 }]);
+      let callCount = 0;
+      mockDb = {
+        select: vi.fn().mockImplementation(() => {
+          callCount++;
+          return callCount === 1 ? taskQuery : lockQuery;
+        }),
+      };
+
+      await expect(updateTask(1, { status: "done" })).rejects.toThrow(
+        TRPCError,
+      );
+      await expect(updateTask(1, { status: "done" })).rejects.toThrow(
+        "已结转归档",
+      );
     });
   });
 });
@@ -527,6 +586,51 @@ describe("结转逻辑", () => {
     expect(mockDb.transaction).toHaveBeenCalled();
   });
 
+  it("结转时把源班未完成任务标记为 carried", async () => {
+    const unfinished = [
+      { id: 5, vanCode: "DV2607A", status: "doing" },
+      { id: 6, vanCode: "DV2607A", status: "todo" },
+    ];
+    const setMock = vi.fn();
+    const mockTx = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              all: vi.fn().mockReturnValue([]),
+            }),
+            all: vi.fn().mockReturnValue(unfinished),
+          }),
+        }),
+      }),
+      insert: vi.fn().mockReturnValue({
+        values: vi.fn().mockReturnValue({
+          returning: vi.fn().mockReturnValue({
+            all: vi.fn().mockReturnValue([{ id: 10 }]),
+          }),
+          run: vi.fn(),
+        }),
+      }),
+      update: vi.fn().mockReturnValue({
+        set: setMock.mockReturnValue({
+          where: vi.fn().mockReturnValue({ run: vi.fn() }),
+        }),
+      }),
+    };
+
+    mockDb = {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+      transaction: vi.fn((fn: Function) => fn(mockTx)),
+      select: vi.fn().mockReturnValue(createQueryable([])),
+    };
+
+    const result = await carryOver("DV2607A", "DV2607B");
+
+    expect(result.carried).toBe(2);
+    expect(mockTx.update).toHaveBeenCalled();
+    expect(setMock).toHaveBeenCalledWith({ status: "carried" });
+  });
+
   it("目标班次不存在时自动创建", async () => {
     let vanCreated = false;
     const mockTx = {
@@ -583,7 +687,7 @@ describe("周统计", () => {
       },
       {
         id: 2,
-        status: "todo",
+        status: "carried",
         rarity: "epic",
         carryCount: 0,
         carriedFrom: null,
@@ -625,9 +729,11 @@ describe("周统计", () => {
     expect(result.total).toBe(3);
     expect(result.done).toBe(2);
     expect(result.remaining).toBe(1);
+    expect(result.carriedOut).toBe(1);
     expect(result.carriedIn).toBe(1);
     expect(result.reviewNeeded).toBe(1);
     expect(result.completionRate).toBeCloseTo(2 / 3);
+    // 滞留率 = 结转出去的任务数 / 总数（结转后旧车数据随之更新）
     expect(result.carryRate).toBeCloseTo(1 / 3);
   });
 

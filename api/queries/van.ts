@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "./connection";
 import {
@@ -55,6 +55,30 @@ export function rarityStatsOf(
   }));
 }
 
+/**
+ * 班次任务统计（纯函数）：结转率 = 结转出去的任务数 / 总数（见设计方案「结转率」指标），
+ * carriedIn 则记录本班承接的上一班滞留件数。
+ */
+export function taskStatsOf(
+  rows: Pick<Task, "status" | "carriedFrom" | "carryCount">[],
+) {
+  const total = rows.length;
+  const done = rows.filter((t) => t.status === "done").length;
+  const carriedOut = rows.filter((t) => t.status === "carried").length;
+  const carriedIn = rows.filter((t) => t.carriedFrom !== null).length;
+  const reviewNeeded = rows.filter((t) => t.carryCount >= 2).length;
+  return {
+    total,
+    done,
+    carriedOut,
+    carriedIn,
+    reviewNeeded,
+    remaining: total - done,
+    completionRate: total === 0 ? null : done / total,
+    carryRate: total === 0 ? null : carriedOut / total,
+  };
+}
+
 /* ── 任务带负责人列表的公共类型 ── */
 
 export type TaskWithOwners = Task & { owners: string[] };
@@ -109,6 +133,16 @@ export async function updateMemberCapacity(id: number, capacity: number) {
 }
 
 /* ── 快件 ── */
+
+/** 班次是否已结转归档：只要结转过（存在 carried 任务），整班只读不可改 */
+async function isVanArchived(van: string) {
+  const rows = await getDb()
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(and(eq(tasks.vanCode, van), eq(tasks.status, "carried")))
+    .limit(1);
+  return rows.length > 0;
+}
 
 /** 查询班次快件列表（附带负责人标签，单次 JOIN 查询） */
 export async function listTasksByVan(van: string): Promise<TaskWithOwners[]> {
@@ -171,6 +205,12 @@ export async function addTask(input: {
   size?: 1 | 3 | 5 | null;
   acceptance?: string | null;
 }) {
+  if (await isVanArchived(input.van)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `班次 ${input.van} 已结转归档，不可新增快件`,
+    });
+  }
   const db = getDb();
   const [inserted] = await db
     .insert(tasks)
@@ -207,6 +247,12 @@ export async function updateTask(
   const [current] = await db.select().from(tasks).where(eq(tasks.id, id));
   if (!current)
     throw new TRPCError({ code: "NOT_FOUND", message: `任务 ${id} 不存在` });
+  if (await isVanArchived(current.vanCode)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `班次 ${current.vanCode} 已结转归档，不可修改`,
+    });
+  }
 
   // 完成日期：打勾时随手填的自动化——置完成且无日期时记今天，取消完成则清空
   if (patch.status === "done" && patch.doneAt === undefined) {
@@ -234,6 +280,12 @@ export async function removeTask(id: number) {
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
   if (!task)
     throw new TRPCError({ code: "NOT_FOUND", message: `任务 ${id} 不存在` });
+  if (await isVanArchived(task.vanCode)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `班次 ${task.vanCode} 已结转归档，不可删除`,
+    });
+  }
   // ON DELETE CASCADE 会自动清理 task_owners
   await db.delete(tasks).where(eq(tasks.id, id));
 }
@@ -307,6 +359,18 @@ export async function carryOver(fromVan: string, toVan: string) {
           .run();
       }
     }
+    // 源班次的快件标记为 🔁结转，旧车数据同步可见（四态：未开始/进行中/完成/结转）
+    if (unfinished.length > 0) {
+      tx.update(tasks)
+        .set({ status: "carried" })
+        .where(
+          inArray(
+            tasks.id,
+            unfinished.map((t) => t.id),
+          ),
+        )
+        .run();
+    }
     return unfinished.length;
   });
   return { carried, tasks: await listTasksByVan(toVan) };
@@ -316,10 +380,7 @@ export async function carryOver(fromVan: string, toVan: string) {
 
 export async function weeklyStats(van: string) {
   const rows = await listTasksByVan(van);
-  const total = rows.length;
-  const done = rows.filter((t) => t.status === "done").length;
-  const carriedIn = rows.filter((t) => t.carriedFrom !== null).length;
-  const reviewNeeded = rows.filter((t) => t.carryCount >= 2).length;
+  const taskStats = taskStatsOf(rows);
 
   // 按负责人标签聚合运力统计
   const memberRows = await listMembers();
@@ -337,13 +398,7 @@ export async function weeklyStats(van: string) {
 
   return {
     van,
-    total,
-    done,
-    remaining: total - done,
-    carriedIn,
-    reviewNeeded,
-    completionRate: total === 0 ? null : done / total,
-    carryRate: total === 0 ? null : carriedIn / total,
+    ...taskStats,
     rarity: rarityStatsOf(rows),
     members: byMember,
   };

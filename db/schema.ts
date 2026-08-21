@@ -64,7 +64,8 @@ export const tasks = sqliteTable(
     size: integer("size"),
     /** 验收标准：周五凭什么说它做完了 */
     acceptance: text("acceptance"),
-    status: text("status", { enum: ["todo", "doing", "done"] })
+    /** 四态：未开始 / 进行中 / 完成 / 结转（结转由「滞留件转下一班」自动标记） */
+    status: text("status", { enum: ["todo", "doing", "done", "carried"] })
       .notNull()
       .default("todo"),
     /** 结转自哪个车次 */

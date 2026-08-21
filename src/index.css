@@ -321,6 +321,11 @@ body {
   color: #fff;
   box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
 }
+.status-carried {
+  background: rgba(217, 119, 6, 0.1);
+  color: var(--train-amber);
+  border: 1px solid rgba(217, 119, 6, 0.25);
+}
 
 /* ── 滞留标签 ── */
 .carry-badge {

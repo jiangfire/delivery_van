@@ -1,22 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
-
-/* ── 辅助函数 ── */
-
-async function dispatchVan(page: Page) {
-  await page.getByRole("button", { name: "发新车" }).click();
-  await expect(page.locator("select")).toBeVisible({ timeout: 5000 });
-}
-
-async function addTaskAndWait(page: Page) {
-  await page.getByRole("button", { name: "+ 快件" }).click();
-  await expect(
-    page.locator('[role="gridcell"]').filter({ hasText: "新快件" }).first(),
-  ).toBeVisible({ timeout: 5000 });
-}
-
-function dataCell(page: Page, colId: string) {
-  return page.locator(`[role="gridcell"][col-id="${colId}"]`).first();
-}
+import { dispatchVan, addTaskAndWait, dataCell } from "./helpers";
 
 /** 把第一行任务状态改为 done，刷新页面生效 */
 async function setFirstTaskDone(page: Page) {
@@ -118,5 +101,47 @@ test.describe("Bug 回归：快件编辑", () => {
     // 点击标题触发外部点击 → 弹框关闭
     await page.getByText("快递发车台").first().click();
     await expect(popup).toBeHidden({ timeout: 3000 });
+  });
+
+  test("结转后旧班次数据同步更新（状态标记🔁结转、滞留率）", async ({
+    page,
+  }) => {
+    await addTaskAndWait(page);
+
+    // 发第二班车并切回旧车（下拉里选旧班次）
+    await dispatchVan(page);
+    await page.locator("select").selectOption({ index: 1 });
+    const fromVan = await page.locator("select").inputValue();
+
+    // 旧车有 1 个未完成任务，结转后滞留率应为 100%
+    await page.once("dialog", (d) => d.accept());
+    await page.getByRole("button", { name: "滞留件转下一班" }).click();
+
+    // 旧车：任务状态变为 🔁结转，统计条滞留率更新为 100%
+    await expect(dataCell(page, "_status")).toHaveText("🔁 结转", {
+      timeout: 5000,
+    });
+    await expect(page.getByText("100%")).toBeVisible();
+
+    // 旧车归档只读：头部出现归档标识，新增/删除/再结转均禁用
+    await expect(page.getByText("已结转 · 归档")).toBeVisible();
+    await expect(page.getByRole("button", { name: "+ 快件" })).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "滞留件转下一班" }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "删除" }).first(),
+    ).toBeDisabled();
+
+    // 双击标题不应进入编辑态
+    await dataCell(page, "title").dblclick();
+    await expect(page.locator("input, textarea").first()).toBeHidden();
+    await page.waitForTimeout(300);
+
+    // 新车：任务以滞留件形式出现，结转记录标记来源班次
+    await page.locator("select").selectOption({ index: 0 });
+    await expect(
+      page.locator('[role="gridcell"][col-id="_carry"]').first(),
+    ).toContainText(fromVan, { timeout: 5000 });
   });
 });

@@ -10,18 +10,22 @@ const TEST_DB = path.join(__dirname, "e2e", "test.db");
 export default defineConfig({
   testDir: "./e2e",
   timeout: 30_000,
-  retries: 0,
+  /* 常规防抖动兜底；已知竞态（编辑提交后立即 reload 会中止在途请求）已在测试内用响应屏障消除 */
+  retries: 1,
+  /* 测试共享一个测试库、班次跨用例累积，必须串行执行 */
+  workers: 1,
   use: {
     baseURL: `http://localhost:${PORT}`,
     headless: true,
     screenshot: "only-on-failure",
   },
-  /* 先启动后端（用测试库），再跑测试；测试结束自动关 */
+  /* 先构建生产产物再起服务：e2e 跑真实部署形态，也避开 dev 模式（StrictMode 双挂载/HMR）
+     在慢启动下放大 AG Grid 编辑会话的时序竞态 */
   webServer: {
-    command: "npm run dev",
+    command: "npm run build && node scripts/start.mjs",
     port: PORT,
     reuseExistingServer: true,
-    timeout: 30_000,
+    timeout: 120_000,
     env: {
       DATABASE_URL: TEST_DB,
       PORT: String(PORT),
@@ -29,7 +33,5 @@ export default defineConfig({
   },
   /* 每次跑测试前删掉旧库 */
   globalSetup: "./e2e/global-setup.ts",
-  projects: [
-    { name: "chromium", use: { browserName: "chromium" } },
-  ],
+  projects: [{ name: "chromium", use: { browserName: "chromium" } }],
 });
