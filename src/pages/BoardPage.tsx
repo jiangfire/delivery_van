@@ -15,7 +15,7 @@ import { trpc } from "@/lib/trpc";
 import { nextVanCode } from "@contracts/vans";
 import type { PoolItem } from "@db/schema";
 import type { TaskWithOwners } from "../../api/queries/van";
-import TagCellEditor from "@/components/TagCellEditor";
+import MultiSelectCellEditor from "@/components/MultiSelectCellEditor";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -91,6 +91,14 @@ export default function BoardPage() {
     membersQ.refetch();
     vansQ.refetch();
   };
+
+  const addMemberM = trpc.van.members.add.useMutation({
+    onSuccess: () => {
+      toast.success("成员已添加");
+      refresh();
+    },
+    onError,
+  });
 
   /* ── mutations ── */
   const dispatchM = trpc.van.vans.dispatch.useMutation({
@@ -184,21 +192,6 @@ export default function BoardPage() {
     () => [
       {
         field: "kind",
-        headerName: "类型",
-        width: 70,
-        cellRenderer: (q: ICellRendererParams<UnifiedRow>) =>
-          q.data?.kind === "pool" ? (
-            <span className="text-xs font-bold" style={{ color: "#d97706" }}>
-              委托
-            </span>
-          ) : (
-            <span className="text-xs text-muted-foreground">快件</span>
-          ),
-        sortable: false,
-        editable: false,
-      },
-      {
-        field: "kind",
         headerName: "标题",
         flex: 2,
         editable: () => true,
@@ -213,22 +206,7 @@ export default function BoardPage() {
               </span>
             );
           }
-          return (
-            <span className="inline-flex items-center gap-2">
-              <span>{d.data.title}</span>
-              {d.data.carriedFrom && (
-                <span
-                  className="carry-badge"
-                  title={`滞留自 ${d.data.carriedFrom}`}
-                >
-                  📦 滞留
-                  {d.data.carryCount >= 2
-                    ? ` ×${d.data.carryCount} 需复盘`
-                    : ""}
-                </span>
-              )}
-            </span>
-          );
+          return <span>{d.data.title}</span>;
         },
       },
       // 委托专用列
@@ -239,17 +217,12 @@ export default function BoardPage() {
         editField: "rarity",
         cellEditor: "agSelectCellEditor",
         cellEditorParams: {
-          values: Object.values(RARITY_LABEL),
+          values: RARITIES as unknown as string[],
         },
-        valueGetter: (p) =>
-          p.data?.kind === "pool" ? RARITY_LABEL[p.data.data.rarity] : "",
+        valueGetter: (p) => (p.data?.kind === "pool" ? p.data.data.rarity : ""),
         valueSetter: (p) => {
           if (p.data?.kind === "pool") {
-            const label = String(p.newValue);
-            const entry = Object.entries(RARITY_LABEL).find(
-              ([, v]) => v === label,
-            );
-            if (entry) p.data.data.rarity = entry[0] as Rarity;
+            p.data.data.rarity = p.newValue as Rarity;
             return true;
           }
           return false;
@@ -257,7 +230,11 @@ export default function BoardPage() {
         cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
           const d = p.data;
           if (d?.kind !== "pool") return null;
-          return <span className={RARITY_CLASS[d.data.rarity]}>{p.value}</span>;
+          return (
+            <span className={RARITY_CLASS[d.data.rarity]}>
+              {RARITY_LABEL[d.data.rarity]}
+            </span>
+          );
         },
       },
       {
@@ -286,19 +263,28 @@ export default function BoardPage() {
             : "",
       },
 
-      // 任务专用列
+      // 负责人列（多选下拉）
       {
         field: "kind",
         headerName: "负责人",
         width: 200,
         editable: (p) => p.data?.kind === "task",
         editField: "owners",
-        cellEditor: TagCellEditor,
-        cellEditorParams: { members: memberNames },
+        cellEditor: MultiSelectCellEditor,
+        cellEditorParams: {
+          members: memberNames,
+          onAddMember: (name: string) => addMemberM.mutate({ name }),
+        },
         cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
           const d = p.data;
           if (d?.kind !== "task") return null;
           const owners: string[] = p.value ?? d.data.owners ?? [];
+          if (owners.length === 0)
+            return (
+              <span className="text-xs text-muted-foreground/50">
+                点击选择…
+              </span>
+            );
           return (
             <span className="flex flex-wrap gap-1">
               {owners.map((o) => (
@@ -384,17 +370,35 @@ export default function BoardPage() {
       {
         field: "kind",
         headerName: "送达日期",
-        width: 104,
+        width: 130,
         editable: (p) => p.data?.kind === "task",
         editField: "doneAt",
+        cellEditor: "agDateCellEditor",
+        cellEditorParams: {
+          min: "2020-01-01",
+          max: "2030-12-31",
+        },
         valueGetter: (p) =>
           p.data?.kind === "task" ? (p.data.data.doneAt ?? "") : "",
         valueSetter: (p) => {
           if (p.data?.kind === "task") {
-            p.data.data.doneAt = p.newValue as string | null;
+            const val = p.newValue;
+            if (val === "" || val == null) {
+              p.data.data.doneAt = null;
+            } else if (val instanceof Date) {
+              // YYYY-MM-DD
+              p.data.data.doneAt = val.toISOString().slice(0, 10);
+            } else {
+              p.data.data.doneAt = String(val) || null;
+            }
             return true;
           }
           return false;
+        },
+        cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
+          const d = p.data;
+          if (d?.kind !== "task" || !d.data.doneAt) return null;
+          return <span className="text-sm">📅 {d.data.doneAt}</span>;
         },
       },
       {
@@ -427,6 +431,38 @@ export default function BoardPage() {
             return true;
           }
           return false;
+        },
+      },
+      // 结转记录列
+      {
+        headerName: "结转记录",
+        width: 120,
+        editable: false,
+        valueGetter: (p) => {
+          if (p.data?.kind !== "task") return "";
+          const t = p.data.data;
+          if (!t.carriedFrom) return "";
+          return `${t.carriedFrom} →`;
+        },
+        cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
+          const d = p.data;
+          if (d?.kind !== "task" || !d.data.carriedFrom) return null;
+          const t = d.data;
+          return (
+            <span className="flex items-center gap-1 text-xs">
+              <span className="carry-badge" title={`滞留自 ${t.carriedFrom}`}>
+                📦 {t.carriedFrom}
+              </span>
+              {t.carryCount >= 2 && (
+                <span
+                  className="text-amber-500 font-bold"
+                  title="连续滞留 ≥2 班，需复盘"
+                >
+                  ⚠️
+                </span>
+              )}
+            </span>
+          );
         },
       },
       // 操作列
@@ -481,7 +517,7 @@ export default function BoardPage() {
         },
       },
     ],
-    [memberNames, curVan, takeM, removePoolM, removeTask],
+    [memberNames, curVan, takeM, removePoolM, removeTask, addMemberM],
   );
 
   /* ── 单元格编辑回调 ── */
@@ -511,6 +547,10 @@ export default function BoardPage() {
       value = value === "" || value == null ? null : Number(value);
     }
     if (key === "doneAt") {
+      // agDateCellEditor 可能返回 Date 对象，需统一转为 YYYY-MM-DD 字符串
+      if (value instanceof Date) {
+        value = value.toISOString().slice(0, 10);
+      }
       if (value === "" || value == null) {
         value = null;
       } else if (!DATE_RE.test(String(value))) {
@@ -697,6 +737,7 @@ export default function BoardPage() {
                 addPoolM.mutate({
                   title: newPoolTitle.trim(),
                   rarity: newPoolRarity,
+                  targetVan: curVan,
                 });
                 setNewPoolTitle("");
               }
@@ -720,6 +761,7 @@ export default function BoardPage() {
               addPoolM.mutate({
                 title: newPoolTitle.trim(),
                 rarity: newPoolRarity,
+                targetVan: curVan,
               });
               setNewPoolTitle("");
             }}
