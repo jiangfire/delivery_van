@@ -39,10 +39,10 @@ const RARITY_LABEL: Record<Rarity, string> = {
 };
 const RARITY_CLASS: Record<Rarity, string> = {
   common: "",
-  uncommon: "text-green-600",
-  rare: "text-blue-600",
-  epic: "text-purple-600",
-  legendary: "text-orange-500",
+  uncommon: "text-emerald-600",
+  rare: "text-sky-600",
+  epic: "text-violet-600",
+  legendary: "text-amber-500",
   mythic: "rarity-mythic-text",
 };
 
@@ -50,12 +50,6 @@ const RARITY_CLASS: Record<Rarity, string> = {
 type UnifiedRow =
   | { kind: "task"; data: TaskWithOwners }
   | { kind: "pool"; data: PoolItem & { postedRounds: number } };
-
-const POOL_STATUS_LABEL: Record<PoolItem["status"], string> = {
-  open: "待切片",
-  scheduled: "已排期",
-  done: "已完成",
-};
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -146,6 +140,14 @@ export default function BoardPage() {
     onError,
   });
 
+  const updatePoolM = trpc.van.pool.update.useMutation({
+    onSuccess: refresh,
+    onError: (e) => {
+      toast.error(e.message);
+      utils.invalidate();
+    },
+  });
+
   const takeM = trpc.van.tasks.add.useMutation({
     onSuccess: () => {
       toast.success("已接取");
@@ -186,7 +188,9 @@ export default function BoardPage() {
         width: 70,
         cellRenderer: (q: ICellRendererParams<UnifiedRow>) =>
           q.data?.kind === "pool" ? (
-            <span className="text-xs font-bold text-amber-600">委托</span>
+            <span className="text-xs font-bold" style={{ color: "#d97706" }}>
+              委托
+            </span>
           ) : (
             <span className="text-xs text-muted-foreground">快件</span>
           ),
@@ -231,9 +235,25 @@ export default function BoardPage() {
       {
         headerName: "稀有度",
         width: 80,
-        editable: false,
+        editable: (p) => p.data?.kind === "pool",
+        editField: "rarity",
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: {
+          values: Object.values(RARITY_LABEL),
+        },
         valueGetter: (p) =>
           p.data?.kind === "pool" ? RARITY_LABEL[p.data.data.rarity] : "",
+        valueSetter: (p) => {
+          if (p.data?.kind === "pool") {
+            const label = String(p.newValue);
+            const entry = Object.entries(RARITY_LABEL).find(
+              ([, v]) => v === label,
+            );
+            if (entry) p.data.data.rarity = entry[0] as Rarity;
+            return true;
+          }
+          return false;
+        },
         cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
           const d = p.data;
           if (d?.kind !== "pool") return null;
@@ -243,9 +263,18 @@ export default function BoardPage() {
       {
         headerName: "目标班次",
         width: 100,
-        editable: false,
+        editable: (p) => p.data?.kind === "pool",
+        editField: "targetVan",
         valueGetter: (p) =>
           p.data?.kind === "pool" ? (p.data.data.targetVan ?? "") : "",
+        valueSetter: (p) => {
+          if (p.data?.kind === "pool") {
+            p.data.data.targetVan =
+              p.newValue === "" ? null : (p.newValue as string);
+            return true;
+          }
+          return false;
+        },
       },
       {
         headerName: "挂账",
@@ -256,13 +285,7 @@ export default function BoardPage() {
             ? `${p.data.data.postedRounds}轮`
             : "",
       },
-      {
-        headerName: "大厅状态",
-        width: 80,
-        editable: false,
-        valueGetter: (p) =>
-          p.data?.kind === "pool" ? POOL_STATUS_LABEL[p.data.data.status] : "",
-      },
+
       // 任务专用列
       {
         field: "kind",
@@ -281,7 +304,12 @@ export default function BoardPage() {
               {owners.map((o) => (
                 <span
                   key={o}
-                  className="inline-block rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700"
+                  className="inline-block rounded-lg px-2 py-0.5 text-xs font-medium"
+                  style={{
+                    background: "rgba(14, 165, 233, 0.1)",
+                    color: "#0ea5e9",
+                    border: "1px solid rgba(14, 165, 233, 0.15)",
+                  }}
                 >
                   {o}
                 </span>
@@ -412,7 +440,7 @@ export default function BoardPage() {
             return (
               <div className="flex gap-1">
                 <button
-                  className="text-xs text-gray-400 hover:text-foreground disabled:opacity-40"
+                  className="btn btn-ghost text-xs"
                   disabled={curVan === null}
                   title={curVan === null ? "请先发新车" : `接取到 ${curVan}`}
                   onClick={() =>
@@ -427,7 +455,7 @@ export default function BoardPage() {
                   接取
                 </button>
                 <button
-                  className="text-xs text-gray-400 hover:text-red-500"
+                  className="btn btn-danger text-xs"
                   onClick={() =>
                     window.confirm(`删除委托「${d.data.title}」？`) &&
                     removePoolM.mutate({ id: d.data.id })
@@ -440,7 +468,7 @@ export default function BoardPage() {
           }
           return (
             <button
-              className="text-xs text-gray-400 hover:text-red-500"
+              className="btn btn-danger text-xs"
               onClick={() => {
                 if (d.data && window.confirm(`删除快件「${d.data.title}」？`)) {
                   removeTask({ id: d.data.id });
@@ -459,9 +487,22 @@ export default function BoardPage() {
   /* ── 单元格编辑回调 ── */
   const onCellValueChanged = (e: CellValueChangedEvent<UnifiedRow>) => {
     const d = e.data;
-    if (!d || d.kind !== "task") return;
+    if (!d) return;
+
+    // 委托行：更新 pool_items
+    if (d.kind === "pool") {
+      const key = (e.colDef as UnifiedRowColDef).editField;
+      if (!key) return;
+      let value: unknown = e.newValue;
+      if (value === "" || value === undefined) value = null;
+      updatePoolM.mutate({ id: d.data.id, [key]: value } as Parameters<
+        typeof updatePoolM.mutate
+      >[0]);
+      return;
+    }
+
+    // 快件行：更新 tasks
     const task = d.data;
-    // 用列定义上的 editField 而非 headerName，避免中文标题变更导致映射失效
     const key = (e.colDef as UnifiedRowColDef).editField;
     if (!key) return;
     let value: unknown = e.newValue;
@@ -488,144 +529,167 @@ export default function BoardPage() {
   };
 
   return (
-    <div className="mx-auto max-w-[1400px] px-6 py-5">
-      {/* ── 头部 ── */}
-      <header className="mb-4 flex flex-wrap items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <span className="led led-blue" />
-          <h1 className="text-lg font-bold tracking-wide">快递发车台</h1>
-          {vansQ.data !== undefined && vans.length === 0 ? (
-            <span className="text-sm text-muted-foreground">
-              还没有班车，点右侧「发新车」
-            </span>
-          ) : (
-            <div className="flex items-center gap-1 rounded-md border border-border bg-card px-1 py-0.5">
-              <button
-                className="px-2 text-gray-400 hover:text-foreground disabled:opacity-30"
-                disabled={vanIdx < 0 || vanIdx >= vans.length - 1}
-                onClick={() => setVan(vans[vanIdx + 1])}
-              >
-                ‹
-              </button>
-              <span className="px-1 font-mono text-sm font-bold">
-                {curVan ?? "——"}
+    <div className="aurora-bg">
+      <div className="relative z-10 mx-auto max-w-[1400px] px-8 py-8">
+        {/* ── 头部 ── */}
+        <header className="glass-card mb-6 flex flex-wrap items-center justify-between gap-4 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <span className="led led-blue" />
+            <h1 className="text-lg font-bold tracking-wide">快递发车台</h1>
+            {vansQ.data !== undefined && vans.length === 0 ? (
+              <span className="text-sm text-muted-foreground">
+                还没有班车，点右侧「发新车」
               </span>
-              <button
-                className="px-2 text-gray-400 hover:text-foreground disabled:opacity-30"
-                disabled={vanIdx <= 0}
-                onClick={() => setVan(vans[vanIdx - 1])}
-              >
-                ›
-              </button>
-              {curVan !== null && (
-                <select
-                  className="ml-1 rounded border border-border bg-background px-1 py-0.5 font-mono text-xs"
-                  value={curVan}
-                  onChange={(e) => setVan(e.target.value)}
+            ) : (
+              <div className="glass-sm flex items-center gap-1 px-2 py-1">
+                <button
+                  className="btn btn-ghost px-2 py-0.5 text-sm"
+                  disabled={vanIdx < 0 || vanIdx >= vans.length - 1}
+                  onClick={() => setVan(vans[vanIdx + 1])}
                 >
-                  {vans.map((v) => (
-                    <option key={v} value={v}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-          )}
-        </div>
-        <button
-          className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:opacity-90 disabled:opacity-40"
-          disabled={dispatchM.isPending}
-          onClick={() => dispatchM.mutate({})}
-        >
-          发新车
-        </button>
-      </header>
-
-      {failedQ && (
-        <div className="mb-4 flex items-center justify-between gap-4 rounded-md border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-600">
-          <span>数据加载失败：{failedQ.error.message}</span>
-          <button
-            className="shrink-0 rounded border border-red-300 px-2 py-0.5 hover:bg-red-100"
-            onClick={refetchAll}
-          >
-            重试
-          </button>
-        </div>
-      )}
-
-      {/* ── 统计条 ── */}
-      <div className="mb-4 flex flex-wrap items-center gap-6 rounded-lg border border-border bg-card px-4 py-3">
-        <Stat
-          label="未送达 / 共"
-          value={stats ? `${stats.remaining} / ${stats.total} 件` : "–"}
-        />
-        <Stat
-          label="送达率"
-          value={
-            stats?.completionRate == null
-              ? "–"
-              : `${Math.round(stats.completionRate * 100)}%`
-          }
-        />
-        <Stat
-          label="滞留率"
-          value={
-            stats?.carryRate == null
-              ? "–"
-              : `${Math.round(stats.carryRate * 100)}%`
-          }
-        />
-        <Stat
-          label="强制复盘"
-          value={stats ? `${stats.reviewNeeded} 个` : "–"}
-          tone={stats && stats.reviewNeeded > 0 ? "warn" : undefined}
-        />
-        {/* 稀有度构成 */}
-        <div>
-          <div className="label-caps">稀有度构成</div>
-          <div className="text-base font-bold">
-            {stats && stats.rarity.length > 0
-              ? stats.rarity.map((r, i) => (
-                  <span
-                    key={r.rarity}
-                    className={RARITY_CLASS[r.rarity as Rarity] ?? ""}
+                  ‹
+                </button>
+                <span className="px-1 font-mono text-sm font-bold">
+                  {curVan ?? "——"}
+                </span>
+                <button
+                  className="btn btn-ghost px-2 py-0.5 text-sm"
+                  disabled={vanIdx <= 0}
+                  onClick={() => setVan(vans[vanIdx - 1])}
+                >
+                  ›
+                </button>
+                {curVan !== null && (
+                  <select
+                    className="select-liquid ml-1 bg-transparent px-2 py-0.5 font-mono text-xs"
+                    value={curVan}
+                    onChange={(e) => setVan(e.target.value)}
                   >
-                    {i > 0 && (
-                      <span className="text-muted-foreground"> · </span>
-                    )}
-                    {RARITY_LABEL[r.rarity as Rarity] ?? r.rarity} {r.done}/
-                    {r.total}
-                  </span>
-                ))
-              : "–"}
+                    {vans.map((v) => (
+                      <option key={v} value={v}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            )}
+          </div>
+          <button
+            className="btn btn-primary px-4 py-2 text-sm"
+            disabled={dispatchM.isPending}
+            onClick={() => dispatchM.mutate({})}
+          >
+            发新车
+          </button>
+        </header>
+
+        {failedQ && (
+          <div className="glass-card mb-6 flex items-center justify-between gap-4 border-red-200/50 px-5 py-3 text-sm text-red-600">
+            <span>数据加载失败：{failedQ.error.message}</span>
+            <button
+              className="btn btn-glass shrink-0 border-red-200 px-3 py-1 text-red-600 hover:bg-red-50"
+              onClick={refetchAll}
+            >
+              重试
+            </button>
+          </div>
+        )}
+
+        {/* ── 统计条 ── */}
+        <div className="glass-card mb-6 flex flex-wrap items-center gap-8 px-6 py-5">
+          <Stat
+            label="未送达 / 共"
+            value={stats ? `${stats.remaining} / ${stats.total} 件` : "–"}
+          />
+          <Stat
+            label="送达率"
+            value={
+              stats?.completionRate == null
+                ? "–"
+                : `${Math.round(stats.completionRate * 100)}%`
+            }
+          />
+          <Stat
+            label="滞留率"
+            value={
+              stats?.carryRate == null
+                ? "–"
+                : `${Math.round(stats.carryRate * 100)}%`
+            }
+          />
+          <Stat
+            label="强制复盘"
+            value={stats ? `${stats.reviewNeeded} 个` : "–"}
+            tone={stats && stats.reviewNeeded > 0 ? "warn" : undefined}
+          />
+          {/* 稀有度构成 */}
+          <div>
+            <div className="label-caps">稀有度构成</div>
+            <div className="text-base font-bold">
+              {stats && stats.rarity.length > 0
+                ? stats.rarity.map((r, i) => (
+                    <span
+                      key={r.rarity}
+                      className={RARITY_CLASS[r.rarity as Rarity] ?? ""}
+                    >
+                      {i > 0 && (
+                        <span className="text-muted-foreground"> · </span>
+                      )}
+                      {RARITY_LABEL[r.rarity as Rarity] ?? r.rarity} {r.done}/
+                      {r.total}
+                    </span>
+                  ))
+                : "–"}
+            </div>
+          </div>
+          {/* 快捷操作 */}
+          <div className="ml-auto flex items-center gap-2">
+            <button
+              className="btn btn-glass px-4 py-2 text-sm"
+              disabled={curVan === null}
+              onClick={() => {
+                if (curVan === null) return;
+                const toVan = nextVanCode(curVan);
+                if (window.confirm(`把 ${curVan} 的滞留件转到下一班车？`)) {
+                  carryM.mutate({ fromVan: curVan, toVan });
+                }
+              }}
+            >
+              滞留件转下一班
+            </button>
           </div>
         </div>
-        {/* 快捷操作 */}
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-accent disabled:opacity-40"
-            disabled={curVan === null}
-            onClick={() => {
-              if (curVan === null) return;
-              const toVan = nextVanCode(curVan);
-              if (window.confirm(`把 ${curVan} 的滞留件转到下一班车？`)) {
-                carryM.mutate({ fromVan: curVan, toVan });
+
+        {/* ── 新建行 ── */}
+        <div className="glass-card mb-5 flex flex-wrap items-center gap-3 px-5 py-4">
+          <input
+            className="input-liquid w-56 px-3 py-2 text-sm"
+            placeholder="新快件标题"
+            value={newTaskTitle}
+            onChange={(e) => setNewTaskTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newTaskTitle.trim() && curVan) {
+                addTaskM.mutate({ van: curVan, title: newTaskTitle.trim() });
+                setNewTaskTitle("");
               }
             }}
+          />
+          <button
+            className="btn btn-primary px-4 py-2 text-sm"
+            disabled={!newTaskTitle.trim() || !curVan || addTaskM.isPending}
+            onClick={() => {
+              if (!curVan) return;
+              addTaskM.mutate({ van: curVan, title: newTaskTitle.trim() });
+              setNewTaskTitle("");
+            }}
           >
-            滞留件转下一班
+            新建快件
           </button>
-        </div>
-      </div>
-
-      {/* ── 新建行：录入委托 + 装车快件 ── */}
-      <div className="mb-3 flex flex-wrap gap-2">
-        <div className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1">
-          <span className="text-xs text-amber-600 font-bold mr-1">委托</span>
+          <span className="text-muted-foreground/40 mx-1">|</span>
           <input
-            className="w-48 rounded border border-input bg-background px-2 py-1 text-sm"
-            placeholder="委托名称"
+            className="input-liquid w-56 px-3 py-2 text-sm"
+            placeholder="新委托标题"
             value={newPoolTitle}
             onChange={(e) => setNewPoolTitle(e.target.value)}
             onKeyDown={(e) => {
@@ -639,7 +703,7 @@ export default function BoardPage() {
             }}
           />
           <select
-            className="rounded border border-input bg-background px-1 py-1 text-xs"
+            className="select-liquid bg-transparent px-3 py-2 text-xs"
             value={newPoolRarity}
             onChange={(e) => setNewPoolRarity(e.target.value as Rarity)}
           >
@@ -650,7 +714,7 @@ export default function BoardPage() {
             ))}
           </select>
           <button
-            className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-40"
+            className="btn btn-primary px-4 py-2 text-sm"
             disabled={!newPoolTitle.trim() || addPoolM.isPending}
             onClick={() => {
               addPoolM.mutate({
@@ -660,94 +724,75 @@ export default function BoardPage() {
               setNewPoolTitle("");
             }}
           >
-            录入
+            新建委托
           </button>
         </div>
-        <div className="flex items-center gap-1 rounded-md border border-border bg-card px-2 py-1">
-          <span className="text-xs text-muted-foreground mr-1">快件</span>
-          <input
-            className="w-48 rounded border border-input bg-background px-2 py-1 text-sm"
-            placeholder="快件标题"
-            value={newTaskTitle}
-            onChange={(e) => setNewTaskTitle(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && newTaskTitle.trim() && curVan) {
-                addTaskM.mutate({ van: curVan, title: newTaskTitle.trim() });
-                setNewTaskTitle("");
+
+        {/* ── 主表格：委托 + 快件统一展示 ── */}
+        <div className="glass-card mb-6 p-2">
+          <div style={{ height: 520 }}>
+            <AgGridReact<UnifiedRow>
+              theme={themeQuartz}
+              rowData={unifiedData}
+              columnDefs={columnDefs}
+              defaultColDef={{ sortable: true, resizable: true }}
+              loading={tasksQ.isLoading || poolQ.isLoading}
+              onCellValueChanged={onCellValueChanged}
+              getRowClass={(p) => {
+                if (p.data?.kind === "task" && p.data.data.carryCount >= 2)
+                  return "bg-amber-50/60";
+                if (p.data?.kind === "pool") return "bg-orange-50/40";
+                return "";
+              }}
+              getRowId={(p) =>
+                p.data.kind === "task"
+                  ? `task-${p.data.data.id}`
+                  : `pool-${p.data.data.id}`
               }
-            }}
-          />
-          <button
-            className="rounded bg-primary px-2 py-1 text-xs text-primary-foreground hover:opacity-90 disabled:opacity-40"
-            disabled={!newTaskTitle.trim() || !curVan || addTaskM.isPending}
-            onClick={() => {
-              if (!curVan) return;
-              addTaskM.mutate({ van: curVan, title: newTaskTitle.trim() });
-              setNewTaskTitle("");
-            }}
-          >
-            装车
-          </button>
+              localeText={{
+                noRowsToShow: "还没有委托或快件，在上方录入开始",
+              }}
+            />
+          </div>
         </div>
-      </div>
 
-      {/* ── 主表格：委托 + 快件统一展示 ── */}
-      <div style={{ height: 500 }} className="mb-6">
-        <AgGridReact<UnifiedRow>
-          theme={themeQuartz}
-          rowData={unifiedData}
-          columnDefs={columnDefs}
-          defaultColDef={{ sortable: true, resizable: true }}
-          loading={tasksQ.isLoading || poolQ.isLoading}
-          onCellValueChanged={onCellValueChanged}
-          getRowClass={(p) => {
-            if (p.data?.kind === "task" && p.data.data.carryCount >= 2)
-              return "bg-amber-50";
-            if (p.data?.kind === "pool") return "bg-orange-50/50";
-            return "";
-          }}
-          getRowId={(p) =>
-            p.data.kind === "task"
-              ? `task-${p.data.data.id}`
-              : `pool-${p.data.data.id}`
-          }
-          localeText={{
-            noRowsToShow: "还没有委托或快件，在上方录入开始",
-          }}
-        />
-      </div>
-
-      {/* ── 成员运力统计（从标签自动聚合） ── */}
-      {stats && stats.members.length > 0 && (
-        <section className="rounded-lg border border-border bg-card p-4">
-          <h2 className="mb-3 text-sm font-bold">
-            成员运力{" "}
-            <span className="text-xs font-normal text-muted-foreground">
-              （按标签自动统计）
-            </span>
-          </h2>
-          <ul className="space-y-2">
-            {stats.members.map((m) => {
-              const overloaded = m.assigned > m.capacity;
-              return (
-                <li key={m.name} className="flex items-center gap-3 text-sm">
-                  <span className="w-20 truncate font-medium">{m.name}</span>
-                  <span className="text-xs text-muted-foreground">
-                    运力 {m.capacity} 天
-                  </span>
-                  <span
-                    className={`flex-1 text-xs ${overloaded ? "font-bold text-red-500" : "text-muted-foreground"}`}
+        {/* ── 成员运力统计（从标签自动聚合） ── */}
+        {stats && stats.members.length > 0 && (
+          <section className="glass-card p-5">
+            <h2 className="mb-4 text-sm font-bold">
+              成员运力{" "}
+              <span className="text-xs font-normal text-muted-foreground">
+                （按标签自动统计）
+              </span>
+            </h2>
+            <ul className="space-y-3">
+              {stats.members.map((m) => {
+                const overloaded = m.assigned > m.capacity;
+                return (
+                  <li
+                    key={m.name}
+                    className="glass-sm flex items-center gap-4 px-4 py-3 text-sm"
                   >
-                    已装 {m.assigned} 天 · {m.taskCount} 件 · 送达 {m.done} ·
-                    滞留 {m.carriedIn}
-                    {overloaded && "（超载！）"}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </section>
-      )}
+                    <span className="w-20 truncate font-semibold">
+                      {m.name}
+                    </span>
+                    <span className="text-xs text-muted-foreground">
+                      运力 {m.capacity} 天
+                    </span>
+                    <span
+                      className={`flex-1 text-xs ${overloaded ? "font-bold text-red-500" : "text-muted-foreground"}`}
+                    >
+                      已装 {m.assigned} 天 · {m.taskCount} 件 · 送达 {m.done} ·
+                      滞留 {m.carriedIn}
+                      {overloaded && "（超载！）"}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        )}
+      </div>
     </div>
   );
 }
@@ -765,7 +810,7 @@ function Stat({
     <div>
       <div className="label-caps">{label}</div>
       <div
-        className={`text-base font-bold ${tone === "warn" ? "text-amber-600" : ""}`}
+        className={`text-base font-bold ${tone === "warn" ? "text-amber-500" : ""}`}
       >
         {value}
       </div>

@@ -2,66 +2,67 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Liquid Frame Design Tokens ── */
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 240 10% 3.9%;
+    --background: 0 0% 98%;
+    --foreground: 220 13% 12%;
     --card: 0 0% 100%;
-    --card-foreground: 240 10% 3.9%;
+    --card-foreground: 220 13% 12%;
     --popover: 0 0% 100%;
-    --popover-foreground: 240 10% 3.9%;
-    --primary: 240 5.9% 10%;
-    --primary-foreground: 0 0% 98%;
-    --secondary: 240 4.8% 95.9%;
-    --secondary-foreground: 240 5.9% 10%;
-    --muted: 240 4.8% 95.9%;
-    --muted-foreground: 240 3.8% 46.1%;
-    --accent: 240 4.8% 95.9%;
-    --accent-foreground: 240 5.9% 10%;
-    --destructive: 0 84.2% 60.2%;
+    --popover-foreground: 220 13% 12%;
+    --primary: 199 89% 48%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 5.9% 90%;
-    --input: 240 5.9% 90%;
-    --ring: 240 5.9% 10%;
-    --radius: 0.625rem;
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 199 89% 48%;
+    --radius: 0.75rem;
     --sidebar-background: 0 0% 98%;
-    --sidebar-foreground: 240 5.3% 26.1%;
-    --sidebar-primary: 240 5.9% 10%;
-    --sidebar-primary-foreground: 0 0% 98%;
-    --sidebar-accent: 240 4.8% 95.9%;
-    --sidebar-accent-foreground: 240 5.9% 10%;
-    --sidebar-border: 220 13% 91%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-foreground: 215 25% 27%;
+    --sidebar-primary: 199 89% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 210 40% 96%;
+    --sidebar-accent-foreground: 222 47% 11%;
+    --sidebar-border: 214 20% 92%;
+    --sidebar-ring: 199 89% 48%;
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --background: 222 47% 6%;
+    --foreground: 210 40% 96%;
+    --card: 222 47% 9%;
+    --card-foreground: 210 40% 96%;
+    --popover: 222 47% 9%;
+    --popover-foreground: 210 40% 96%;
+    --primary: 199 89% 58%;
+    --primary-foreground: 222 47% 6%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 96%;
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 55%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 96%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 210 40% 96%;
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 199 89% 58%;
+    --sidebar-background: 222 47% 9%;
+    --sidebar-foreground: 210 40% 96%;
+    --sidebar-primary: 199 89% 58%;
+    --sidebar-primary-foreground: 222 47% 6%;
+    --sidebar-accent: 217 33% 17%;
+    --sidebar-accent-foreground: 210 40% 96%;
+    --sidebar-border: 217 33% 17%;
+    --sidebar-ring: 199 89% 58%;
   }
 }
 
@@ -70,19 +71,126 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+    font-family:
+      "Inter",
+      "SF Pro Display",
+      system-ui,
+      -apple-system,
+      sans-serif;
   }
 }
-/* ── 发车台定制样式 ── */
+
+/* ══════════════════════════════════════
+   Liquid Frame — Aurora Background
+   ══════════════════════════════════════ */
+.aurora-bg {
+  background: linear-gradient(
+    155deg,
+    #e0f7fa 0%,
+    #e8f5e9 30%,
+    #f0f9ff 60%,
+    #fafbff 80%,
+    #ffffff 100%
+  );
+  min-height: 100vh;
+  position: relative;
+}
+.aurora-bg::before,
+.aurora-bg::after {
+  content: "";
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(80px);
+  pointer-events: none;
+  z-index: 0;
+}
+.aurora-bg::before {
+  width: 700px;
+  height: 700px;
+  background: radial-gradient(
+    circle,
+    rgba(14, 165, 233, 0.1) 0%,
+    transparent 70%
+  );
+  top: -250px;
+  right: -150px;
+  animation: aurora-drift 14s ease-in-out infinite;
+}
+.aurora-bg::after {
+  width: 600px;
+  height: 600px;
+  background: radial-gradient(
+    circle,
+    rgba(16, 185, 129, 0.08) 0%,
+    transparent 70%
+  );
+  bottom: -200px;
+  left: -100px;
+  animation: aurora-drift 18s ease-in-out infinite reverse;
+}
+@keyframes aurora-drift {
+  0%,
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(30px, -20px) scale(1.05);
+  }
+  66% {
+    transform: translate(-20px, 15px) scale(0.95);
+  }
+}
+
+/* ══════════════════════════════════════
+   Liquid Frame — Glass Material
+   ══════════════════════════════════════ */
+.glass {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}
+.glass-card {
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(255, 255, 255, 0.45);
+  border-radius: 20px;
+  box-shadow:
+    0 4px 24px rgba(0, 0, 0, 0.04),
+    0 1px 2px rgba(0, 0, 0, 0.02);
+  transition:
+    transform 0.3s cubic-bezier(0.25, 0.1, 0.25, 1),
+    box-shadow 0.3s ease;
+}
+.glass-card:hover {
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.06),
+    0 2px 4px rgba(0, 0, 0, 0.03);
+}
+.glass-sm {
+  background: rgba(255, 255, 255, 0.55);
+  backdrop-filter: blur(12px) saturate(160%);
+  -webkit-backdrop-filter: blur(12px) saturate(160%);
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 14px;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.03);
+}
+
+/* ══════════════════════════════════════
+   发车台定制样式
+   ══════════════════════════════════════ */
 :root {
-  --train-accent: #0095ff;
+  --train-accent: #0ea5e9;
   --train-amber: #d97706;
-  --train-green: #16a34a;
+  --train-green: #10b981;
 }
 body {
   font-feature-settings: "tnum";
 }
 
+/* ── 标签 ── */
 .label-caps {
   font-size: 10px;
   letter-spacing: 0.18em;
@@ -91,6 +199,7 @@ body {
   font-weight: 600;
 }
 
+/* ── LED 指示灯 ── */
 .led {
   width: 8px;
   height: 8px;
@@ -99,112 +208,313 @@ body {
 }
 .led-blue {
   background: var(--train-accent);
-  box-shadow: 0 0 6px rgba(0, 149, 255, 0.6);
-  animation: train-pulse 1.6s ease-in-out infinite;
+  box-shadow:
+    0 0 6px rgba(14, 165, 233, 0.5),
+    0 0 12px rgba(14, 165, 233, 0.2);
+  animation: led-glow 2s ease-in-out infinite;
 }
-@keyframes train-pulse {
+@keyframes led-glow {
   0%,
   100% {
     opacity: 1;
+    box-shadow:
+      0 0 6px rgba(14, 165, 233, 0.5),
+      0 0 12px rgba(14, 165, 233, 0.2);
   }
   50% {
-    opacity: 0.35;
+    opacity: 0.4;
+    box-shadow:
+      0 0 3px rgba(14, 165, 233, 0.3),
+      0 0 6px rgba(14, 165, 233, 0.1);
   }
 }
 
-/* 神话稀有度：彩虹渐变流动文字（要花里胡哨） */
+/* ── 神话稀有度：极光渐变流动文字 ── */
 .rarity-mythic-text {
   background: linear-gradient(
     90deg,
-    #ff004c,
-    #ff8a00,
-    #ffee00,
-    #00e676,
-    #00b0ff,
-    #a500ff,
-    #ff004c
+    #0ea5e9,
+    #06b6d4,
+    #10b981,
+    #a78bfa,
+    #f472b6,
+    #fb923c,
+    #0ea5e9
   );
   background-size: 300% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
   font-weight: 700;
-  animation: mythic-flow 2.5s linear infinite;
+  animation: mythic-flow 3s ease-in-out infinite;
 }
 @keyframes mythic-flow {
-  to {
-    background-position: -300% 0;
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
   }
 }
 
+/* ── 档位标签 ── */
 .size-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 20px;
-  min-width: 34px;
-  padding: 0 8px;
-  border-radius: 4px;
+  height: 22px;
+  min-width: 38px;
+  padding: 0 10px;
+  border-radius: 8px;
   font-size: 11px;
   font-weight: 700;
+  transition: transform 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+.size-badge:hover {
+  transform: scale(1.05);
 }
 .size-1 {
-  background: #e5f4ff;
+  background: rgba(14, 165, 233, 0.1);
   color: var(--train-accent);
+  border: 1px solid rgba(14, 165, 233, 0.2);
 }
 .size-3 {
-  background: #fdf3e3;
+  background: rgba(217, 119, 6, 0.1);
   color: var(--train-amber);
+  border: 1px solid rgba(217, 119, 6, 0.2);
 }
 .size-5 {
-  background: #fdecec;
+  background: rgba(239, 68, 68, 0.1);
   color: #dc2626;
+  border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
+/* ── 状态标签 ── */
 .status-badge {
   display: inline-flex;
   align-items: center;
-  height: 22px;
-  padding: 0 9px;
+  height: 24px;
+  padding: 0 10px;
   border-radius: 999px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
+  transition: transform 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+.status-badge:hover {
+  transform: scale(1.05);
 }
 .status-todo {
-  background: #f1f1f4;
-  color: #55555e;
+  background: rgba(156, 163, 175, 0.15);
+  color: #6b7280;
+  border: 1px solid rgba(156, 163, 175, 0.25);
 }
 .status-doing {
   background: var(--train-accent);
   color: #fff;
+  box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3);
 }
 .status-done {
   background: var(--train-green);
   color: #fff;
+  box-shadow: 0 2px 8px rgba(16, 185, 129, 0.3);
 }
 
+/* ── 滞留标签 ── */
 .carry-badge {
   font-size: 10px;
-  padding: 2px 6px;
-  border-radius: 3px;
-  background: #fdf3e3;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(217, 119, 6, 0.1);
   color: var(--train-amber);
   font-weight: 600;
+  border: 1px solid rgba(217, 119, 6, 0.15);
 }
 
-/* AG Grid 主题微调 */
+/* ══════════════════════════════════════
+   Button System
+   ══════════════════════════════════════ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  font-weight: 600;
+  transition:
+    transform 0.2s cubic-bezier(0.25, 0.1, 0.25, 1),
+    box-shadow 0.25s ease,
+    background-color 0.2s ease,
+    opacity 0.2s ease;
+}
+.btn:active {
+  transform: scale(0.97);
+}
+
+.btn-primary {
+  background: linear-gradient(135deg, #0ea5e9, #0284c7);
+  color: #fff;
+  border: none;
+  border-radius: 12px;
+  box-shadow:
+    0 2px 8px rgba(14, 165, 233, 0.3),
+    0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.btn-primary:hover {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow:
+    0 4px 16px rgba(14, 165, 233, 0.35),
+    0 2px 4px rgba(0, 0, 0, 0.08);
+}
+.btn-primary:disabled {
+  opacity: 0.45;
+  transform: none;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.btn-glass {
+  background: rgba(255, 255, 255, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  color: hsl(var(--foreground));
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 12px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.04);
+}
+.btn-glass:hover {
+  background: rgba(255, 255, 255, 0.8);
+  transform: translateY(-1px) scale(1.02);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.06),
+    0 1px 3px rgba(0, 0, 0, 0.04);
+}
+.btn-glass:disabled {
+  opacity: 0.4;
+  transform: none;
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  border: none;
+  border-radius: 10px;
+}
+.btn-ghost:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: hsl(var(--foreground));
+}
+.btn-ghost:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.btn-danger {
+  background: transparent;
+  color: hsl(var(--muted-foreground));
+  border: none;
+  border-radius: 10px;
+}
+.btn-danger:hover {
+  background: rgba(239, 68, 68, 0.08);
+  color: #dc2626;
+}
+
+/* ══════════════════════════════════════
+   Input System
+   ══════════════════════════════════════ */
+.input-liquid {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.04),
+    0 1px 0 rgba(255, 255, 255, 0.6);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+.input-liquid:focus {
+  outline: none;
+  border-color: rgba(14, 165, 233, 0.4);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.04),
+    0 0 0 3px rgba(14, 165, 233, 0.1);
+  background: rgba(255, 255, 255, 0.9);
+}
+.input-liquid::placeholder {
+  color: hsl(var(--muted-foreground));
+  opacity: 0.6;
+}
+
+.select-liquid {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 10px;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+.select-liquid:focus {
+  outline: none;
+  border-color: rgba(14, 165, 233, 0.4);
+  box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
+}
+
+/* ══════════════════════════════════════
+   AG Grid Theme — Liquid Frame 微调
+   ══════════════════════════════════════ */
 .ag-theme-quartz {
   --ag-font-family:
-    -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
-    "Microsoft YaHei", sans-serif;
+    "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
   --ag-font-size: 13px;
-  --ag-header-background-color: #fbfbfc;
-  --ag-header-foreground-color: #8a8a93;
+  --ag-header-background-color: rgba(255, 255, 255, 0.5);
+  --ag-header-foreground-color: hsl(var(--muted-foreground));
   --ag-header-font-size: 10px;
-  --ag-border-color: #e6e6ea;
-  --ag-row-border-color: #eeeef2;
-  --ag-row-hover-color: #fbfbfc;
-  --ag-selected-row-background-color: #e5f4ff;
+  --ag-header-font-weight: 600;
+  --ag-border-color: rgba(0, 0, 0, 0.05);
+  --ag-row-border-color: rgba(0, 0, 0, 0.04);
+  --ag-row-hover-color: rgba(14, 165, 233, 0.03);
+  --ag-selected-row-background-color: rgba(14, 165, 233, 0.06);
   --ag-accent-color: var(--train-accent);
-  --ag-border-radius: 8px;
+  --ag-border-radius: 12px;
+  --ag-font-weight-normal: 400;
+  --ag-row-hover-transition: background-color 0.2s ease;
+}
+
+/* ══════════════════════════════════════
+   有机动效
+   ══════════════════════════════════════ */
+@keyframes float-gentle {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-6px);
+  }
+}
+
+/* 玻璃面板内滚动条美化 */
+.glass-card ::-webkit-scrollbar {
+  width: 6px;
+}
+.glass-card ::-webkit-scrollbar-track {
+  background: transparent;
+}
+.glass-card ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 3px;
+}
+.glass-card ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.18);
 }
