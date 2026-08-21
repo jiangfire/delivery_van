@@ -8,6 +8,8 @@ import {
   type ICellRendererParams,
   type CellValueChangedEvent,
 } from "ag-grid-community";
+
+type UnifiedRowColDef = ColDef<UnifiedRow> & { editField?: string };
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { nextVanCode } from "@contracts/vans";
@@ -176,7 +178,7 @@ export default function BoardPage() {
   /* ── 列定义 ── */
   const memberNames = useMemo(() => members.map((m) => m.name), [members]);
 
-  const columnDefs = useMemo<ColDef<UnifiedRow>[]>(
+  const columnDefs = useMemo<UnifiedRowColDef[]>(
     () => [
       {
         field: "kind",
@@ -196,6 +198,7 @@ export default function BoardPage() {
         headerName: "标题",
         flex: 2,
         editable: () => true,
+        editField: "title",
         cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
           const d = p.data;
           if (!d) return null;
@@ -266,6 +269,7 @@ export default function BoardPage() {
         headerName: "负责人",
         width: 200,
         editable: (p) => p.data?.kind === "task",
+        editField: "owners",
         cellEditor: TagCellEditor,
         cellEditorParams: { members: memberNames },
         cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
@@ -299,6 +303,7 @@ export default function BoardPage() {
         headerName: "档位",
         width: 86,
         editable: (p) => p.data?.kind === "task",
+        editField: "size",
         cellEditor: "agSelectCellEditor",
         cellEditorParams: { values: ["1", "3", "5"] },
         valueGetter: (p) =>
@@ -326,6 +331,7 @@ export default function BoardPage() {
         headerName: "状态",
         width: 100,
         editable: (p) => p.data?.kind === "task",
+        editField: "status",
         cellEditor: "agSelectCellEditor",
         cellEditorParams: { values: ["todo", "doing", "done"] },
         valueGetter: (p) =>
@@ -352,6 +358,7 @@ export default function BoardPage() {
         headerName: "送达日期",
         width: 104,
         editable: (p) => p.data?.kind === "task",
+        editField: "doneAt",
         valueGetter: (p) =>
           p.data?.kind === "task" ? (p.data.data.doneAt ?? "") : "",
         valueSetter: (p) => {
@@ -367,6 +374,7 @@ export default function BoardPage() {
         headerName: "验收标准",
         flex: 1.4,
         editable: (p) => p.data?.kind === "task",
+        editField: "acceptance",
         valueGetter: (p) =>
           p.data?.kind === "task" ? (p.data.data.acceptance ?? "") : "",
         valueSetter: (p) => {
@@ -382,6 +390,7 @@ export default function BoardPage() {
         headerName: "备注",
         flex: 1,
         editable: (p) => p.data?.kind === "task",
+        editField: "note",
         valueGetter: (p) =>
           p.data?.kind === "task" ? (p.data.data.note ?? "") : "",
         valueSetter: (p) => {
@@ -452,13 +461,15 @@ export default function BoardPage() {
     const d = e.data;
     if (!d || d.kind !== "task") return;
     const task = d.data;
-    const field = e.colDef.headerName;
+    // 用列定义上的 editField 而非 headerName，避免中文标题变更导致映射失效
+    const key = (e.colDef as UnifiedRowColDef).editField;
+    if (!key) return;
     let value: unknown = e.newValue;
 
-    if (field === "档位") {
+    if (key === "size") {
       value = value === "" || value == null ? null : Number(value);
     }
-    if (field === "送达日期") {
+    if (key === "doneAt") {
       if (value === "" || value == null) {
         value = null;
       } else if (!DATE_RE.test(String(value))) {
@@ -467,11 +478,10 @@ export default function BoardPage() {
         return;
       }
     }
-    if (field === "验收标准" || field === "备注") {
+    if (key === "acceptance" || key === "note") {
       if (value === "" || value === undefined) value = null;
     }
 
-    const key = fieldToKey(field!);
     updateTaskM.mutate({ id: task.id, [key]: value } as Parameters<
       typeof updateTaskM.mutate
     >[0]);
@@ -761,18 +771,4 @@ function Stat({
       </div>
     </div>
   );
-}
-
-/** 表头名 → Task 字段名映射 */
-function fieldToKey(header: string): string {
-  const map: Record<string, string> = {
-    标题: "title",
-    档位: "size",
-    状态: "status",
-    送达日期: "doneAt",
-    验收标准: "acceptance",
-    备注: "note",
-    负责人: "owners",
-  };
-  return map[header] ?? header;
 }

@@ -59,7 +59,7 @@ export const tasks = sqliteTable(
     title: text("title").notNull(),
     /** 关联需求池条目 */
     poolItemId: integer("pool_item_id"),
-    /** 负责人姓名（小团队无账号体系，直接存名） */
+    /** @deprecated 已迁移至 task_owners 关联表，新逻辑请勿读写此字段 */
     ownerName: text("owner_name"),
     /** 档位：1 / 3 / 5 天 */
     size: integer("size"),
