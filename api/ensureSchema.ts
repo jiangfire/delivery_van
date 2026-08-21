@@ -53,4 +53,10 @@ export async function ensureSchema() {
   await db.run(
     sql`CREATE INDEX IF NOT EXISTS tasks_van_code_idx ON tasks (van_code)`,
   );
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS task_owners (
+      task_id integer NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      owner_name text NOT NULL
+    )
+  `);
 }

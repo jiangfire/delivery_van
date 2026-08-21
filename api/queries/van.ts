@@ -1,10 +1,11 @@
-import { and, asc, desc, eq, ne } from "drizzle-orm";
+import { and, asc, desc, eq, ne, inArray } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "./connection";
 import {
   members,
   poolItems,
   tasks,
+  taskOwners,
   vans,
   RARITIES,
   type PoolItem,
@@ -54,7 +55,7 @@ export function toStrandedTask(
     vanCode: toVan,
     title: task.title,
     poolItemId: task.poolItemId,
-    ownerName: task.ownerName,
+    ownerName: task.ownerName, // 保留兼容，实际用 task_owners
     size: task.size,
     acceptance: task.acceptance,
     status: "todo",
@@ -93,6 +94,28 @@ export function rarityStatsOf(
   }));
 }
 
+/* ── 任务带负责人列表的公共类型 ── */
+
+export type TaskWithOwners = Task & { owners: string[] };
+
+/** 批量查询任务的负责人列表 */
+async function ownersByTaskIds(
+  taskIds: number[],
+): Promise<Map<number, string[]>> {
+  if (taskIds.length === 0) return new Map();
+  const rows = await getDb()
+    .select({ taskId: taskOwners.taskId, ownerName: taskOwners.ownerName })
+    .from(taskOwners)
+    .where(inArray(taskOwners.taskId, taskIds));
+  const map = new Map<number, string[]>();
+  for (const r of rows) {
+    const list = map.get(r.taskId) ?? [];
+    list.push(r.ownerName);
+    map.set(r.taskId, list);
+  }
+  return map;
+}
+
 /* ── 班次（手动发新车，不再绑定周五） ── */
 
 /** 全部班次编码（最新在前），来自 vans 表 */
@@ -121,7 +144,6 @@ export async function listMembers() {
 
 export async function addMember(name: string, capacity: number) {
   const db = getDb();
-  // 成员名有 UNIQUE 约束：先查重给出中文提示，避免原生 SqliteError 以 500 抛给前端
   const dup = await db
     .select({ id: members.id })
     .from(members)
@@ -140,28 +162,35 @@ export async function updateMemberCapacity(id: number, capacity: number) {
   if (!member)
     throw new TRPCError({ code: "NOT_FOUND", message: `成员 ${id} 不存在` });
 
-  // 调低运力时校验：该成员任一班次的已排档位合计都不能超过新运力
+  // 调低运力时校验：通过 task_owners 关联查该成员名下所有任务的档位合计
   if (capacity < member.capacity) {
-    const rows = await db
-      .select({ vanCode: tasks.vanCode, size: tasks.size })
-      .from(tasks)
-      .where(eq(tasks.ownerName, member.name));
-    const byVan = new Map<string, number>();
-    for (const r of rows)
-      byVan.set(r.vanCode, (byVan.get(r.vanCode) ?? 0) + (r.size ?? 0));
-    let peakVan = "";
-    let peak = 0;
-    for (const [van, total] of byVan) {
-      if (total > peak) {
-        peak = total;
-        peakVan = van;
+    const ownerRows = await db
+      .select({ taskId: taskOwners.taskId })
+      .from(taskOwners)
+      .where(eq(taskOwners.ownerName, member.name));
+    const taskIds = ownerRows.map((r) => r.taskId);
+    if (taskIds.length > 0) {
+      const taskRows = await db
+        .select({ vanCode: tasks.vanCode, size: tasks.size })
+        .from(tasks)
+        .where(inArray(tasks.id, taskIds));
+      const byVan = new Map<string, number>();
+      for (const r of taskRows)
+        byVan.set(r.vanCode, (byVan.get(r.vanCode) ?? 0) + (r.size ?? 0));
+      let peakVan = "";
+      let peak = 0;
+      for (const [van, total] of byVan) {
+        if (total > peak) {
+          peak = total;
+          peakVan = van;
+        }
       }
-    }
-    if (capacity < peak) {
-      throw new TRPCError({
-        code: "BAD_REQUEST",
-        message: `${member.name} 在 ${peakVan} 已排 ${peak} 天，运力不能调低到 ${capacity} 天`,
-      });
+      if (capacity < peak) {
+        throw new TRPCError({
+          code: "BAD_REQUEST",
+          message: `${member.name} 在 ${peakVan} 已排 ${peak} 天，运力不能调低到 ${capacity} 天`,
+        });
+      }
     }
   }
 
@@ -176,7 +205,6 @@ export type PoolItemWithRounds = PoolItem & { postedRounds: number };
 export async function listPoolItems(): Promise<PoolItemWithRounds[]> {
   const db = getDb();
   const items = await db.select().from(poolItems).orderBy(desc(poolItems.id));
-  // 挂账轮数 = 晚于 posted_van 创建的班次数；按 created_at 升序定位后取尾部数量
   const vanRows = await db
     .select({ code: vans.code })
     .from(vans)
@@ -185,7 +213,6 @@ export async function listPoolItems(): Promise<PoolItemWithRounds[]> {
     let postedRounds = 0;
     if (item.status === "open" && item.postedVan !== null) {
       const idx = vanRows.findIndex((v) => v.code === item.postedVan);
-      // posted_van 不在 vans 表中（脏数据）时按 0 处理
       if (idx >= 0) postedRounds = vanRows.length - idx - 1;
     }
     return { ...item, postedRounds };
@@ -199,7 +226,6 @@ export async function addPoolItem(input: {
   note?: string;
 }) {
   const db = getDb();
-  // 挂出时记当时最新班次（还没有班车则为 null），用于挂账轮数统计
   const latest = await db
     .select({ code: vans.code })
     .from(vans)
@@ -258,12 +284,15 @@ async function syncPoolStatus(
 
 /* ── 任务 ── */
 
-export async function listTasksByVan(van: string) {
-  return getDb()
+/** 查询班次任务列表（附带负责人标签） */
+export async function listTasksByVan(van: string): Promise<TaskWithOwners[]> {
+  const rows = await getDb()
     .select()
     .from(tasks)
     .where(eq(tasks.vanCode, van))
     .orderBy(asc(tasks.id));
+  const ownersMap = await ownersByTaskIds(rows.map((r) => r.id));
+  return rows.map((r) => ({ ...r, owners: ownersMap.get(r.id) ?? [] }));
 }
 
 /** 计算某负责人在该班次已占用的档位合计（可排除某个任务自身） */
@@ -272,41 +301,62 @@ async function assignedTotalOf(
   ownerName: string,
   excludeTaskId?: number,
 ) {
+  // 通过 task_owners 关联查该负责人参与的所有任务
+  const ownerRows = await getDb()
+    .select({ taskId: taskOwners.taskId })
+    .from(taskOwners)
+    .where(eq(taskOwners.ownerName, ownerName));
+  const allIds = ownerRows.map((r) => r.taskId);
+  if (allIds.length === 0) return 0;
+  const filteredIds = excludeTaskId
+    ? allIds.filter((id) => id !== excludeTaskId)
+    : allIds;
+  if (filteredIds.length === 0) return 0;
   const rows = await getDb()
     .select({ size: tasks.size })
     .from(tasks)
-    .where(
-      and(
-        eq(tasks.vanCode, van),
-        eq(tasks.ownerName, ownerName),
-        excludeTaskId ? ne(tasks.id, excludeTaskId) : undefined,
-      ),
-    );
+    .where(and(eq(tasks.vanCode, van), inArray(tasks.id, filteredIds)));
   return rows.reduce((sum, r) => sum + (r.size ?? 0), 0);
 }
 
 /** 若负责人在成员表中，则按运力做负荷校验；自由输入的名字不校验 */
 async function checkCapacity(
   van: string,
-  ownerName: string | null | undefined,
+  owners: string[],
   size: number | null | undefined,
   excludeTaskId?: number,
 ) {
-  if (!ownerName || !size) return;
-  const [member] = await getDb()
-    .select()
-    .from(members)
-    .where(eq(members.name, ownerName));
-  if (!member) return;
-  const assigned = await assignedTotalOf(van, ownerName, excludeTaskId);
-  assertWithinCapacity(ownerName, assigned, size, member.capacity);
+  if (!size) return;
+  for (const name of owners) {
+    const [member] = await getDb()
+      .select()
+      .from(members)
+      .where(eq(members.name, name));
+    if (!member) continue;
+    const assigned = await assignedTotalOf(van, name, excludeTaskId);
+    assertWithinCapacity(name, assigned, size, member.capacity);
+  }
+}
+
+/** 替换任务的负责人标签（先删后插） */
+async function replaceOwners(
+  db: ReturnType<typeof getDb>,
+  taskId: number,
+  owners: string[],
+) {
+  await db.delete(taskOwners).where(eq(taskOwners.taskId, taskId));
+  if (owners.length > 0) {
+    await db
+      .insert(taskOwners)
+      .values(owners.map((name) => ({ taskId, ownerName: name })));
+  }
 }
 
 export async function addTask(input: {
   van: string;
   title: string;
   poolItemId?: number | null;
-  ownerName?: string | null;
+  owners?: string[];
   size?: 1 | 3 | 5 | null;
   acceptance?: string | null;
 }) {
@@ -324,16 +374,21 @@ export async function addTask(input: {
       });
     }
   }
-  await checkCapacity(input.van, input.ownerName, input.size);
+  await checkCapacity(input.van, input.owners ?? [], input.size);
   const db = getDb();
-  await db.insert(tasks).values({
-    vanCode: input.van,
-    title: input.title,
-    poolItemId: input.poolItemId ?? null,
-    ownerName: input.ownerName ?? null,
-    size: input.size ?? null,
-    acceptance: input.acceptance ?? null,
-  });
+  const [inserted] = await db
+    .insert(tasks)
+    .values({
+      vanCode: input.van,
+      title: input.title,
+      poolItemId: input.poolItemId ?? null,
+      size: input.size ?? null,
+      acceptance: input.acceptance ?? null,
+    })
+    .returning({ id: tasks.id });
+  if (input.owners && input.owners.length > 0) {
+    await replaceOwners(db, inserted.id, input.owners);
+  }
   // 需求池联动：按任务状态重算委托状态（上车 → 至少 scheduled）
   if (input.poolItemId) await syncPoolStatus(db, input.poolItemId);
   return listTasksByVan(input.van);
@@ -344,7 +399,7 @@ export async function updateTask(
   patch: Partial<{
     title: string;
     poolItemId: number | null;
-    ownerName: string | null;
+    owners: string[];
     size: 1 | 3 | 5 | null;
     acceptance: string | null;
     status: "todo" | "doing" | "done";
@@ -358,11 +413,11 @@ export async function updateTask(
     throw new TRPCError({ code: "NOT_FOUND", message: `任务 ${id} 不存在` });
 
   // 负荷校验：负责人或档位变化时，按合并后的值检查
-  if (patch.ownerName !== undefined || patch.size !== undefined) {
-    const owner =
-      patch.ownerName !== undefined ? patch.ownerName : current.ownerName;
+  if (patch.owners !== undefined || patch.size !== undefined) {
+    const owners =
+      patch.owners !== undefined ? patch.owners : await getOwnerNames(id);
     const size = patch.size !== undefined ? patch.size : current.size;
-    await checkCapacity(current.vanCode, owner, size as 1 | 3 | 5 | null, id);
+    await checkCapacity(current.vanCode, owners, size as 1 | 3 | 5 | null, id);
   }
 
   // 换委托：记录是否变更，供下方同步新旧委托状态
@@ -376,7 +431,14 @@ export async function updateTask(
     patch.doneAt = null;
   }
 
-  await db.update(tasks).set(patch).where(eq(tasks.id, id));
+  // 分离 task_owners 字段（不写入 tasks 表）
+  const { owners, ...taskPatch } = patch;
+  await db.update(tasks).set(taskPatch).where(eq(tasks.id, id));
+
+  // 更新负责人标签
+  if (owners !== undefined) {
+    await replaceOwners(db, id, owners);
+  }
 
   // 需求池联动：换委托时新旧委托都重算，仅状态变化时重算当前委托
   const poolIdsToSync = new Set<number>();
@@ -393,13 +455,22 @@ export async function updateTask(
   return listTasksByVan(current.vanCode);
 }
 
+/** 获取任务的负责人名称列表 */
+async function getOwnerNames(taskId: number): Promise<string[]> {
+  const rows = await getDb()
+    .select({ ownerName: taskOwners.ownerName })
+    .from(taskOwners)
+    .where(eq(taskOwners.taskId, taskId));
+  return rows.map((r) => r.ownerName);
+}
+
 export async function removeTask(id: number) {
   const db = getDb();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, id));
   if (!task)
     throw new TRPCError({ code: "NOT_FOUND", message: `任务 ${id} 不存在` });
+  // ON DELETE CASCADE 会自动清理 task_owners
   await db.delete(tasks).where(eq(tasks.id, id));
-  // 需求池联动：任务下车，原委托按剩余任务重算状态
   if (task.poolItemId !== null) await syncPoolStatus(db, task.poolItemId);
 }
 
@@ -409,7 +480,6 @@ export async function carryOver(fromVan: string, toVan: string) {
   if (fromVan === toVan) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "不能结转到同一班次" });
   }
-  // 滞留件只能跟下一班车走
   const expected = nextVanCode(fromVan);
   if (toVan !== expected) {
     throw new TRPCError({
@@ -419,10 +489,7 @@ export async function carryOver(fromVan: string, toVan: string) {
   }
   const db = getDb();
 
-  // 事务包裹查重 + 逐条插入：要么全部成功要么整体回滚，
-  // 避免中途崩溃留下半截数据，被幂等守卫误判为"已结转"而锁死
   const carried = db.transaction((tx) => {
-    // 幂等：同一对班次只允许结转一次，重复点击不产生重复任务
     const already = tx
       .select({ id: tasks.id })
       .from(tasks)
@@ -436,7 +503,6 @@ export async function carryOver(fromVan: string, toVan: string) {
       });
     }
 
-    // 目标班次尚未发出时顺带创建：发新车与结转一步完成
     const vanExists = tx
       .select({ code: vans.code })
       .from(vans)
@@ -454,7 +520,28 @@ export async function carryOver(fromVan: string, toVan: string) {
       .all();
 
     for (const t of unfinished) {
-      tx.insert(tasks).values(toStrandedTask(t, toVan)).run();
+      // 结转任务
+      const [inserted] = tx
+        .insert(tasks)
+        .values(toStrandedTask(t, toVan))
+        .returning({ id: tasks.id })
+        .all();
+      // 结转负责人标签
+      const owners = tx
+        .select({ ownerName: taskOwners.ownerName })
+        .from(taskOwners)
+        .where(eq(taskOwners.taskId, t.id))
+        .all();
+      if (owners.length > 0) {
+        tx.insert(taskOwners)
+          .values(
+            owners.map((o) => ({
+              taskId: inserted.id,
+              ownerName: o.ownerName,
+            })),
+          )
+          .run();
+      }
     }
     return unfinished.length;
   });
@@ -470,15 +557,16 @@ export async function weeklyStats(van: string) {
   const carriedIn = rows.filter((t) => t.carriedFrom !== null).length;
   const reviewNeeded = rows.filter((t) => t.carryCount >= 2).length;
 
-  // 稀有度分桶：任务 → 所属委托稀有度（无关联委托的任务不计入）
+  // 稀有度分桶
   const poolRows = await getDb()
     .select({ id: poolItems.id, rarity: poolItems.rarity })
     .from(poolItems);
   const rarityById = new Map(poolRows.map((r) => [r.id, r.rarity]));
 
+  // 按负责人标签聚合运力统计（每人每班每任务计一次完整 size）
   const memberRows = await listMembers();
   const byMember = memberRows.map((m) => {
-    const mine = rows.filter((t) => t.ownerName === m.name);
+    const mine = rows.filter((t) => t.owners.includes(m.name));
     return {
       name: m.name,
       capacity: m.capacity,

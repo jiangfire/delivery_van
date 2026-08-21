@@ -82,7 +82,15 @@ export const tasks = sqliteTable(
   (t) => [index("tasks_van_code_idx").on(t.vanCode)],
 );
 
+export const taskOwners = sqliteTable("task_owners", {
+  taskId: integer("task_id")
+    .notNull()
+    .references(() => tasks.id, { onDelete: "cascade" }),
+  ownerName: text("owner_name").notNull(),
+});
+
 export type Member = typeof members.$inferSelect;
 export type Van = typeof vans.$inferSelect;
 export type PoolItem = typeof poolItems.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
+export type TaskOwner = typeof taskOwners.$inferSelect;
