@@ -9,11 +9,10 @@ import {
   type CellValueChangedEvent,
 } from "ag-grid-community";
 
-type UnifiedRowColDef = ColDef<UnifiedRow> & { editField?: string };
+type TaskColDef = ColDef<TaskRow> & { editField?: string };
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { nextVanCode } from "@contracts/vans";
-import type { PoolItem } from "@db/schema";
 import type { TaskWithOwners } from "../../api/queries/van";
 import MultiSelectCellEditor from "@/components/MultiSelectCellEditor";
 
@@ -46,10 +45,7 @@ const RARITY_CLASS: Record<Rarity, string> = {
   mythic: "rarity-mythic-text",
 };
 
-/** 统一表格行类型：任务 or 委托 */
-type UnifiedRow =
-  | { kind: "task"; data: TaskWithOwners }
-  | { kind: "pool"; data: PoolItem & { postedRounds: number } };
+type TaskRow = TaskWithOwners;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -69,11 +65,9 @@ export default function BoardPage() {
     { van: curVan ?? "" },
     { enabled: curVan !== null },
   );
-  const poolQ = trpc.van.pool.list.useQuery();
   const membersQ = trpc.van.members.list.useQuery();
 
   const tasks = useMemo(() => tasksQ.data ?? [], [tasksQ.data]);
-  const pool = useMemo(() => poolQ.data ?? [], [poolQ.data]);
   const members = useMemo(() => membersQ.data ?? [], [membersQ.data]);
   const stats = statsQ.data;
 
@@ -81,13 +75,10 @@ export default function BoardPage() {
   const refresh = () => utils.invalidate();
   const onError = (e: { message: string }) => toast.error(e.message);
 
-  const failedQ = [tasksQ, statsQ, poolQ, membersQ, vansQ].find(
-    (q) => q.isError,
-  );
+  const failedQ = [tasksQ, statsQ, membersQ, vansQ].find((q) => q.isError);
   const refetchAll = () => {
     tasksQ.refetch();
     statsQ.refetch();
-    poolQ.refetch();
     membersQ.refetch();
     vansQ.refetch();
   };
@@ -140,126 +131,68 @@ export default function BoardPage() {
     onError,
   });
 
-  const addPoolM = trpc.van.pool.add.useMutation({
-    onSuccess: () => {
-      toast.success("委托已录入");
-      refresh();
-    },
-    onError,
-  });
-
-  const updatePoolM = trpc.van.pool.update.useMutation({
-    onSuccess: refresh,
-    onError: (e) => {
-      toast.error(e.message);
-      utils.invalidate();
-    },
-  });
-
-  const takeM = trpc.van.tasks.add.useMutation({
-    onSuccess: () => {
-      toast.success("已接取");
-      refresh();
-    },
-    onError,
-  });
-
-  const removePoolM = trpc.van.pool.remove.useMutation({
-    onSuccess: refresh,
-    onError,
-  });
-
   const { mutate: removeTask } = removeTaskM;
-
-  /* ── 合并表格数据：委托（open）在前，任务在后 ── */
-  const unifiedData = useMemo<UnifiedRow[]>(() => {
-    const openPool = pool
-      .filter((p) => p.status === "open")
-      .map((p): UnifiedRow => ({ kind: "pool", data: p }));
-    const taskRows = tasks.map((t): UnifiedRow => ({ kind: "task", data: t }));
-    return [...openPool, ...taskRows];
-  }, [pool, tasks]);
 
   /* ── 列定义 ── */
   const memberNames = useMemo(() => members.map((m) => m.name), [members]);
 
-  const columnDefs = useMemo<UnifiedRowColDef[]>(
+  const columnDefs = useMemo<TaskColDef[]>(
     () => [
       {
-        field: "kind",
+        field: "title",
         headerName: "标题",
         flex: 2,
-        editable: () => true,
+        editable: true,
         editField: "title",
-        cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
+        cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
           if (!d) return null;
-          if (d.kind === "pool") {
-            return (
-              <span className={RARITY_CLASS[d.data.rarity]}>
-                {d.data.title}
-              </span>
-            );
-          }
-          return <span>{d.data.title}</span>;
+          return <span className={RARITY_CLASS[d.rarity]}>{d.title}</span>;
         },
       },
-      // 委托专用列
       {
         colId: "_rarity",
         headerName: "稀有度",
         width: 80,
-        editable: (p) => p.data?.kind === "pool",
+        editable: true,
         editField: "rarity",
         cellEditor: "agSelectCellEditor",
         cellEditorParams: {
           values: RARITIES as unknown as string[],
         },
-        valueGetter: (p) => (p.data?.kind === "pool" ? p.data.data.rarity : ""),
+        valueGetter: (p) => p.data?.rarity ?? "",
         valueSetter: (p) => {
-          if (p.data?.kind === "pool") {
-            p.data.data.rarity = p.newValue as Rarity;
+          if (p.data) {
+            p.data.rarity = p.newValue as Rarity;
             return true;
           }
           return false;
         },
-        cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
+        cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
-          if (d?.kind !== "pool") return null;
+          if (!d) return null;
           return (
-            <span className={RARITY_CLASS[d.data.rarity]}>
-              {RARITY_LABEL[d.data.rarity]}
+            <span className={RARITY_CLASS[d.rarity]}>
+              {RARITY_LABEL[d.rarity]}
             </span>
           );
         },
       },
       {
-        colId: "_postedRounds",
-        headerName: "挂账",
-        width: 60,
-        editable: false,
-        valueGetter: (p) =>
-          p.data?.kind === "pool" && p.data.data.postedRounds > 0
-            ? `${p.data.data.postedRounds}轮`
-            : "",
-      },
-
-      // 负责人列（多选下拉）
-      {
         colId: "_owners",
         headerName: "负责人",
         width: 200,
-        editable: (p) => p.data?.kind === "task",
+        editable: true,
         editField: "owners",
         cellEditor: MultiSelectCellEditor,
         cellEditorParams: {
           members: memberNames,
           onAddMember: (name: string) => addMemberM.mutate({ name }),
         },
-        cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
+        cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
-          if (d?.kind !== "task") return null;
-          const owners: string[] = p.value ?? d.data.owners ?? [];
+          if (!d) return null;
+          const owners: string[] = p.value ?? d.owners ?? [];
           if (owners.length === 0)
             return (
               <span className="text-xs text-muted-foreground/50">
@@ -284,10 +217,10 @@ export default function BoardPage() {
             </span>
           );
         },
-        valueGetter: (p) => (p.data?.kind === "task" ? p.data.data.owners : []),
+        valueGetter: (p) => p.data?.owners ?? [],
         valueSetter: (p) => {
-          if (p.data?.kind === "task") {
-            p.data.data.owners = p.newValue as string[];
+          if (p.data) {
+            p.data.owners = p.newValue as string[];
             return true;
           }
           return false;
@@ -297,27 +230,24 @@ export default function BoardPage() {
         colId: "_size",
         headerName: "档位",
         width: 86,
-        editable: (p) => p.data?.kind === "task",
+        editable: true,
         editField: "size",
         cellEditor: "agSelectCellEditor",
         cellEditorParams: { values: ["1", "3", "5"] },
-        valueGetter: (p) =>
-          p.data?.kind === "task" ? String(p.data.data.size ?? "") : "",
+        valueGetter: (p) => String(p.data?.size ?? ""),
         valueSetter: (p) => {
-          if (p.data?.kind === "task") {
+          if (p.data) {
             const v = p.newValue === "" ? null : Number(p.newValue);
-            p.data.data.size = v as 1 | 3 | 5 | null;
+            p.data.size = v as 1 | 3 | 5 | null;
             return true;
           }
           return false;
         },
-        cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
+        cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
-          if (d?.kind !== "task" || !d.data.size) return null;
+          if (!d || !d.size) return null;
           return (
-            <span className={`size-badge size-${d.data.size}`}>
-              {d.data.size} 天
-            </span>
+            <span className={`size-badge size-${d.size}`}>{d.size} 天</span>
           );
         },
       },
@@ -325,25 +255,24 @@ export default function BoardPage() {
         colId: "_status",
         headerName: "状态",
         width: 100,
-        editable: (p) => p.data?.kind === "task",
+        editable: true,
         editField: "status",
         cellEditor: "agSelectCellEditor",
         cellEditorParams: { values: ["todo", "doing", "done"] },
-        valueGetter: (p) =>
-          p.data?.kind === "task" ? (p.data.data.status ?? "") : "",
+        valueGetter: (p) => p.data?.status ?? "",
         valueSetter: (p) => {
-          if (p.data?.kind === "task") {
-            p.data.data.status = p.newValue as typeof p.data.data.status;
+          if (p.data) {
+            p.data.status = p.newValue as typeof p.data.status;
             return true;
           }
           return false;
         },
-        cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
+        cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
-          if (d?.kind !== "task" || !d.data.status) return null;
+          if (!d || !d.status) return null;
           return (
-            <span className={`status-badge status-${d.data.status}`}>
-              {d.data.status}
+            <span className={`status-badge status-${d.status}`}>
+              {d.status}
             </span>
           );
         },
@@ -352,47 +281,51 @@ export default function BoardPage() {
         colId: "_doneAt",
         headerName: "送达日期",
         width: 130,
-        editable: (p) => p.data?.kind === "task",
+        editable: (p) => p.data?.status === "done",
         editField: "doneAt",
         cellEditor: "agDateCellEditor",
         cellEditorParams: {
           min: "2020-01-01",
           max: "2030-12-31",
         },
-        valueGetter: (p) =>
-          p.data?.kind === "task" ? (p.data.data.doneAt ?? "") : "",
+        valueGetter: (p) => p.data?.doneAt ?? "",
         valueSetter: (p) => {
-          if (p.data?.kind === "task") {
+          if (p.data) {
             const val = p.newValue;
             if (val === "" || val == null) {
-              p.data.data.doneAt = null;
+              p.data.doneAt = null;
             } else if (val instanceof Date) {
-              // YYYY-MM-DD
-              p.data.data.doneAt = val.toISOString().slice(0, 10);
+              p.data.doneAt = val.toISOString().slice(0, 10);
             } else {
-              p.data.data.doneAt = String(val) || null;
+              p.data.doneAt = String(val) || null;
             }
             return true;
           }
           return false;
         },
-        cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
+        cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
-          if (d?.kind !== "task" || !d.data.doneAt) return null;
-          return <span className="text-sm">📅 {d.data.doneAt}</span>;
+          if (!d) return null;
+          if (!d.doneAt) {
+            return d.status !== "done" ? (
+              <span className="text-xs text-muted-foreground/40">
+                完成后填写
+              </span>
+            ) : null;
+          }
+          return <span className="text-sm">📅 {d.doneAt}</span>;
         },
       },
       {
         colId: "_acceptance",
         headerName: "验收标准",
         flex: 1.4,
-        editable: (p) => p.data?.kind === "task",
+        editable: true,
         editField: "acceptance",
-        valueGetter: (p) =>
-          p.data?.kind === "task" ? (p.data.data.acceptance ?? "") : "",
+        valueGetter: (p) => p.data?.acceptance ?? "",
         valueSetter: (p) => {
-          if (p.data?.kind === "task") {
-            p.data.data.acceptance = p.newValue as string | null;
+          if (p.data) {
+            p.data.acceptance = p.newValue as string | null;
             return true;
           }
           return false;
@@ -402,13 +335,12 @@ export default function BoardPage() {
         colId: "_note",
         headerName: "备注",
         flex: 1,
-        editable: (p) => p.data?.kind === "task",
+        editable: true,
         editField: "note",
-        valueGetter: (p) =>
-          p.data?.kind === "task" ? (p.data.data.note ?? "") : "",
+        valueGetter: (p) => p.data?.note ?? "",
         valueSetter: (p) => {
-          if (p.data?.kind === "task") {
-            p.data.data.note = p.newValue as string | null;
+          if (p.data) {
+            p.data.note = p.newValue as string | null;
             return true;
           }
           return false;
@@ -420,21 +352,19 @@ export default function BoardPage() {
         width: 120,
         editable: false,
         valueGetter: (p) => {
-          if (p.data?.kind !== "task") return "";
-          const t = p.data.data;
-          if (!t.carriedFrom) return "";
+          const t = p.data;
+          if (!t?.carriedFrom) return "";
           return `${t.carriedFrom} →`;
         },
-        cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
+        cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
-          if (d?.kind !== "task" || !d.data.carriedFrom) return null;
-          const t = d.data;
+          if (!d || !d.carriedFrom) return null;
           return (
             <span className="flex items-center gap-1 text-xs">
-              <span className="carry-badge" title={`滞留自 ${t.carriedFrom}`}>
-                📦 {t.carriedFrom}
+              <span className="carry-badge" title={`滞留自 ${d.carriedFrom}`}>
+                📦 {d.carriedFrom}
               </span>
-              {t.carryCount >= 2 && (
+              {d.carryCount >= 2 && (
                 <span
                   className="text-amber-500 font-bold"
                   title="连续滞留 ≥2 班，需复盘"
@@ -449,46 +379,16 @@ export default function BoardPage() {
       // 操作列
       {
         headerName: "",
-        width: 100,
-        cellRenderer: (p: ICellRendererParams<UnifiedRow>) => {
+        width: 60,
+        cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
           if (!d) return null;
-          if (d.kind === "pool") {
-            return (
-              <div className="flex gap-1">
-                <button
-                  className="btn btn-ghost text-xs"
-                  disabled={curVan === null}
-                  title={curVan === null ? "请先发新车" : `接取到 ${curVan}`}
-                  onClick={() =>
-                    curVan !== null &&
-                    takeM.mutate({
-                      van: curVan,
-                      title: d.data.title,
-                      poolItemId: d.data.id,
-                    })
-                  }
-                >
-                  接取
-                </button>
-                <button
-                  className="btn btn-danger text-xs"
-                  onClick={() =>
-                    window.confirm(`删除委托「${d.data.title}」？`) &&
-                    removePoolM.mutate({ id: d.data.id })
-                  }
-                >
-                  删除
-                </button>
-              </div>
-            );
-          }
           return (
             <button
               className="btn btn-danger text-xs"
               onClick={() => {
-                if (d.data && window.confirm(`删除快件「${d.data.title}」？`)) {
-                  removeTask({ id: d.data.id });
+                if (window.confirm(`删除快件「${d.title}」？`)) {
+                  removeTask({ id: d.id });
                 }
               }}
             >
@@ -498,29 +398,15 @@ export default function BoardPage() {
         },
       },
     ],
-    [memberNames, curVan, takeM, removePoolM, removeTask, addMemberM],
+    [memberNames, removeTask, addMemberM],
   );
 
   /* ── 单元格编辑回调 ── */
-  const onCellValueChanged = (e: CellValueChangedEvent<UnifiedRow>) => {
-    const d = e.data;
-    if (!d) return;
+  const onCellValueChanged = (e: CellValueChangedEvent<TaskRow>) => {
+    const task = e.data;
+    if (!task) return;
 
-    // 委托行：更新 pool_items
-    if (d.kind === "pool") {
-      const key = (e.colDef as UnifiedRowColDef).editField;
-      if (!key) return;
-      let value: unknown = e.newValue;
-      if (value === "" || value === undefined) value = null;
-      updatePoolM.mutate({ id: d.data.id, [key]: value } as Parameters<
-        typeof updatePoolM.mutate
-      >[0]);
-      return;
-    }
-
-    // 快件行：更新 tasks
-    const task = d.data;
-    const key = (e.colDef as UnifiedRowColDef).editField;
+    const key = (e.colDef as TaskColDef).editField;
     if (!key) return;
     let value: unknown = e.newValue;
 
@@ -528,7 +414,6 @@ export default function BoardPage() {
       value = value === "" || value == null ? null : Number(value);
     }
     if (key === "doneAt") {
-      // agDateCellEditor 可能返回 Date 对象，需统一转为 YYYY-MM-DD 字符串
       if (value instanceof Date) {
         value = value.toISOString().slice(0, 10);
       }
@@ -682,31 +567,23 @@ export default function BoardPage() {
           </div>
         </div>
 
-        {/* ── 表格 ── */}
-
-        {/* ── 主表格：委托 + 快件统一展示 ── */}
+        {/* ── 快件表格 ── */}
         <div className="glass-card mb-6 p-2">
           <div style={{ height: 520 }}>
-            <AgGridReact<UnifiedRow>
+            <AgGridReact<TaskRow>
               theme={themeQuartz}
-              rowData={unifiedData}
+              rowData={tasks}
               columnDefs={columnDefs}
               defaultColDef={{ sortable: true, resizable: true }}
-              loading={tasksQ.isLoading || poolQ.isLoading}
+              loading={tasksQ.isLoading}
               onCellValueChanged={onCellValueChanged}
               getRowClass={(p) => {
-                if (p.data?.kind === "task" && p.data.data.carryCount >= 2)
-                  return "bg-amber-50/60";
-                if (p.data?.kind === "pool") return "bg-orange-50/40";
+                if (p.data && p.data.carryCount >= 2) return "bg-amber-50/60";
                 return "";
               }}
-              getRowId={(p) =>
-                p.data.kind === "task"
-                  ? `task-${p.data.data.id}`
-                  : `pool-${p.data.data.id}`
-              }
+              getRowId={(p) => `task-${p.data.id}`}
               localeText={{
-                noRowsToShow: "还没有委托或快件，点右下角 + 添加",
+                noRowsToShow: "还没有快件，点下方 + 添加",
               }}
             />
           </div>
@@ -722,7 +599,6 @@ export default function BoardPage() {
                   { van: curVan, title: "新快件" },
                   {
                     onSuccess: () => {
-                      // 刷新后自动进入最后一行的标题编辑
                       toast.success("已添加，点击标题可编辑");
                     },
                   },
@@ -731,27 +607,10 @@ export default function BoardPage() {
             >
               + 快件
             </button>
-            <button
-              className="btn btn-ghost flex items-center gap-1 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground"
-              disabled={addPoolM.isPending}
-              title="在表格末尾新增一行委托"
-              onClick={() => {
-                addPoolM.mutate(
-                  { title: "新委托", rarity: "common" },
-                  {
-                    onSuccess: () => {
-                      toast.success("已添加，点击标题可编辑");
-                    },
-                  },
-                );
-              }}
-            >
-              + 委托
-            </button>
           </div>
         </div>
 
-        {/* ── 成员运力统计（从标签自动聚合） ── */}
+        {/* ── 成员运力统计 ── */}
         {stats && stats.members.length > 0 && (
           <section className="glass-card p-5">
             <h2 className="mb-4 text-sm font-bold">

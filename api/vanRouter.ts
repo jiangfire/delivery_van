@@ -4,18 +4,14 @@ import { VAN_CODE_RE } from "../contracts/vans";
 import { RARITIES } from "../db/schema";
 import {
   addMember,
-  addPoolItem,
   addTask,
   carryOver,
   dispatchVan,
   listMembers,
-  listPoolItems,
   listTasksByVan,
   listVans,
-  removePoolItem,
   removeTask,
   updateMemberCapacity,
-  updatePoolItem,
   updateTask,
   weeklyStats,
 } from "./queries/van";
@@ -36,7 +32,7 @@ export const vanRouter = createRouter({
       .mutation(() => dispatchVan()),
   }),
 
-  /* ── 成员（表 3：产能速览的数据源） ── */
+  /* ── 成员 ── */
   members: createRouter({
     list: publicQuery.query(() => listMembers()),
     add: publicQuery
@@ -54,38 +50,7 @@ export const vanRouter = createRouter({
       .mutation(({ input }) => updateMemberCapacity(input.id, input.capacity)),
   }),
 
-  /* ── 任务大厅（委托池，PM 维护） ── */
-  pool: createRouter({
-    list: publicQuery.query(() => listPoolItems()),
-    add: publicQuery
-      .input(
-        z.object({
-          title: z.string().min(1).max(255),
-          rarity: rarity.default("common"),
-          note: z.string().optional(),
-        }),
-      )
-      .mutation(({ input }) => addPoolItem(input)),
-    update: publicQuery
-      .input(
-        z.object({
-          id: idField,
-          title: z.string().min(1).max(255).optional(),
-          rarity: rarity.optional(),
-          status: z.enum(["open", "scheduled", "done"]).optional(),
-          note: z.string().nullable().optional(),
-        }),
-      )
-      .mutation(({ input }) => {
-        const { id, ...patch } = input;
-        return updatePoolItem(id, patch);
-      }),
-    remove: publicQuery
-      .input(z.object({ id: idField }))
-      .mutation(({ input }) => removePoolItem(input.id)),
-  }),
-
-  /* ── 任务（表 2：班次任务表） ── */
+  /* ── 快件 ── */
   tasks: createRouter({
     byVan: publicQuery
       .input(z.object({ van: vanCode }))
@@ -95,7 +60,7 @@ export const vanRouter = createRouter({
         z.object({
           van: vanCode,
           title: z.string().min(1).max(255),
-          poolItemId: idField.nullable().optional(),
+          rarity: rarity.default("common"),
           owners: z.array(z.string().trim().max(64)).optional(),
           size: sizeTier.nullable().optional(),
           acceptance: z.string().max(255).nullable().optional(),
@@ -107,7 +72,7 @@ export const vanRouter = createRouter({
         z.object({
           id: idField,
           title: z.string().min(1).max(255).optional(),
-          poolItemId: idField.nullable().optional(),
+          rarity: rarity.optional(),
           owners: z.array(z.string().trim().max(64)).optional(),
           size: sizeTier.nullable().optional(),
           acceptance: z.string().max(255).nullable().optional(),

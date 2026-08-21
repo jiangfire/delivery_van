@@ -38,10 +38,8 @@ import {
   listMembers,
   addMember,
   updateMemberCapacity,
-  removePoolItem,
   addTask,
   updateTask,
-  updatePoolItem,
   removeTask,
 } from "./van";
 
@@ -228,53 +226,13 @@ describe("成员管理", () => {
   });
 });
 
-describe("任务大厅", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  describe("removePoolItem", () => {
-    it("正常删除委托", async () => {
-      const itemQuery = createQueryable([{ id: 1 }]);
-      const listQuery = createQueryable([]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? itemQuery : listQuery;
-        }),
-        delete: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            then: (resolve: (value: any) => any) =>
-              Promise.resolve(undefined).then(resolve),
-          }),
-        }),
-      };
-
-      const result = await removePoolItem(1);
-
-      expect(result).toEqual([]);
-    });
-
-    it("委托不存在时抛出 NOT_FOUND 错误", async () => {
-      mockDb = {
-        select: vi.fn().mockReturnValue(createQueryable([])),
-      };
-
-      await expect(removePoolItem(999)).rejects.toThrow(TRPCError);
-      await expect(removePoolItem(999)).rejects.toThrow("不存在");
-    });
-  });
-});
-
-describe("任务管理", () => {
+describe("快件管理", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   describe("addTask", () => {
-    it("正常创建任务", async () => {
+    it("正常创建快件", async () => {
       const emptyQuery = createQueryable([]);
       const taskQuery = createQueryable([]);
       let callCount = 0;
@@ -296,34 +254,13 @@ describe("任务管理", () => {
 
       const result = await addTask({
         van: "DV2607A",
-        title: "测试任务",
+        title: "测试快件",
       });
 
       expect(result).toEqual([]);
     });
 
-    it("委托重复接取时抛出 CONFLICT 错误", async () => {
-      mockDb = {
-        select: vi.fn().mockReturnValue(createQueryable([{ id: 1 }])),
-      };
-
-      await expect(
-        addTask({
-          van: "DV2607A",
-          title: "测试任务",
-          poolItemId: 1,
-        }),
-      ).rejects.toThrow(TRPCError);
-      await expect(
-        addTask({
-          van: "DV2607A",
-          title: "测试任务",
-          poolItemId: 1,
-        }),
-      ).rejects.toThrow("已被接取");
-    });
-
-    it("创建任务时写入负责人标签", async () => {
+    it("创建快件时写入负责人标签", async () => {
       const emptyQuery = createQueryable([]);
       const taskQuery = createQueryable([]);
       let callCount = 0;
@@ -351,56 +288,19 @@ describe("任务管理", () => {
 
       const result = await addTask({
         van: "DV2607A",
-        title: "测试任务",
+        title: "测试快件",
         owners: ["张三"],
       });
 
       expect(result).toEqual([]);
       expect(mockDb.insert).toHaveBeenCalled();
     });
-
-    it("关联委托时触发状态联动", async () => {
-      const emptyQuery = createQueryable([]);
-      const taskQuery = createQueryable([]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount <= 1 ? emptyQuery : taskQuery;
-        }),
-        insert: vi.fn().mockReturnValue({
-          values: vi.fn().mockReturnValue({
-            returning: vi.fn().mockReturnValue({
-              then: (resolve: (value: any) => any) =>
-                Promise.resolve([{ id: 1 }]).then(resolve),
-            }),
-          }),
-        }),
-        update: vi.fn().mockReturnValue({
-          set: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              then: (resolve: (value: any) => any) =>
-                Promise.resolve(undefined).then(resolve),
-            }),
-          }),
-        }),
-      };
-
-      const result = await addTask({
-        van: "DV2607A",
-        title: "测试任务",
-        poolItemId: 1,
-      });
-
-      expect(result).toEqual([]);
-    });
   });
 
   describe("updateTask", () => {
-    it("更新任务状态时自动填充完成日期", async () => {
+    it("更新快件状态时自动填充完成日期", async () => {
       const taskQuery = createQueryable([
-        { id: 1, vanCode: "DV2607A", status: "todo", poolItemId: null },
+        { id: 1, vanCode: "DV2607A", status: "todo" },
       ]);
       const listQuery = createQueryable([]);
       let callCount = 0;
@@ -427,7 +327,7 @@ describe("任务管理", () => {
 
     it("取消完成时清空完成日期", async () => {
       const taskQuery = createQueryable([
-        { id: 1, vanCode: "DV2607A", status: "done", poolItemId: null },
+        { id: 1, vanCode: "DV2607A", status: "done" },
       ]);
       const listQuery = createQueryable([]);
       let callCount = 0;
@@ -454,7 +354,7 @@ describe("任务管理", () => {
 
     it("更新负责人标签", async () => {
       const taskQuery = createQueryable([
-        { id: 1, vanCode: "DV2607A", status: "todo", poolItemId: null },
+        { id: 1, vanCode: "DV2607A", status: "todo" },
       ]);
       const listQuery = createQueryable([]);
       let callCount = 0;
@@ -489,40 +389,13 @@ describe("任务管理", () => {
       const result = await updateTask(1, { owners: ["张三", "李四"] });
 
       expect(result).toEqual([]);
-      // 回归测试：仅更新 owners 时不应调用 db.update(tasks)，否则 Drizzle 会抛 No values to set
+      // 回归测试：仅更新 owners 时不应调用 db.update(tasks)
       expect(mockDb.update).not.toHaveBeenCalled();
-    });
-
-    it("换委托时同步新旧委托状态", async () => {
-      const taskQuery = createQueryable([
-        { id: 1, vanCode: "DV2607A", status: "todo", poolItemId: 1 },
-      ]);
-      const listQuery = createQueryable([]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount <= 1 ? taskQuery : listQuery;
-        }),
-        update: vi.fn().mockReturnValue({
-          set: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              then: (resolve: (value: any) => any) =>
-                Promise.resolve(undefined).then(resolve),
-            }),
-          }),
-        }),
-      };
-
-      const result = await updateTask(1, { poolItemId: 2 });
-
-      expect(result).toEqual([]);
     });
 
     it("设置完成日期时的边界情况", async () => {
       const taskQuery = createQueryable([
-        { id: 1, vanCode: "DV2607A", status: "todo", poolItemId: null },
+        { id: 1, vanCode: "DV2607A", status: "todo" },
       ]);
       const listQuery = createQueryable([]);
       let callCount = 0;
@@ -542,7 +415,6 @@ describe("任务管理", () => {
         }),
       };
 
-      // 显式设置 doneAt
       const result = await updateTask(1, {
         status: "done",
         doneAt: "2026-07-20",
@@ -551,7 +423,7 @@ describe("任务管理", () => {
       expect(result).toEqual([]);
     });
 
-    it("任务不存在时抛出 NOT_FOUND 错误", async () => {
+    it("快件不存在时抛出 NOT_FOUND 错误", async () => {
       mockDb = {
         select: vi.fn().mockReturnValue(createQueryable([])),
       };
@@ -566,13 +438,11 @@ describe("任务管理", () => {
   });
 
   describe("removeTask", () => {
-    it("正常删除任务", async () => {
+    it("正常删除快件", async () => {
       mockDb = {
         select: vi
           .fn()
-          .mockReturnValue(
-            createQueryable([{ id: 1, vanCode: "DV2607A", poolItemId: null }]),
-          ),
+          .mockReturnValue(createQueryable([{ id: 1, vanCode: "DV2607A" }])),
         delete: vi.fn().mockReturnValue({
           where: vi.fn().mockReturnValue({
             then: (resolve: (value: any) => any) =>
@@ -586,7 +456,7 @@ describe("任务管理", () => {
       expect(mockDb.delete).toHaveBeenCalled();
     });
 
-    it("任务不存在时抛出 NOT_FOUND 错误", async () => {
+    it("快件不存在时抛出 NOT_FOUND 错误", async () => {
       mockDb = {
         select: vi.fn().mockReturnValue(createQueryable([])),
       };
@@ -594,54 +464,6 @@ describe("任务管理", () => {
       await expect(removeTask(999)).rejects.toThrow(TRPCError);
       await expect(removeTask(999)).rejects.toThrow("不存在");
     });
-  });
-});
-
-describe("委托管理（updatePoolItem）", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-  });
-
-  it("正常更新委托稀有度", async () => {
-    const poolQuery = createQueryable([{ id: 1 }]);
-    const listQuery = createQueryable([]);
-    let callCount = 0;
-
-    mockDb = {
-      select: vi.fn().mockImplementation(() => {
-        callCount++;
-        return callCount === 1 ? poolQuery : listQuery;
-      }),
-      update: vi.fn().mockReturnValue({
-        set: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            then: (resolve: (value: any) => any) =>
-              Promise.resolve(undefined).then(resolve),
-          }),
-        }),
-      }),
-    };
-
-    const result = await updatePoolItem(1, { rarity: "epic" });
-
-    expect(result).toBeDefined();
-    expect(result.length).toBeGreaterThan(0);
-    expect(mockDb.update).toHaveBeenCalled();
-  });
-
-  it("空 patch 时跳过写入，直接返回列表（回归：防止 No values to set）", async () => {
-    const listQuery = createQueryable([{ id: 1, rarity: "common" }]);
-
-    mockDb = {
-      select: vi.fn().mockReturnValue(listQuery),
-      update: vi.fn(),
-    };
-
-    const result = await updatePoolItem(1, {});
-
-    expect(result).toBeDefined();
-    expect(result.length).toBeGreaterThan(0);
-    expect(mockDb.update).not.toHaveBeenCalled();
   });
 });
 
@@ -668,7 +490,7 @@ describe("结转逻辑", () => {
     );
   });
 
-  it("正常结转未完成任务", async () => {
+  it("正常结转未完成快件", async () => {
     const mockTx = {
       select: vi.fn().mockReturnValue({
         from: vi.fn().mockReturnValue({
@@ -754,6 +576,7 @@ describe("周统计", () => {
       {
         id: 1,
         status: "done",
+        rarity: "common",
         carryCount: 0,
         carriedFrom: null,
         size: 3,
@@ -762,6 +585,7 @@ describe("周统计", () => {
       {
         id: 2,
         status: "todo",
+        rarity: "epic",
         carryCount: 0,
         carriedFrom: null,
         size: 5,
@@ -770,6 +594,7 @@ describe("周统计", () => {
       {
         id: 3,
         status: "done",
+        rarity: "rare",
         carryCount: 2,
         carriedFrom: "DV2607A",
         size: 1,
@@ -780,7 +605,6 @@ describe("周统计", () => {
       { id: 1, name: "张三", capacity: 5 },
       { id: 2, name: "李四", capacity: 3 },
     ];
-    const mockPoolItems = [{ id: 1, rarity: "epic" }];
 
     let callCount = 0;
     mockDb = {
@@ -789,9 +613,6 @@ describe("周统计", () => {
         if (callCount <= 2) {
           // listTasksByVan 的两次查询
           return createQueryable(callCount === 1 ? [] : mockTasks);
-        } else if (callCount === 3) {
-          // poolItems 查询
-          return createQueryable(mockPoolItems);
         } else {
           // listMembers
           return createQueryable(mockMembers);
@@ -817,8 +638,6 @@ describe("周统计", () => {
       select: vi.fn().mockImplementation(() => {
         callCount++;
         if (callCount <= 2) {
-          return createQueryable([]);
-        } else if (callCount === 3) {
           return createQueryable([]);
         } else {
           return createQueryable([]);

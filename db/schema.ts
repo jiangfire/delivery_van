@@ -31,7 +31,7 @@ export const RARITIES = [
 ] as const;
 export type Rarity = (typeof RARITIES)[number];
 
-/** 任务大厅：PM 维护的委托；稀有度仅作标记（颜色），不做任何上车拦截 */
+/** @deprecated 委托概念已合并至快件，此表不再使用 */
 export const poolItems = sqliteTable("pool_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   title: text("title").notNull(),
@@ -39,7 +39,6 @@ export const poolItems = sqliteTable("pool_items", {
   status: text("status", { enum: ["open", "scheduled", "done"] })
     .notNull()
     .default("open"),
-  /** 挂出时的班次（录入时填当时最新班次，表空则为 null） */
   postedVan: text("posted_van"),
   note: text("note"),
   createdAt: integer("created_at", { mode: "timestamp" })
@@ -47,17 +46,17 @@ export const poolItems = sqliteTable("pool_items", {
     .default(sql`(unixepoch())`),
 });
 
-/** 周任务：发车会的核心载体 */
+/** 快件：发车会的核心载体 */
 export const tasks = sqliteTable(
   "tasks",
   {
     id: integer("id").primaryKey({ autoIncrement: true }),
-    /** 班次编码，如 DV2607A（= 2026 年 7 月第一个发车，见 contracts/vans.ts） */
+    /** 班次编码，如 DV2607A */
     vanCode: text("van_code").notNull(),
     title: text("title").notNull(),
-    /** 关联需求池条目 */
-    poolItemId: integer("pool_item_id"),
-    /** @deprecated 已迁移至 task_owners 关联表，新逻辑请勿读写此字段 */
+    /** 稀有度标记（颜色），不做任何拦截 */
+    rarity: text("rarity", { enum: RARITIES }).notNull().default("common"),
+    /** @deprecated 已迁移至 task_owners 关联表 */
     ownerName: text("owner_name"),
     /** 档位：1 / 3 / 5 天 */
     size: integer("size"),
@@ -68,7 +67,7 @@ export const tasks = sqliteTable(
       .default("todo"),
     /** 结转自哪个车次 */
     carriedFrom: text("carried_from"),
-    /** 连续滞留 ≥2 班触发强制复盘提示（仅提示不拦截，可继续结转） */
+    /** 连续滞留 ≥2 班触发强制复盘提示 */
     carryCount: integer("carry_count").notNull().default(0),
     /** 完成日期，YYYY-MM-DD */
     doneAt: text("done_at"),

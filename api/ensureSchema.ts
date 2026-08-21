@@ -37,7 +37,7 @@ export async function ensureSchema() {
       id integer PRIMARY KEY AUTOINCREMENT,
       van_code text NOT NULL,
       title text NOT NULL,
-      pool_item_id integer,
+      rarity text NOT NULL DEFAULT 'common',
       owner_name text,
       size integer,
       acceptance text,
@@ -49,6 +49,14 @@ export async function ensureSchema() {
       created_at integer NOT NULL DEFAULT (unixepoch())
     )
   `);
+  // 兼容旧库：tasks 表可能没有 rarity 列，幂等添加
+  try {
+    db.run(
+      sql`ALTER TABLE tasks ADD COLUMN rarity text NOT NULL DEFAULT 'common'`,
+    );
+  } catch {
+    // 列已存在，忽略
+  }
   await db.run(
     sql`CREATE INDEX IF NOT EXISTS tasks_van_code_idx ON tasks (van_code)`,
   );

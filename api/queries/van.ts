@@ -3,29 +3,16 @@ import { TRPCError } from "@trpc/server";
 import { getDb } from "./connection";
 import {
   members,
-  poolItems,
   tasks,
   taskOwners,
   vans,
   RARITIES,
-  type PoolItem,
+  type Rarity,
   type Task,
 } from "../../db/schema";
 import { firstVanCodeOf, nextVanCode, todayStr } from "../../contracts/vans";
 
 /* ── 纯函数（无库可测） ── */
-
-/**
- * 委托状态联动（任务大厅）：由名下全部任务状态推导委托状态。
- * 无任务 → open（待切片）；有任务且全部 done → done（已完成）；否则 scheduled（已排期）。
- */
-export function poolStatusOf(
-  statuses: Task["status"][],
-): "open" | "scheduled" | "done" {
-  if (statuses.length === 0) return "open";
-  if (statuses.every((s) => s === "done")) return "done";
-  return "scheduled";
-}
 
 /** 生成结转到下一班次的任务副本（未完成 → 重置状态、结转次数 +1） */
 export function toStrandedTask(
@@ -35,8 +22,8 @@ export function toStrandedTask(
   return {
     vanCode: toVan,
     title: task.title,
-    poolItemId: task.poolItemId,
-    ownerName: null, // 已迁移至 task_owners 关联表，此处清空避免双源不一致
+    rarity: task.rarity,
+    ownerName: null,
     size: task.size,
     acceptance: task.acceptance,
     status: "todo",
@@ -48,26 +35,18 @@ export function toStrandedTask(
 }
 
 /**
- * 稀有度分桶：把任务按所属委托的稀有度聚合为 { rarity, total, done } 列表。
- * 无关联委托（poolItemId 为空或委托不存在）的任务不计入；
+ * 稀有度分桶：把任务按稀有度聚合为 { rarity, total, done } 列表。
  * 只返回有任务的桶，顺序按 RARITIES 定义。
  */
 export function rarityStatsOf(
-  rows: Pick<Task, "poolItemId" | "status">[],
-  rarityById: ReadonlyMap<number, PoolItem["rarity"]>,
-): { rarity: PoolItem["rarity"]; total: number; done: number }[] {
-  const buckets = new Map<
-    PoolItem["rarity"],
-    { total: number; done: number }
-  >();
+  rows: Pick<Task, "rarity" | "status">[],
+): { rarity: Rarity; total: number; done: number }[] {
+  const buckets = new Map<Rarity, { total: number; done: number }>();
   for (const t of rows) {
-    if (t.poolItemId === null) continue;
-    const rarity = rarityById.get(t.poolItemId);
-    if (!rarity) continue;
-    const b = buckets.get(rarity) ?? { total: 0, done: 0 };
+    const b = buckets.get(t.rarity) ?? { total: 0, done: 0 };
     b.total += 1;
     if (t.status === "done") b.done += 1;
-    buckets.set(rarity, b);
+    buckets.set(t.rarity, b);
   }
   return RARITIES.filter((r) => buckets.has(r)).map((r) => ({
     rarity: r,
@@ -128,94 +107,9 @@ export async function updateMemberCapacity(id: number, capacity: number) {
   return listMembers();
 }
 
-/* ── 任务大厅（委托池） ── */
+/* ── 快件 ── */
 
-export type PoolItemWithRounds = PoolItem & { postedRounds: number };
-
-export async function listPoolItems(): Promise<PoolItemWithRounds[]> {
-  const db = getDb();
-  const items = await db.select().from(poolItems).orderBy(desc(poolItems.id));
-  const vanRows = await db
-    .select({ code: vans.code })
-    .from(vans)
-    .orderBy(asc(vans.createdAt));
-  return items.map((item) => {
-    let postedRounds = 0;
-    if (item.status === "open" && item.postedVan !== null) {
-      const idx = vanRows.findIndex((v) => v.code === item.postedVan);
-      if (idx >= 0) postedRounds = vanRows.length - idx - 1;
-    }
-    return { ...item, postedRounds };
-  });
-}
-
-export async function addPoolItem(input: {
-  title: string;
-  rarity: PoolItem["rarity"];
-  note?: string;
-}) {
-  const db = getDb();
-  const latest = await db
-    .select({ code: vans.code })
-    .from(vans)
-    .orderBy(desc(vans.code))
-    .limit(1);
-  await db.insert(poolItems).values({
-    title: input.title,
-    rarity: input.rarity,
-    postedVan: latest[0]?.code ?? null,
-    note: input.note ?? null,
-  });
-  return listPoolItems();
-}
-
-export async function updatePoolItem(
-  id: number,
-  patch: Partial<{
-    title: string;
-    rarity: PoolItem["rarity"];
-    status: "open" | "scheduled" | "done";
-    note: string | null;
-  }>,
-) {
-  if (Object.keys(patch).length === 0) {
-    // 仅状态推导联动时 patch 可能为空，跳过无意义写入
-    return listPoolItems();
-  }
-  await getDb().update(poolItems).set(patch).where(eq(poolItems.id, id));
-  return listPoolItems();
-}
-
-export async function removePoolItem(id: number) {
-  const db = getDb();
-  const [item] = await db
-    .select({ id: poolItems.id })
-    .from(poolItems)
-    .where(eq(poolItems.id, id));
-  if (!item)
-    throw new TRPCError({ code: "NOT_FOUND", message: `委托 ${id} 不存在` });
-  await db.delete(poolItems).where(eq(poolItems.id, id));
-  return listPoolItems();
-}
-
-/** 按委托名下全部任务状态重算委托状态（联动见 poolStatusOf） */
-async function syncPoolStatus(
-  db: ReturnType<typeof getDb>,
-  poolItemId: number,
-) {
-  const rows = await db
-    .select({ status: tasks.status })
-    .from(tasks)
-    .where(eq(tasks.poolItemId, poolItemId));
-  await db
-    .update(poolItems)
-    .set({ status: poolStatusOf(rows.map((r) => r.status)) })
-    .where(eq(poolItems.id, poolItemId));
-}
-
-/* ── 任务 ── */
-
-/** 查询班次任务列表（附带负责人标签，单次 JOIN 查询） */
+/** 查询班次快件列表（附带负责人标签，单次 JOIN 查询） */
 export async function listTasksByVan(van: string): Promise<TaskWithOwners[]> {
   const ownerAgg = getDb()
     .select({
@@ -230,7 +124,7 @@ export async function listTasksByVan(van: string): Promise<TaskWithOwners[]> {
       id: tasks.id,
       vanCode: tasks.vanCode,
       title: tasks.title,
-      poolItemId: tasks.poolItemId,
+      rarity: tasks.rarity,
       ownerName: tasks.ownerName,
       size: tasks.size,
       acceptance: tasks.acceptance,
@@ -252,7 +146,7 @@ export async function listTasksByVan(van: string): Promise<TaskWithOwners[]> {
   }));
 }
 
-/** 替换任务的负责人标签（先删后插） */
+/** 替换快件的负责人标签（先删后插） */
 async function replaceOwners(
   db: ReturnType<typeof getDb>,
   taskId: number,
@@ -269,32 +163,18 @@ async function replaceOwners(
 export async function addTask(input: {
   van: string;
   title: string;
-  poolItemId?: number | null;
+  rarity?: Rarity;
   owners?: string[];
   size?: 1 | 3 | 5 | null;
   acceptance?: string | null;
 }) {
-  // 防重校验：同一委托只能接取一次，不能重复上车
-  if (input.poolItemId) {
-    const existing = await getDb()
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(eq(tasks.poolItemId, input.poolItemId))
-      .limit(1);
-    if (existing.length > 0) {
-      throw new TRPCError({
-        code: "CONFLICT",
-        message: "该委托已被接取，不能重复上车",
-      });
-    }
-  }
   const db = getDb();
   const [inserted] = await db
     .insert(tasks)
     .values({
       vanCode: input.van,
       title: input.title,
-      poolItemId: input.poolItemId ?? null,
+      rarity: input.rarity ?? "common",
       size: input.size ?? null,
       acceptance: input.acceptance ?? null,
     })
@@ -302,8 +182,6 @@ export async function addTask(input: {
   if (input.owners && input.owners.length > 0) {
     await replaceOwners(db, inserted.id, input.owners);
   }
-  // 需求池联动：按任务状态重算委托状态（上车 → 至少 scheduled）
-  if (input.poolItemId) await syncPoolStatus(db, input.poolItemId);
   return listTasksByVan(input.van);
 }
 
@@ -311,7 +189,7 @@ export async function updateTask(
   id: number,
   patch: Partial<{
     title: string;
-    poolItemId: number | null;
+    rarity: Rarity;
     owners: string[];
     size: 1 | 3 | 5 | null;
     acceptance: string | null;
@@ -324,10 +202,6 @@ export async function updateTask(
   const [current] = await db.select().from(tasks).where(eq(tasks.id, id));
   if (!current)
     throw new TRPCError({ code: "NOT_FOUND", message: `任务 ${id} 不存在` });
-
-  // 换委托：记录是否变更，供下方同步新旧委托状态
-  const poolChanged =
-    patch.poolItemId !== undefined && patch.poolItemId !== current.poolItemId;
 
   // 完成日期：打勾时随手填的自动化——置完成且无日期时记今天，取消完成则清空
   if (patch.status === "done" && patch.doneAt === undefined) {
@@ -347,18 +221,6 @@ export async function updateTask(
     await replaceOwners(db, id, owners);
   }
 
-  // 需求池联动：换委托时新旧委托都重算，仅状态变化时重算当前委托
-  const poolIdsToSync = new Set<number>();
-  if (poolChanged) {
-    if (current.poolItemId !== null) poolIdsToSync.add(current.poolItemId);
-    if (patch.poolItemId !== null) poolIdsToSync.add(patch.poolItemId!);
-  } else if (patch.status !== undefined) {
-    const poolId =
-      patch.poolItemId !== undefined ? patch.poolItemId : current.poolItemId;
-    if (poolId !== null) poolIdsToSync.add(poolId);
-  }
-  for (const poolId of poolIdsToSync) await syncPoolStatus(db, poolId);
-
   return listTasksByVan(current.vanCode);
 }
 
@@ -369,10 +231,9 @@ export async function removeTask(id: number) {
     throw new TRPCError({ code: "NOT_FOUND", message: `任务 ${id} 不存在` });
   // ON DELETE CASCADE 会自动清理 task_owners
   await db.delete(tasks).where(eq(tasks.id, id));
-  if (task.poolItemId !== null) await syncPoolStatus(db, task.poolItemId);
 }
 
-/* ── 结转（设计方案第五章：未完成 = 结转下周，不允许"完成 80%"） ── */
+/* ── 结转（未完成 = 结转下周，不允许"完成 80%"） ── */
 
 export async function carryOver(fromVan: string, toVan: string) {
   if (fromVan === toVan) {
@@ -418,7 +279,7 @@ export async function carryOver(fromVan: string, toVan: string) {
       .all();
 
     for (const t of unfinished) {
-      // 结转任务
+      // 结转快件
       const [inserted] = tx
         .insert(tasks)
         .values(toStrandedTask(t, toVan))
@@ -446,7 +307,7 @@ export async function carryOver(fromVan: string, toVan: string) {
   return { carried, tasks: await listTasksByVan(toVan) };
 }
 
-/* ── 周统计（设计方案第八章：完成率 / 结转率；产能速览 = 表 3） ── */
+/* ── 周统计 ── */
 
 export async function weeklyStats(van: string) {
   const rows = await listTasksByVan(van);
@@ -455,13 +316,7 @@ export async function weeklyStats(van: string) {
   const carriedIn = rows.filter((t) => t.carriedFrom !== null).length;
   const reviewNeeded = rows.filter((t) => t.carryCount >= 2).length;
 
-  // 稀有度分桶
-  const poolRows = await getDb()
-    .select({ id: poolItems.id, rarity: poolItems.rarity })
-    .from(poolItems);
-  const rarityById = new Map(poolRows.map((r) => [r.id, r.rarity]));
-
-  // 按负责人标签聚合运力统计（每人每班每任务计一次完整 size）
+  // 按负责人标签聚合运力统计
   const memberRows = await listMembers();
   const byMember = memberRows.map((m) => {
     const mine = rows.filter((t) => t.owners.includes(m.name));
@@ -484,7 +339,7 @@ export async function weeklyStats(van: string) {
     reviewNeeded,
     completionRate: total === 0 ? null : done / total,
     carryRate: total === 0 ? null : carriedIn / total,
-    rarity: rarityStatsOf(rows, rarityById),
+    rarity: rarityStatsOf(rows),
     members: byMember,
   };
 }
