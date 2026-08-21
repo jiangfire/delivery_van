@@ -310,6 +310,20 @@ export async function addTask(input: {
   size?: 1 | 3 | 5 | null;
   acceptance?: string | null;
 }) {
+  // 防重校验：同一委托只能接取一次，不能重复上车
+  if (input.poolItemId) {
+    const existing = await getDb()
+      .select({ id: tasks.id })
+      .from(tasks)
+      .where(eq(tasks.poolItemId, input.poolItemId))
+      .limit(1);
+    if (existing.length > 0) {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: "该委托已被接取，不能重复上车",
+      });
+    }
+  }
   await checkCapacity(input.van, input.ownerName, input.size);
   const db = getDb();
   await db.insert(tasks).values({

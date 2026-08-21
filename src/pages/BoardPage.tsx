@@ -204,7 +204,7 @@ export default function BoardPage() {
         width: 86,
         editable: true,
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: [1, 3, 5] },
+        cellEditorParams: { values: ["1", "3", "5"] },
         cellRenderer: (p: ICellRendererParams<Task>) =>
           p.value ? (
             <span className={`size-badge size-${p.value}`}>{p.value} 天</span>
@@ -265,8 +265,15 @@ export default function BoardPage() {
         return;
       }
     }
-    if (
-      ["poolItemId", "ownerName", "acceptance", "note"].includes(field) &&
+    if (field === "poolItemId") {
+      if (value === "" || value == null) {
+        value = null;
+      } else {
+        const n = Number(value);
+        value = Number.isInteger(n) && n > 0 ? n : null;
+      }
+    } else if (
+      ["ownerName", "acceptance", "note"].includes(field) &&
       (value === "" || value === undefined)
     ) {
       value = null;
@@ -711,17 +718,19 @@ function PoolPanel({
               <span className="text-xs text-muted-foreground">
                 {POOL_STATUS_LABEL[p.status]}
               </span>
-              <button
-                className="text-xs text-gray-400 hover:text-foreground disabled:opacity-40"
-                disabled={van === null}
-                title={van === null ? "请先发新车" : `接取到 ${van}`}
-                onClick={() =>
-                  van !== null &&
-                  takeM.mutate({ van, title: p.title, poolItemId: p.id })
-                }
-              >
-                接取
-              </button>
+              {p.status === "open" && (
+                <button
+                  className="text-xs text-gray-400 hover:text-foreground disabled:opacity-40"
+                  disabled={van === null}
+                  title={van === null ? "请先发新车" : `接取到 ${van}`}
+                  onClick={() =>
+                    van !== null &&
+                    takeM.mutate({ van, title: p.title, poolItemId: p.id })
+                  }
+                >
+                  接取
+                </button>
+              )}
               <button
                 className="text-xs text-gray-400 hover:text-foreground"
                 onClick={() =>
