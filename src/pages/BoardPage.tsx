@@ -234,23 +234,6 @@ export default function BoardPage() {
         },
       },
       {
-        colId: "_targetVan",
-        headerName: "目标班次",
-        width: 100,
-        editable: (p) => p.data?.kind === "pool",
-        editField: "targetVan",
-        valueGetter: (p) =>
-          p.data?.kind === "pool" ? (p.data.data.targetVan ?? "") : "",
-        valueSetter: (p) => {
-          if (p.data?.kind === "pool") {
-            p.data.data.targetVan =
-              p.newValue === "" ? null : (p.newValue as string);
-            return true;
-          }
-          return false;
-        },
-      },
-      {
         colId: "_postedRounds",
         headerName: "挂账",
         width: 60,
@@ -754,7 +737,7 @@ export default function BoardPage() {
               title="在表格末尾新增一行委托"
               onClick={() => {
                 addPoolM.mutate(
-                  { title: "新委托", rarity: "common", targetVan: curVan },
+                  { title: "新委托", rarity: "common" },
                   {
                     onSuccess: () => {
                       toast.success("已添加，点击标题可编辑");

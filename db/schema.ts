@@ -39,8 +39,6 @@ export const poolItems = sqliteTable("pool_items", {
   status: text("status", { enum: ["open", "scheduled", "done"] })
     .notNull()
     .default("open"),
-  /** 目标班次：PM 期望上车的班次，仅意向（如 DV2607A） */
-  targetVan: text("target_van"),
   /** 挂出时的班次（录入时填当时最新班次，表空则为 null） */
   postedVan: text("posted_van"),
   note: text("note"),

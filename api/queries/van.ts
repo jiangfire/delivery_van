@@ -152,7 +152,6 @@ export async function listPoolItems(): Promise<PoolItemWithRounds[]> {
 export async function addPoolItem(input: {
   title: string;
   rarity: PoolItem["rarity"];
-  targetVan?: string | null;
   note?: string;
 }) {
   const db = getDb();
@@ -164,7 +163,6 @@ export async function addPoolItem(input: {
   await db.insert(poolItems).values({
     title: input.title,
     rarity: input.rarity,
-    targetVan: input.targetVan ?? null,
     postedVan: latest[0]?.code ?? null,
     note: input.note ?? null,
   });
@@ -177,7 +175,6 @@ export async function updatePoolItem(
     title: string;
     rarity: PoolItem["rarity"];
     status: "open" | "scheduled" | "done";
-    targetVan: string | null;
     note: string | null;
   }>,
 ) {

@@ -27,7 +27,6 @@ export async function ensureSchema() {
       title text NOT NULL,
       rarity text NOT NULL DEFAULT 'common',
       status text NOT NULL DEFAULT 'open',
-      target_van text,
       posted_van text,
       note text,
       created_at integer NOT NULL DEFAULT (unixepoch())

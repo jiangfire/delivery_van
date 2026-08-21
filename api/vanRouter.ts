@@ -62,7 +62,6 @@ export const vanRouter = createRouter({
         z.object({
           title: z.string().min(1).max(255),
           rarity: rarity.default("common"),
-          targetVan: vanCode.nullable().optional(),
           note: z.string().optional(),
         }),
       )
@@ -74,7 +73,6 @@ export const vanRouter = createRouter({
           title: z.string().min(1).max(255).optional(),
           rarity: rarity.optional(),
           status: z.enum(["open", "scheduled", "done"]).optional(),
-          targetVan: vanCode.nullable().optional(),
           note: z.string().nullable().optional(),
         }),
       )
