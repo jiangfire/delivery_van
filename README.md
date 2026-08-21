@@ -32,7 +32,7 @@ npm run dev   # http://localhost:3000，数据库为本地 SQLite 文件（默�
 ## 验证与构建
 
 ```bash
-npm test        # vitest：班次编码、运力校验、委托状态推导、滞留件转运逻辑
+npm test        # vitest：班次编码、委托状态推导、稀有度统计、滞留件转运逻辑
 npm run check   # tsc -b 类型检查
 npm run lint    # eslint
 npm run format  # prettier --write .
@@ -55,11 +55,10 @@ docker run -p 3000:3000 -v delivery_van_data:/app/data delivery_van
 ## 落地的设计规则
 
 - 三档粒度 1/3/5 天，接口层强制（不接受 2/4 天）
-- 每人每班档位合计 ≤ 运力（默认 5 天，请假可扣减），超载服务端直接拒单；调低运力不得低于已排峰值
-- 成员是永久标签，不可删除
+- 多人负责（标签输入），运力仅做记录不做校验；成员是永久标签，不可删除
 - 送达只看二值；打勾自动记送达日期，取消送达自动清空，日期可手工补录
 - 滞留件一键转下一班车（仅紧邻班次，目标班不存在时自动创建；事务 + 幂等防重），📦 标记来源班次；连续滞留 ≥2 班黄色高亮提示强制复盘
-- 任务大厅（委托）三态（待切片/已排期/已完成）由关联快件自动推导
+- 任务大厅（委托）已合并进主表格展示，三态（待切片/已排期/已完成）由关联快件自动推导
 - 委托带六级稀有度（普通/优秀/稀有/史诗/传说/神话），整体文字着色，神话彩虹动画；稀有度只是标记，系统不做拦截；待接取委托显示「挂 N 轮」
 - 表头实时显示 未送达 X / 共 Y 件、送达率、滞留率、稀有度构成（试运行三指标之二；估偏率靠备注 + 周五复盘定性）
 
@@ -70,6 +69,6 @@ api/        Hono + tRPC 薄后端（router / queries / ensureSchema）
 contracts/  前后端共享：班次编码工具
 db/         Drizzle schema、种子脚本
 scripts/    跨平台生产启动
-src/        React 前端（pages/BoardPage 看板、lib/trpc、providers）
+src/        React 前端（pages/BoardPage 看板、components/TagCellEditor 标签输入、lib/trpc、providers）
 docs/       设计方案与发版计划
 ```
