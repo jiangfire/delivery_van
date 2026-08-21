@@ -312,7 +312,8 @@ export default function BoardPage() {
             if (val === "" || val == null) {
               p.data.doneAt = null;
             } else if (val instanceof Date) {
-              p.data.doneAt = val.toISOString().slice(0, 10);
+              // 用本地日期组件，不用 toISOString()（那是 UTC 时间，会偏移）
+              p.data.doneAt = `${val.getFullYear()}-${String(val.getMonth() + 1).padStart(2, "0")}-${String(val.getDate()).padStart(2, "0")}`;
             } else {
               p.data.doneAt = String(val) || null;
             }
@@ -432,7 +433,8 @@ export default function BoardPage() {
     }
     if (key === "doneAt") {
       if (value instanceof Date) {
-        value = value.toISOString().slice(0, 10);
+        // 用本地日期组件，不用 toISOString()（那是 UTC 时间，会偏移）
+        value = `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
       }
       if (value === "" || value == null) {
         value = null;

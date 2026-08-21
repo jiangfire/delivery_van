@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -10,20 +10,48 @@ export default function RequesterSelect({
   members,
   onAddMember,
   onChange,
+  onClose,
   pos,
 }: {
   initial: string;
   members: string[];
   onAddMember?: (name: string) => void;
   onChange: (v: string) => void;
+  onClose: () => void;
   pos: { top: number; left: number };
 }) {
   const [value, setValue] = useState(initial);
   const [newName, setNewName] = useState("");
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     onChange(value);
   }, [value, onChange]);
+
+  // 点击外部关闭
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const timer = setTimeout(() => {
+      document.addEventListener("mousedown", handleClickOutside);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [onClose]);
+
+  // Escape 关闭
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const submitNew = useCallback(() => {
     const trimmed = newName.trim();
@@ -35,8 +63,17 @@ export default function RequesterSelect({
     setNewName("");
   }, [newName, members, onAddMember]);
 
+  const selectAndClose = useCallback(
+    (v: string) => {
+      setValue(v);
+      onClose();
+    },
+    [onClose],
+  );
+
   const panel = (
     <div
+      ref={panelRef}
       style={{
         position: "fixed",
         top: pos.top,
@@ -74,7 +111,7 @@ export default function RequesterSelect({
           type="radio"
           name="requester"
           checked={value === ""}
-          onChange={() => setValue("")}
+          onChange={() => selectAndClose("")}
           style={{ accentColor: "#0ea5e9", marginRight: 8 }}
         />
         <span>无</span>
@@ -103,7 +140,7 @@ export default function RequesterSelect({
               type="radio"
               name="requester"
               checked={value === m}
-              onChange={() => setValue(m)}
+              onChange={() => selectAndClose(m)}
               style={{ accentColor: "#0ea5e9", marginRight: 8 }}
             />
             <span>{m}</span>

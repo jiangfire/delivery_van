@@ -13,6 +13,8 @@ export default class MultiSelectCellEditor implements ICellEditorComp<
   private div!: HTMLDivElement;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private root: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private params: any;
 
   getGui(): HTMLElement {
     return this.div;
@@ -20,6 +22,7 @@ export default class MultiSelectCellEditor implements ICellEditorComp<
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   init(params: any) {
+    this.params = params;
     this.value = Array.isArray(params.value) ? [...params.value] : [];
     const members: string[] = params.members ?? [];
     const onAddMember: ((name: string) => void) | undefined =
@@ -31,7 +34,6 @@ export default class MultiSelectCellEditor implements ICellEditorComp<
     const wrapper = document.createElement("div");
     this.div.appendChild(wrapper);
 
-    // 从 params.eGridCell 获取单元格位置（parentElement 是 ag-popup 容器，不是 cell）
     const cellEl: HTMLElement | undefined = params.eGridCell;
     const cellRect = cellEl?.getBoundingClientRect() ?? {
       bottom: 0,
@@ -39,8 +41,12 @@ export default class MultiSelectCellEditor implements ICellEditorComp<
     };
     const pos = { top: cellRect.bottom + 2, left: cellRect.left };
 
-    // 阻止 AG Grid 捕获点击事件导致编辑器关闭
     this.div.addEventListener("mousedown", (e) => e.stopPropagation());
+
+    const handleClose = () => {
+      // 先同步值到 AG Grid，再停止编辑
+      this.params.stopEditing();
+    };
 
     this.root = createRoot(wrapper);
     this.root.render(
@@ -52,6 +58,7 @@ export default class MultiSelectCellEditor implements ICellEditorComp<
         onChange={(v: string[]) => {
           this.value = v;
         }}
+        onClose={handleClose}
       />,
     );
   }

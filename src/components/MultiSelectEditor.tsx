@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 
 /**
@@ -10,20 +10,49 @@ export default function MultiSelectEditor({
   members,
   onAddMember,
   onChange,
+  onClose,
   pos,
 }: {
   initial: string[];
   members: string[];
   onAddMember?: (name: string) => void;
   onChange: (v: string[]) => void;
+  onClose: () => void;
   pos: { top: number; left: number };
 }) {
   const [selected, setSelected] = useState<string[]>(initial);
   const [newName, setNewName] = useState("");
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     onChange(selected);
   }, [selected, onChange]);
+
+  // 点击外部关闭
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    // 延迟绑定，避免当前点击触发关闭
+    const timer = setTimeout(() => {
+      document.addEventListener("mousedown", handleClickOutside);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [onClose]);
+
+  // Escape 关闭
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
 
   const toggle = useCallback((name: string) => {
     setSelected((prev) =>
@@ -47,6 +76,7 @@ export default function MultiSelectEditor({
 
   const panel = (
     <div
+      ref={panelRef}
       style={{
         position: "fixed",
         top: pos.top,
@@ -239,6 +269,34 @@ export default function MultiSelectEditor({
           </button>
         </div>
       )}
+      {/* 确定按钮 */}
+      <div
+        style={{
+          padding: "6px 10px 8px",
+          borderTop: "1px solid rgba(0,0,0,0.06)",
+        }}
+      >
+        <button
+          style={{
+            width: "100%",
+            padding: "6px 0",
+            borderRadius: 8,
+            border: "none",
+            background: "linear-gradient(135deg, #0ea5e9, #0284c7)",
+            color: "#fff",
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer",
+          }}
+          onMouseDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onClose();
+          }}
+        >
+          确定
+        </button>
+      </div>
     </div>
   );
 

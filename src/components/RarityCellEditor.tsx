@@ -11,6 +11,8 @@ export default class RarityCellEditor implements ICellEditorComp<string> {
   private div!: HTMLDivElement;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private root: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private params: any;
 
   getGui(): HTMLElement {
     return this.div;
@@ -18,6 +20,7 @@ export default class RarityCellEditor implements ICellEditorComp<string> {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   init(params: any) {
+    this.params = params;
     this.value = params.value ?? "common";
 
     this.div = document.createElement("div");
@@ -35,6 +38,10 @@ export default class RarityCellEditor implements ICellEditorComp<string> {
 
     this.div.addEventListener("mousedown", (e) => e.stopPropagation());
 
+    const handleClose = () => {
+      this.params.stopEditing();
+    };
+
     this.root = createRoot(wrapper);
     this.root.render(
       <RarityEditor
@@ -43,6 +50,7 @@ export default class RarityCellEditor implements ICellEditorComp<string> {
         onChange={(v: string) => {
           this.value = v;
         }}
+        onClose={handleClose}
       />,
     );
   }

@@ -11,6 +11,8 @@ export default class RequesterCellEditor implements ICellEditorComp<string> {
   private div!: HTMLDivElement;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private root: any = null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private params: any;
 
   getGui(): HTMLElement {
     return this.div;
@@ -18,6 +20,7 @@ export default class RequesterCellEditor implements ICellEditorComp<string> {
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   init(params: any) {
+    this.params = params;
     this.value = params.value ?? "";
     const members: string[] = params.members ?? [];
     const onAddMember: ((name: string) => void) | undefined =
@@ -38,6 +41,10 @@ export default class RequesterCellEditor implements ICellEditorComp<string> {
 
     this.div.addEventListener("mousedown", (e) => e.stopPropagation());
 
+    const handleClose = () => {
+      this.params.stopEditing();
+    };
+
     this.root = createRoot(wrapper);
     this.root.render(
       <RequesterSelect
@@ -48,6 +55,7 @@ export default class RequesterCellEditor implements ICellEditorComp<string> {
         onChange={(v: string) => {
           this.value = v;
         }}
+        onClose={handleClose}
       />,
     );
   }

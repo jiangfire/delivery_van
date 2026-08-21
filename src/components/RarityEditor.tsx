@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 
 const RARITIES = [
@@ -26,24 +26,58 @@ const RARITY_LABEL: Record<string, string> = {
 export default function RarityEditor({
   initial,
   onChange,
+  onClose,
   pos,
 }: {
   initial: string;
   onChange: (v: string) => void;
+  onClose: () => void;
   pos: { top: number; left: number };
 }) {
   const [value, setValue] = useState(initial);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     onChange(value);
   }, [value, onChange]);
 
-  const select = useCallback((v: string) => {
-    setValue(v);
-  }, []);
+  // 点击外部关闭
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const timer = setTimeout(() => {
+      document.addEventListener("mousedown", handleClickOutside);
+    }, 0);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener("mousedown", handleClickOutside);
+    };
+  }, [onClose]);
+
+  // Escape 关闭
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  const select = useCallback(
+    (v: string) => {
+      setValue(v);
+      // 单选：选择后立即关闭
+      onClose();
+    },
+    [onClose],
+  );
 
   const panel = (
     <div
+      ref={panelRef}
       style={{
         position: "fixed",
         top: pos.top,
