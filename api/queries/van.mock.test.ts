@@ -470,7 +470,6 @@ describe("快件管理", () => {
 // 导入结转和统计函数
 import { carryOver, weeklyStats } from "./van";
 
-// eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
 describe("结转逻辑", () => {
   beforeEach(() => {
     vi.clearAllMocks();
