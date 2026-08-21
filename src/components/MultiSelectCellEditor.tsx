@@ -31,8 +31,9 @@ export default class MultiSelectCellEditor implements ICellEditorComp<
     const wrapper = document.createElement("div");
     this.div.appendChild(wrapper);
 
-    // 从 cell DOM 计算弹出位置
-    const cellRect = this.div.parentElement?.getBoundingClientRect() ?? {
+    // 从 params.eGridCell 获取单元格位置（parentElement 是 ag-popup 容器，不是 cell）
+    const cellEl: HTMLElement | undefined = params.eGridCell;
+    const cellRect = cellEl?.getBoundingClientRect() ?? {
       bottom: 0,
       left: 0,
     };

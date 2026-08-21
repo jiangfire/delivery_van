@@ -29,7 +29,8 @@ export default class RequesterCellEditor implements ICellEditorComp<string> {
     const wrapper = document.createElement("div");
     this.div.appendChild(wrapper);
 
-    const cellRect = this.div.parentElement?.getBoundingClientRect() ?? {
+    const cellEl: HTMLElement | undefined = params.eGridCell;
+    const cellRect = cellEl?.getBoundingClientRect() ?? {
       bottom: 0,
       left: 0,
     };
