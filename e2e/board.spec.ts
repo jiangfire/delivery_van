@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { nextVanCode } from "../contracts/vans";
+import { carryTargetCode } from "../contracts/vans";
 import {
   waitForBoard,
   dispatchVan,
@@ -94,19 +94,19 @@ test.describe("快件增删改", () => {
     const statusCell = dataCell(page, "_status");
     const doneAtCell = dataCell(page, "_doneAt");
 
-    await selectEditorOption(page, "_status", "done");
-    await expect(statusCell).toHaveText("done");
+    await selectEditorOption(page, "_status", "完成");
+    await expect(statusCell).toHaveText("完成");
     await expect(doneAtCell).toHaveText(`📅 ${todayStr()}`, { timeout: 5000 });
 
-    await selectEditorOption(page, "_status", "todo");
+    await selectEditorOption(page, "_status", "未开始");
     await expect(doneAtCell).toHaveText("完成后填写", { timeout: 5000 });
   });
 
   test("送达日期可手工补录与清除", async ({ page }) => {
     await addTaskAndWait(page);
     // 先置完成，送达日期列才可编辑
-    await selectEditorOption(page, "_status", "done");
-    await expect(dataCell(page, "_status")).toHaveText("done");
+    await selectEditorOption(page, "_status", "完成");
+    await expect(dataCell(page, "_status")).toHaveText("完成");
 
     const doneAtCell = dataCell(page, "_doneAt");
     await doneAtCell.dblclick();
@@ -194,7 +194,9 @@ test.describe("滞留件结转与归档", () => {
     // 切回旧班结转
     await page.locator("select").selectOption({ index: 1 });
     const fromVan = await page.locator("select").inputValue();
-    const toVan = nextVanCode(fromVan);
+    // 与服务端同口径推导结转目标（已存在的最近一班优先），避免整轮跨月零点时推错
+    const allVans = await page.locator("select option").allTextContents();
+    const toVan = carryTargetCode(fromVan, allVans, new Date());
 
     page.once("dialog", (d) => d.accept());
     await page.getByRole("button", { name: "滞留件转下一班" }).click();
@@ -253,8 +255,8 @@ test.describe("滞留件结转与归档", () => {
 
   test("全部送达的班次结转无滞留件，且不归档", async ({ page }) => {
     await addTaskAndWait(page);
-    await selectEditorOption(page, "_status", "done");
-    await expect(dataCell(page, "_status")).toHaveText("done", {
+    await selectEditorOption(page, "_status", "完成");
+    await expect(dataCell(page, "_status")).toHaveText("完成", {
       timeout: 5000,
     });
 
@@ -265,7 +267,7 @@ test.describe("滞留件结转与归档", () => {
     });
 
     // 无结转发生：状态不变、滞留率 0%、班次保持可编辑
-    await expect(dataCell(page, "_status")).toHaveText("done");
+    await expect(dataCell(page, "_status")).toHaveText("完成");
     await expect(page.getByText("0%", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "+ 快件" })).toBeEnabled();
     await expect(page.getByText("已结转 · 归档")).toBeHidden();

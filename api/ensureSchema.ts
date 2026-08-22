@@ -39,7 +39,7 @@ export async function ensureSchema() {
       van_code text NOT NULL,
       title text NOT NULL,
       rarity text NOT NULL DEFAULT 'n',
-      owner_name text,
+      requester text,
       size integer,
       acceptance text,
       status text NOT NULL DEFAULT 'todo',

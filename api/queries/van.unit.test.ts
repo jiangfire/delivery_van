@@ -11,7 +11,6 @@ describe("toStrandedTask", () => {
     title: "创建/核销优惠券接口联调通过",
     rarity: "ssr",
     requester: "张经理",
-    ownerName: "张三",
     size: 3,
     acceptance: "接口联调通过",
     status: "doing",
@@ -46,11 +45,10 @@ describe("toStrandedTask", () => {
     expect(again.carryCount).toBe(2);
   });
 
-  it("保留快件内容、稀有度、档位、验收标准和备注，清空 ownerName", () => {
+  it("保留快件内容、稀有度、档位、验收标准和备注", () => {
     const carried = toStrandedTask(base, "DV2607B");
     expect(carried.title).toBe(base.title);
     expect(carried.rarity).toBe("ssr");
-    expect(carried.ownerName).toBeNull();
     expect(carried.size).toBe(base.size);
     expect(carried.acceptance).toBe(base.acceptance);
     expect(carried.note).toBe(base.note);

@@ -82,8 +82,6 @@ export default function DateCellEditor({
         type="date"
         value={value}
         onChange={handleChange}
-        min="2020-01-01"
-        max="2030-12-31"
         style={{
           width: "100%",
           padding: "6px 8px",

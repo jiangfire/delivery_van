@@ -23,6 +23,17 @@ const sizeTier = z.union([z.literal(1), z.literal(3), z.literal(5)]);
 const idField = z.number().int().positive();
 const rarity = z.enum(RARITIES);
 
+/**
+ * 成员/负责人标签的统一约束：trim 后 1~64 字符，且不含半角逗号——
+ * 负责人列表读取时用逗号分隔聚合（group_concat），含逗号会错拆标签。
+ */
+export const memberTag = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .refine((v) => !v.includes(","), "名称不能包含半角逗号「,」");
+
 export const vanRouter = createRouter({
   /* ── 班次（手动发新车） ── */
   vans: createRouter({
@@ -38,7 +49,7 @@ export const vanRouter = createRouter({
     add: publicQuery
       .input(
         z.object({
-          name: z.string().trim().min(1).max(64),
+          name: memberTag,
           capacity: z.number().int().min(0).max(7).default(5),
         }),
       )
@@ -62,7 +73,7 @@ export const vanRouter = createRouter({
           title: z.string().min(1).max(255),
           rarity: rarity.default("n"),
           requester: z.string().max(64).optional(),
-          owners: z.array(z.string().trim().max(64)).optional(),
+          owners: z.array(memberTag).optional(),
           size: sizeTier.nullable().optional(),
           acceptance: z.string().max(255).nullable().optional(),
         }),
@@ -74,8 +85,8 @@ export const vanRouter = createRouter({
           id: idField,
           title: z.string().min(1).max(255).optional(),
           rarity: rarity.optional(),
-          requester: z.string().max(64).optional(),
-          owners: z.array(z.string().trim().max(64)).optional(),
+          requester: z.string().max(64).nullable().optional(),
+          owners: z.array(memberTag).optional(),
           size: sizeTier.nullable().optional(),
           acceptance: z.string().max(255).nullable().optional(),
           status: z.enum(["todo", "doing", "done"]).optional(),

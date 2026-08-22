@@ -18,6 +18,8 @@ export default defineConfig({
     baseURL: `http://localhost:${PORT}`,
     headless: true,
     screenshot: "only-on-failure",
+    /* 与服务端 todayStr 的上海时区同口径，避免 CI（UTC）在 UTC 16 点后日期差一天 */
+    timezone: "Asia/Shanghai",
   },
   /* 先构建生产产物再起服务：e2e 跑真实部署形态，也避开 dev 模式（StrictMode 双挂载/HMR）
      在慢启动下放大 AG Grid 编辑会话的时序竞态 */

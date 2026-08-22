@@ -1,5 +1,10 @@
 import { test, expect, type Page } from "@playwright/test";
-import { dispatchVan, addTaskAndWait, dataCell } from "./helpers";
+import {
+  dispatchVan,
+  addTaskAndWait,
+  dataCell,
+  waitForTaskUpdate,
+} from "./helpers";
 
 /** 把第一行任务状态改为 done，刷新页面生效 */
 async function setFirstTaskDone(page: Page) {
@@ -82,6 +87,36 @@ test.describe("Bug 回归：快件编辑", () => {
     await page.waitForTimeout(500);
     const text = await requesterCell.textContent();
     expect(text?.trim()).toBe("测试员");
+  });
+
+  test("提出人可清空并持久化（选「无」）", async ({ page }) => {
+    await addTaskAndWait(page);
+
+    // 先设置一个提出人（输入框新增成员并选中）
+    const requesterCell = dataCell(page, "_requester");
+    await requesterCell.dblclick();
+    const nameInput = page.getByPlaceholder("新成员名称");
+    await nameInput.fill("临时提出人");
+    await nameInput.press("Enter");
+    await expect(requesterCell).toHaveText("临时提出人", {
+      timeout: 3000,
+    });
+
+    // 重新打开，选「无」清空
+    await requesterCell.dblclick();
+    const noneOption = page.getByText("无", { exact: true });
+    await expect(noneOption).toBeVisible({ timeout: 3000 });
+    const updated = waitForTaskUpdate(page);
+    await noneOption.click();
+    await updated;
+    await expect(requesterCell).toHaveText("", { timeout: 5000 });
+
+    // 持久化验证
+    await page.reload();
+    await expect(page.getByText("快递发车台")).toBeVisible();
+    await expect(dataCell(page, "_requester")).toHaveText("", {
+      timeout: 5000,
+    });
   });
 
   test("送达日期弹框点击外部自动关闭", async ({ page }) => {

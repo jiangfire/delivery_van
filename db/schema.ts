@@ -61,8 +61,6 @@ export const tasks = sqliteTable(
     rarity: text("rarity", { enum: RARITIES }).notNull().default("n"),
     /** 提出人：谁提的需求 */
     requester: text("requester"),
-    /** @deprecated 已迁移至 task_owners 关联表 */
-    ownerName: text("owner_name"),
     /** 档位：1 / 3 / 5 天 */
     size: integer("size"),
     /** 验收标准：周五凭什么说它做完了 */

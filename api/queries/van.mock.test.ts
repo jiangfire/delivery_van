@@ -93,13 +93,13 @@ describe("班次管理", () => {
         }),
       };
 
-      const result = await dispatchVan();
+      const result = await dispatchVan(new Date(2026, 6, 15));
 
       expect(result).toEqual(["DV2607A"]);
       expect(mockDb.insert).toHaveBeenCalled();
     });
 
-    it("已有班次时自动递增", async () => {
+    it("已有班次时同月自动递增", async () => {
       const firstQuery = createQueryable([{ code: "DV2607A" }]);
       const secondQuery = createQueryable([
         { code: "DV2607B" },
@@ -120,9 +120,54 @@ describe("班次管理", () => {
         }),
       };
 
-      const result = await dispatchVan();
+      const result = await dispatchVan(new Date(2026, 6, 20));
 
       expect(result).toEqual(["DV2607B", "DV2607A"]);
+    });
+
+    it("跨月发新车从新月份 A 重新计数", async () => {
+      const firstQuery = createQueryable([{ code: "DV2607E" }]);
+      const secondQuery = createQueryable([
+        { code: "DV2608A" },
+        { code: "DV2607E" },
+      ]);
+      let callCount = 0;
+
+      mockDb = {
+        select: vi.fn().mockImplementation(() => {
+          callCount++;
+          return callCount === 1 ? firstQuery : secondQuery;
+        }),
+        insert: vi.fn().mockReturnValue({
+          values: vi.fn().mockReturnValue({
+            then: (resolve: (value: any) => any) =>
+              Promise.resolve({}).then(resolve),
+          }),
+        }),
+      };
+
+      const result = await dispatchVan(new Date(2026, 7, 5));
+
+      expect(result).toEqual(["DV2608A", "DV2607E"]);
+    });
+
+    it("并发撞主键时幂等返回当前列表，不抛错", async () => {
+      const listQuery = createQueryable([{ code: "DV2607A" }]);
+
+      mockDb = {
+        select: vi.fn().mockReturnValue(listQuery),
+        insert: vi.fn().mockReturnValue({
+          values: vi
+            .fn()
+            .mockReturnValue(
+              Promise.reject({ code: "SQLITE_CONSTRAINT_PRIMARYKEY" }),
+            ),
+        }),
+      };
+
+      const result = await dispatchVan(new Date(2026, 6, 20));
+
+      expect(result).toEqual(["DV2607A"]);
     });
   });
 });
@@ -178,6 +223,22 @@ describe("成员管理", () => {
     it("重名时抛出 CONFLICT 错误", async () => {
       mockDb = {
         select: vi.fn().mockReturnValue(createQueryable([{ id: 1 }])),
+      };
+
+      await expect(addMember("张三", 5)).rejects.toThrow(TRPCError);
+      await expect(addMember("张三", 5)).rejects.toThrow("已存在");
+    });
+
+    it("并发撞唯一约束时按重名处理，不裸抛 500", async () => {
+      mockDb = {
+        select: vi.fn().mockReturnValue(createQueryable([])),
+        insert: vi.fn().mockReturnValue({
+          values: vi
+            .fn()
+            .mockImplementation(() =>
+              Promise.reject({ code: "SQLITE_CONSTRAINT_UNIQUE" }),
+            ),
+        }),
       };
 
       await expect(addMember("张三", 5)).rejects.toThrow(TRPCError);
@@ -542,10 +603,16 @@ describe("结转逻辑", () => {
   });
 
   it("只能结转到下一班次", async () => {
-    await expect(carryOver("DV2607A", "DV2607C")).rejects.toThrow(TRPCError);
-    await expect(carryOver("DV2607A", "DV2607C")).rejects.toThrow(
-      "只能结转到下一班次",
-    );
+    mockDb = {
+      select: vi.fn().mockReturnValue(createQueryable([])),
+    };
+
+    await expect(
+      carryOver("DV2607A", "DV2607C", new Date(2026, 6, 20)),
+    ).rejects.toThrow(TRPCError);
+    await expect(
+      carryOver("DV2607A", "DV2607C", new Date(2026, 6, 20)),
+    ).rejects.toThrow("只能结转到下一班次");
   });
 
   it("正常结转未完成快件", async () => {
@@ -570,17 +637,22 @@ describe("结转逻辑", () => {
       }),
     };
 
+    let callCount = 0;
     mockDb = {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
       transaction: vi.fn((fn: Function) => fn(mockTx)),
-      select: vi
-        .fn()
-        .mockReturnValue(
-          createQueryable([{ id: 10, vanCode: "DV2607B", owners: "张三" }]),
-        ),
+      select: vi.fn().mockImplementation(() => {
+        callCount++;
+        // 第 1 次是结转前校验用的 listVans（无下一班），第 2 次是末尾 listTasksByVan
+        return createQueryable(
+          callCount === 1
+            ? []
+            : [{ id: 10, vanCode: "DV2607B", owners: "张三" }],
+        );
+      }),
     };
 
-    const result = await carryOver("DV2607A", "DV2607B");
+    const result = await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
 
     expect(result.carried).toBe(0);
     expect(mockDb.transaction).toHaveBeenCalled();
@@ -624,7 +696,7 @@ describe("结转逻辑", () => {
       select: vi.fn().mockReturnValue(createQueryable([])),
     };
 
-    const result = await carryOver("DV2607A", "DV2607B");
+    const result = await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
 
     expect(result.carried).toBe(2);
     expect(mockTx.update).toHaveBeenCalled();
@@ -663,9 +735,63 @@ describe("结转逻辑", () => {
       select: vi.fn().mockReturnValue(createQueryable([])),
     };
 
-    await carryOver("DV2607A", "DV2607B");
+    await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
 
     expect(vanCreated).toBe(true);
+  });
+
+  it("下一班已存在时转入既有班次，不再创建", async () => {
+    let vanInserted = false;
+    // 事务内查询顺序：① 幂等检查（无既往结转）→ ② vanExists（目标班已存在）→ ③ 源班未完成（无）
+    let limitCall = 0;
+    const mockTx = {
+      select: vi.fn().mockReturnValue({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockImplementation(() => {
+              limitCall++;
+              return {
+                all: vi
+                  .fn()
+                  .mockReturnValue(
+                    limitCall === 1 ? [] : [{ code: "DV2608A" }],
+                  ),
+              };
+            }),
+            all: vi.fn().mockReturnValue([]),
+          }),
+        }),
+      }),
+      insert: vi.fn().mockImplementation(() => ({
+        values: vi.fn().mockImplementation(() => {
+          vanInserted = true;
+          return {
+            returning: vi.fn().mockReturnValue({
+              all: vi.fn().mockReturnValue([{ id: 10 }]),
+            }),
+            run: vi.fn(),
+          };
+        }),
+      })),
+    };
+
+    let callCount = 0;
+    mockDb = {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+      transaction: vi.fn((fn: Function) => fn(mockTx)),
+      select: vi.fn().mockImplementation(() => {
+        callCount++;
+        // 第 1 次是 listVans：DV2608A 已发，是 DV2607A 的紧邻下一班
+        return createQueryable(
+          callCount === 1 ? [{ code: "DV2607A" }, { code: "DV2608A" }] : [],
+        );
+      }),
+    };
+
+    const result = await carryOver("DV2607A", "DV2608A", new Date(2026, 7, 5));
+
+    expect(result.carried).toBe(0);
+    expect(vanInserted).toBe(false);
   });
 });
 

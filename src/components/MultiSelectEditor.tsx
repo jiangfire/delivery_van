@@ -66,7 +66,8 @@ export default function MultiSelectEditor({
 
   const submitNew = useCallback(() => {
     const trimmed = newName.trim();
-    if (!trimmed) return;
+    // 半角逗号与服务端负责人聚合分隔符冲突，直接不添加（服务端 zod 也会拦截）
+    if (!trimmed || trimmed.includes(",")) return;
     if (!members.includes(trimmed)) {
       onAddMember?.(trimmed);
     }

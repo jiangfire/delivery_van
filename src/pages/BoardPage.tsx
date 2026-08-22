@@ -12,7 +12,7 @@ import {
 type TaskColDef = ColDef<TaskRow> & { editField?: string };
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
-import { nextVanCode } from "@contracts/vans";
+import { carryTargetCode } from "@contracts/vans";
 import type { TaskWithOwners } from "../../api/queries/van";
 import MultiSelectCellEditor from "@/components/MultiSelectCellEditor";
 import RarityCellEditor from "@/components/RarityCellEditor";
@@ -29,6 +29,19 @@ const RARITY_CLASS: Record<Rarity, string> = {
   sr: "text-sky-600",
   ssr: "text-violet-600",
   ur: "rarity-ur-text",
+};
+
+/* ── 任务四态的中文标签（存储值仍是英文枚举） ── */
+const STATUS_LABEL: Record<string, string> = {
+  todo: "未开始",
+  doing: "进行中",
+  done: "完成",
+  carried: "结转",
+};
+const STATUS_CODE: Record<string, TaskRow["status"]> = {
+  未开始: "todo",
+  进行中: "doing",
+  完成: "done",
 };
 
 type TaskRow = TaskWithOwners;
@@ -135,8 +148,7 @@ export default function BoardPage() {
   const memberNames = useMemo(() => members.map((m) => m.name), [members]);
 
   // columnDefs 引用必须稳定：AG Grid 收到新数组会重建列并销毁正在编辑的编辑器。
-  // 成员列表按「内容」记忆（后台刷新不改内容时保持原引用），编辑参数延迟到编辑时求值。
-  const memberNamesKey = memberNames.join("\n");
+  // react-query 的 structural sharing 保证数据不变时引用稳定；编辑参数延迟到编辑时求值。
   const columnDefs = useMemo<TaskColDef[]>(
     () => [
       {
@@ -282,11 +294,13 @@ export default function BoardPage() {
         editable: !vanReadonly,
         editField: "status",
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: ["todo", "doing", "done"] },
-        valueGetter: (p) => p.data?.status ?? "",
+        cellEditorParams: { values: ["未开始", "进行中", "完成"] },
+        // 网格值用中文标签（编辑器直接以 values 展示），valueSetter 反查回枚举存储
+        valueGetter: (p) => STATUS_LABEL[p.data?.status ?? ""] ?? "",
         valueSetter: (p) => {
           if (p.data) {
-            p.data.status = p.newValue as typeof p.data.status;
+            const code = STATUS_CODE[p.newValue as string];
+            if (code) p.data.status = code;
             return true;
           }
           return false;
@@ -296,7 +310,9 @@ export default function BoardPage() {
           if (!d || !d.status) return null;
           return (
             <span className={`status-badge status-${d.status}`}>
-              {d.status === "carried" ? "🔁 结转" : d.status}
+              {d.status === "carried"
+                ? "🔁 结转"
+                : (STATUS_LABEL[d.status] ?? d.status)}
             </span>
           );
         },
@@ -422,14 +438,7 @@ export default function BoardPage() {
         },
       },
     ],
-    [
-      memberNamesKey,
-      memberNames,
-      removeTask,
-      addMember,
-      vanReadonly,
-      vanArchived,
-    ],
+    [memberNames, removeTask, addMember, vanReadonly, vanArchived],
   );
 
   /* ── 单元格编辑回调 ── */
@@ -454,6 +463,10 @@ export default function BoardPage() {
     if (!key) return;
     let value: unknown = e.newValue;
 
+    if (key === "status") {
+      // 编辑器以中文标签交互，落库前反查回英文枚举
+      value = STATUS_CODE[value as string] ?? value;
+    }
     if (key === "size") {
       value = value === "" || value == null ? null : Number(value);
     }
@@ -631,7 +644,8 @@ export default function BoardPage() {
               title={vanArchived ? "本班次已结转过，请勿重复操作" : undefined}
               onClick={() => {
                 if (curVan === null) return;
-                const toVan = nextVanCode(curVan);
+                // 与服务端同口径：已存在的最近一班优先，否则按日期推导下一班
+                const toVan = carryTargetCode(curVan, vans, new Date());
                 if (window.confirm(`把 ${curVan} 的滞留件转到下一班车？`)) {
                   carryM.mutate({ fromVan: curVan, toVan });
                 }

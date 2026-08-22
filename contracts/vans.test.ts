@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   VAN_CODE_RE,
+  carryTargetCode,
   firstVanCodeOf,
   isVanCode,
   nextVanCode,
+  nextVanCodeFrom,
   parse,
 } from "./vans";
 
@@ -51,6 +53,43 @@ describe("firstVanCodeOf", () => {
     expect(firstVanCodeOf(new Date(2026, 6, 15))).toBe("DV2607A");
     expect(firstVanCodeOf(new Date(2026, 0, 1))).toBe("DV2601A");
     expect(firstVanCodeOf(new Date(2026, 11, 31))).toBe("DV2612A");
+  });
+});
+
+describe("nextVanCodeFrom（跨月感知）", () => {
+  it("同月内字母 +1：DV2608A + 8月 → DV2608B", () => {
+    expect(nextVanCodeFrom("DV2608A", new Date(2026, 7, 15))).toBe("DV2608B");
+  });
+
+  it("跨月从新月份 A 重新计数：DV2607E + 8月 → DV2608A", () => {
+    expect(nextVanCodeFrom("DV2607E", new Date(2026, 7, 1))).toBe("DV2608A");
+  });
+
+  it("跨年：DV2612B + 次年 1 月 → DV2701A", () => {
+    expect(nextVanCodeFrom("DV2612B", new Date(2027, 0, 10))).toBe("DV2701A");
+  });
+
+  it("当月已到 Z：再发车跨月回 A（DV2608Z + 8月 → DV2609A）", () => {
+    expect(nextVanCodeFrom("DV2608Z", new Date(2026, 7, 28))).toBe("DV2609A");
+  });
+});
+
+describe("carryTargetCode（结转目标）", () => {
+  const jul = new Date(2026, 6, 20);
+  const aug = new Date(2026, 7, 5);
+
+  it("优先取已存在的最近一班：DV2607E 结转时 DV2608A 已发 → DV2608A", () => {
+    expect(
+      carryTargetCode("DV2607E", ["DV2608A", "DV2607A", "DV2607E"], aug),
+    ).toBe("DV2608A");
+  });
+
+  it("没有下一班时同月推导：DV2607A → DV2607B（由调用方自动创建）", () => {
+    expect(carryTargetCode("DV2607A", ["DV2607A"], jul)).toBe("DV2607B");
+  });
+
+  it("没有下一班且已跨月：DV2607E + 8月 → DV2608A（由调用方自动创建）", () => {
+    expect(carryTargetCode("DV2607E", ["DV2607E"], aug)).toBe("DV2608A");
   });
 });
 

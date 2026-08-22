@@ -10,7 +10,12 @@ import {
   type Rarity,
   type Task,
 } from "../../db/schema";
-import { firstVanCodeOf, nextVanCode, todayStr } from "../../contracts/vans";
+import {
+  carryTargetCode,
+  firstVanCodeOf,
+  nextVanCodeFrom,
+  todayStr,
+} from "../../contracts/vans";
 
 /* ── 纯函数（无库可测） ── */
 
@@ -24,7 +29,6 @@ export function toStrandedTask(
     title: task.title,
     rarity: task.rarity,
     requester: task.requester,
-    ownerName: null,
     size: task.size,
     acceptance: task.acceptance,
     status: "todo",
@@ -94,12 +98,23 @@ export async function listVans(): Promise<string[]> {
   return rows.map((r) => r.code);
 }
 
-/** 发新车：表空时建当月首班车，否则在最新班次基础上 +1；返回最新列表 */
-export async function dispatchVan(): Promise<string[]> {
+/**
+ * 发新车：表空时建当月首班车，否则在最新班次基础上 +1（跨月从新月份 A 重新
+ * 计数）；返回最新列表。today 参数仅供测试注入，运行时取当前日期。
+ */
+export async function dispatchVan(today: Date = new Date()): Promise<string[]> {
   const list = await listVans();
   const code =
-    list.length === 0 ? firstVanCodeOf(new Date()) : nextVanCode(list[0]);
-  await getDb().insert(vans).values({ code });
+    list.length === 0 ? firstVanCodeOf(today) : nextVanCodeFrom(list[0], today);
+  try {
+    await getDb().insert(vans).values({ code });
+  } catch (e) {
+    // 并发双击等极端情况下编码已被抢先插入：视为对方已发车，幂等返回当前列表
+    if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
+      return listVans();
+    }
+    throw e;
+  }
   return listVans();
 }
 
@@ -119,7 +134,18 @@ export async function addMember(name: string, capacity: number) {
   if (dup.length > 0) {
     throw new TRPCError({ code: "CONFLICT", message: `成员「${name}」已存在` });
   }
-  await db.insert(members).values({ name, capacity });
+  try {
+    await db.insert(members).values({ name, capacity });
+  } catch (e) {
+    // 并发窗口内被抢先插入（UNIQUE 唯一约束）：按重名处理，不给前端裸 500
+    if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE") {
+      throw new TRPCError({
+        code: "CONFLICT",
+        message: `成员「${name}」已存在`,
+      });
+    }
+    throw e;
+  }
   return listMembers();
 }
 
@@ -161,7 +187,6 @@ export async function listTasksByVan(van: string): Promise<TaskWithOwners[]> {
       title: tasks.title,
       rarity: tasks.rarity,
       requester: tasks.requester,
-      ownerName: tasks.ownerName,
       size: tasks.size,
       acceptance: tasks.acceptance,
       status: tasks.status,
@@ -292,11 +317,16 @@ export async function removeTask(id: number) {
 
 /* ── 结转（未完成 = 结转下周，不允许"完成 80%"） ── */
 
-export async function carryOver(fromVan: string, toVan: string) {
+export async function carryOver(
+  fromVan: string,
+  toVan: string,
+  today: Date = new Date(),
+) {
   if (fromVan === toVan) {
     throw new TRPCError({ code: "BAD_REQUEST", message: "不能结转到同一班次" });
   }
-  const expected = nextVanCode(fromVan);
+  // 紧邻的下一班：已存在则必须转去已存在的最近一班，否则按当前日期推导（可能跨月从 A 起）
+  const expected = carryTargetCode(fromVan, await listVans(), today);
   if (toVan !== expected) {
     throw new TRPCError({
       code: "BAD_REQUEST",
