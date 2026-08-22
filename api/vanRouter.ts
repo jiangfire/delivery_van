@@ -60,7 +60,7 @@ export const vanRouter = createRouter({
         z.object({
           van: vanCode,
           title: z.string().min(1).max(255),
-          rarity: rarity.default("common"),
+          rarity: rarity.default("n"),
           requester: z.string().max(64).optional(),
           owners: z.array(z.string().trim().max(64)).optional(),
           size: sizeTier.nullable().optional(),

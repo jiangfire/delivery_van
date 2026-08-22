@@ -21,23 +21,14 @@ import DateCellEditorComp from "@/components/DateCellEditorComp";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
-/* ── 稀有度配置 ── */
-type Rarity = "common" | "uncommon" | "rare" | "epic" | "legendary" | "mythic";
-const RARITY_LABEL: Record<Rarity, string> = {
-  common: "普通",
-  uncommon: "优秀",
-  rare: "稀有",
-  epic: "史诗",
-  legendary: "传说",
-  mythic: "神话",
-};
+/* ── 稀有度配置：N/R/SR/SSR/UR，展示统一大写英文缩写 ── */
+type Rarity = "n" | "r" | "sr" | "ssr" | "ur";
 const RARITY_CLASS: Record<Rarity, string> = {
-  common: "",
-  uncommon: "text-emerald-600",
-  rare: "text-sky-600",
-  epic: "text-violet-600",
-  legendary: "text-amber-500",
-  mythic: "rarity-mythic-text",
+  n: "",
+  r: "text-emerald-600",
+  sr: "text-sky-600",
+  ssr: "text-violet-600",
+  ur: "rarity-ur-text",
 };
 
 type TaskRow = TaskWithOwners;
@@ -180,7 +171,7 @@ export default function BoardPage() {
           if (!d) return null;
           return (
             <span className={RARITY_CLASS[d.rarity]}>
-              {RARITY_LABEL[d.rarity]}
+              {d.rarity.toUpperCase()}
             </span>
           );
         },
@@ -604,8 +595,7 @@ export default function BoardPage() {
                       {i > 0 && (
                         <span className="text-muted-foreground"> · </span>
                       )}
-                      {RARITY_LABEL[r.rarity as Rarity] ?? r.rarity} {r.done}/
-                      {r.total}
+                      {(r.rarity as Rarity).toUpperCase()} {r.done}/{r.total}
                     </span>
                   ))
                 : "–"}

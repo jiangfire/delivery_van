@@ -10,13 +10,13 @@ describe("rarityStatsOf", () => {
 
   it("按稀有度分桶，统计 total 与 done", () => {
     const stats = rarityStatsOf([
-      task("epic", "done"),
-      task("epic", "todo"),
-      task("rare", "done"),
+      task("ssr", "done"),
+      task("ssr", "todo"),
+      task("sr", "done"),
     ]);
     expect(stats).toEqual([
-      { rarity: "rare", total: 1, done: 1 },
-      { rarity: "epic", total: 2, done: 1 },
+      { rarity: "sr", total: 1, done: 1 },
+      { rarity: "ssr", total: 2, done: 1 },
     ]);
   });
 
@@ -25,8 +25,8 @@ describe("rarityStatsOf", () => {
   });
 
   it("只返回有任务的桶", () => {
-    const stats = rarityStatsOf([task("common", "todo")]);
-    expect(stats).toEqual([{ rarity: "common", total: 1, done: 0 }]);
+    const stats = rarityStatsOf([task("n", "todo")]);
+    expect(stats).toEqual([{ rarity: "n", total: 1, done: 0 }]);
   });
 });
 
@@ -80,7 +80,7 @@ describe("toStrandedTask", () => {
     id: 7,
     vanCode: "DV2607A",
     title: "创建/核销优惠券接口联调通过",
-    rarity: "epic",
+    rarity: "ssr",
     requester: "张经理",
     ownerName: "张三",
     size: 3,
@@ -120,7 +120,7 @@ describe("toStrandedTask", () => {
   it("保留快件内容、稀有度、档位、验收标准和备注，清空 ownerName", () => {
     const carried = toStrandedTask(base, "DV2607B");
     expect(carried.title).toBe(base.title);
-    expect(carried.rarity).toBe("epic");
+    expect(carried.rarity).toBe("ssr");
     expect(carried.ownerName).toBeNull();
     expect(carried.size).toBe(base.size);
     expect(carried.acceptance).toBe(base.acceptance);

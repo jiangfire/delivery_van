@@ -3,7 +3,7 @@ import type { ICellEditorComp } from "ag-grid-community";
 import RarityEditor from "./RarityEditor";
 
 /**
- * 稀有度下拉编辑器：显示中文标签，返回英文值。
+ * 稀有度下拉编辑器：显示大写英文缩写（N/R/SR/SSR/UR），返回小写存储值。
  * 使用 Portal 渲染下拉面板到 body。
  */
 export default class RarityCellEditor implements ICellEditorComp<string> {
@@ -21,7 +21,7 @@ export default class RarityCellEditor implements ICellEditorComp<string> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   init(params: any) {
     this.params = params;
-    this.value = params.value ?? "common";
+    this.value = params.value ?? "n";
 
     this.div = document.createElement("div");
     this.div.style.cssText = "padding: 0; background: transparent;";

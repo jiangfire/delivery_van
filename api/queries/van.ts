@@ -217,7 +217,7 @@ export async function addTask(input: {
     .values({
       vanCode: input.van,
       title: input.title,
-      rarity: input.rarity ?? "common",
+      rarity: input.rarity ?? "n",
       requester: input.requester ?? null,
       size: input.size ?? null,
       acceptance: input.acceptance ?? null,

@@ -229,8 +229,8 @@ body {
   }
 }
 
-/* ── 神话稀有度：极光渐变流动文字 ── */
-.rarity-mythic-text {
+/* ── UR 稀有度：极光渐变流动文字 ── */
+.rarity-ur-text {
   background: linear-gradient(
     90deg,
     #0ea5e9,
@@ -246,9 +246,9 @@ body {
   background-clip: text;
   color: transparent;
   font-weight: 700;
-  animation: mythic-flow 3s ease-in-out infinite;
+  animation: ur-flow 3s ease-in-out infinite;
 }
-@keyframes mythic-flow {
+@keyframes ur-flow {
   0% {
     background-position: 0% 50%;
   }

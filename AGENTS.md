@@ -19,7 +19,7 @@ delivery_van 是一个**周度发车管理工具**，机制设计见 `docs/周�
 - **多人负责**：一个任务可由多人共同负责（勾选式多选编辑器，可在编辑器内即时新增成员标签），运力仅做记录不做校验（超载只显示提示）。
 - **送达二值化**：没有"完成 80%"。打勾 `done` 自动记送达日期（今天），取消完成自动清空日期；送达日期可手工补录/改填。
 - **滞留结转**：未完成任务一键转下一班（只能转**紧邻的下一班**，服务端校验 `toVan === nextVanCode(fromVan)`，目标班不存在时自动创建），记录 `carriedFrom` 来源班次；同一事务内把源班任务标记为 `carried`（🔁结转，任务四态 todo/doing/done/carried，仅由结转动作写入）；统计的滞留率 = 结转出去的任务数 / 总数（设计方案「结转率」指标）。`carryCount >= 2` 触发强制复盘**提示**（仅提示不拦截）；同一对班次幂等 + 事务包裹，防重复转运与半截数据。**结转归档只读**：只要班次存在 carried 任务，整班不可增/改/删（服务端 `isVanArchived` 强制校验，前端同步禁用编辑与操作按钮）。
-- **稀有度**：快件带六级稀有度（common/uncommon/rare/epic/legendary/mythic），是价值/优先度/工作量的综合标签，凭直觉定级。**稀有度只是标记（标题与稀有度列文字着色，mythic 彩虹动画），系统不做任何校验或上车拦截**。快件另有**提出人**（`requester`）字段，记录谁提的需求，同样仅作记录。
+- **稀有度**：快件带五级稀有度（`n/r/sr/ssr/ur`，显示大写 N/R/SR/SSR/UR，抽卡风格英文缩写），是价值/优先度/工作量的综合标签，凭直觉定级。**稀有度只是标记（标题与稀有度列文字着色：绿/蓝/紫，ur 彩虹动画），系统不做任何校验或上车拦截**。快件另有**提出人**（`requester`）字段，记录谁提的需求，同样仅作记录。旧六级（common~mythic）已废弃，`ensureSchema` 启动时按 `LEGACY_RARITY_TO` 幂等迁移存量数据（顶级两档归并 ur）。
 
 ## 技术栈
 
@@ -116,7 +116,7 @@ npm run db:seed    # 写入示例成员（tsx db/seed.ts，全新库可用，会
 ## 测试策略
 
 - 单测框架 Vitest，`vitest.config.ts` 只收集 `api/**/*.test.ts`、`api/**/*.spec.ts`、`contracts/**/*.test.ts`（E2E 由 Playwright 单独跑，见 `playwright.config.ts`）。
-- 现有单测：`contracts/vans.test.ts`（班次编码规则）、`contracts/multi-select.test.ts`（多选标签纯函数）、`api/queries/van.test.ts` 与 `van.unit.test.ts`（`toStrandedTask` / `rarityStatsOf` / `taskStatsOf` 等纯函数）、`van.mock.test.ts`（mock `getDb()` 覆盖成员/快件/结转等 DB 业务逻辑，含归档只读校验）。
+- 现有单测：`contracts/vans.test.ts`（班次编码规则）、`contracts/multi-select.test.ts`（多选标签纯函数）、`api/queries/van.test.ts` 与 `van.unit.test.ts`（`toStrandedTask` / `rarityStatsOf` / `taskStatsOf` 等纯函数）、`van.mock.test.ts`（mock `getDb()` 覆盖成员/快件/结转等 DB 业务逻辑，含归档只读校验）、`api/ensureSchema.test.ts`（旧六级稀有度迁移映射 `LEGACY_RARITY_TO` 完整性）。
 - E2E（`e2e/`）：Playwright 跑真实部署形态（先 build 再起服务），`board.spec.ts` 覆盖核心动线（发新车 → 录快件 → 编辑 → 送达 → 结转 → 归档只读），`bugs.spec.ts` 回归历史 bug；共享一个测试库、班次跨用例累积，必须串行（workers=1）、零重试（失败即真实回归）。
 - 偏好为纯函数写无库单测；涉及 DB 的逻辑尽量拆出纯函数再测，实在拆不出的用 mock DB。
 - 新增业务规则（尤其是 `contracts/` 与 `api/queries/` 中的校验逻辑）应配套测试。

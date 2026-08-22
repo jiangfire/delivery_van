@@ -40,20 +40,20 @@ test.describe("Bug 回归：快件编辑", () => {
     await addTaskAndWait(page);
 
     const rarityCell = dataCell(page, "_rarity");
-    await expect(rarityCell).toHaveText("普通");
+    await expect(rarityCell).toHaveText("N");
     await rarityCell.dblclick();
 
-    const option = page.getByText("稀有", { exact: true });
+    const option = page.getByText("SR", { exact: true });
     await expect(option).toBeVisible({ timeout: 3000 });
     await option.click();
 
     // onClose 直接传值 → valueSetter 同步写入
-    await expect(rarityCell).toHaveText("稀有", { timeout: 3000 });
+    await expect(rarityCell).toHaveText("SR", { timeout: 3000 });
 
     // 持久化验证
     await page.getByText("快递发车台").first().click();
     await page.waitForTimeout(600);
-    await expect(rarityCell).toHaveText("稀有");
+    await expect(rarityCell).toHaveText("SR");
   });
 
   test("新增快件的提出人可修改并保存", async ({ page }) => {

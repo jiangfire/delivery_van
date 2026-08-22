@@ -679,7 +679,7 @@ describe("周统计", () => {
       {
         id: 1,
         status: "done",
-        rarity: "common",
+        rarity: "n",
         carryCount: 0,
         carriedFrom: null,
         size: 3,
@@ -688,7 +688,7 @@ describe("周统计", () => {
       {
         id: 2,
         status: "carried",
-        rarity: "epic",
+        rarity: "ssr",
         carryCount: 0,
         carriedFrom: null,
         size: 5,
@@ -697,7 +697,7 @@ describe("周统计", () => {
       {
         id: 3,
         status: "done",
-        rarity: "rare",
+        rarity: "sr",
         carryCount: 2,
         carriedFrom: "DV2607A",
         size: 1,

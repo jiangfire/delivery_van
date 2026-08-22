@@ -20,22 +20,25 @@ export const vans = sqliteTable("vans", {
     .default(sql`(unixepoch())`),
 });
 
-/** 委托稀有度：普通 / 优秀 / 稀有 / 史诗 / 传说 / 神话 */
-export const RARITIES = [
-  "common",
-  "uncommon",
-  "rare",
-  "epic",
-  "legendary",
-  "mythic",
-] as const;
+/** 快件稀有度：N / R / SR / SSR / UR（仅标记，显示大写英文缩写） */
+export const RARITIES = ["n", "r", "sr", "ssr", "ur"] as const;
 export type Rarity = (typeof RARITIES)[number];
 
-/** @deprecated 委托概念已合并至快件，此表不再使用 */
+/** 旧六级稀有度 → 新五级的迁移映射（ensureSchema 启动时幂等 UPDATE 用），顶级两档归并 UR */
+export const LEGACY_RARITY_TO: Record<string, Rarity> = {
+  common: "n",
+  uncommon: "r",
+  rare: "sr",
+  epic: "ssr",
+  legendary: "ur",
+  mythic: "ur",
+};
+
+/** @deprecated 委托概念已合并至快件，此表不再使用（rarity 为旧六级历史值，故不做枚举收窄） */
 export const poolItems = sqliteTable("pool_items", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   title: text("title").notNull(),
-  rarity: text("rarity", { enum: RARITIES }).notNull().default("common"),
+  rarity: text("rarity").notNull().default("common"),
   status: text("status", { enum: ["open", "scheduled", "done"] })
     .notNull()
     .default("open"),
@@ -54,8 +57,8 @@ export const tasks = sqliteTable(
     /** 班次编码，如 DV2607A */
     vanCode: text("van_code").notNull(),
     title: text("title").notNull(),
-    /** 稀有度标记（颜色），不做任何拦截 */
-    rarity: text("rarity", { enum: RARITIES }).notNull().default("common"),
+    /** 稀有度标记（N/R/SR/SSR/UR，颜色），不做任何拦截 */
+    rarity: text("rarity", { enum: RARITIES }).notNull().default("n"),
     /** 提出人：谁提的需求 */
     requester: text("requester"),
     /** @deprecated 已迁移至 task_owners 关联表 */

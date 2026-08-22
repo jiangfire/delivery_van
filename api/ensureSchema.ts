@@ -1,4 +1,5 @@
 import { getDb } from "./queries/connection";
+import { LEGACY_RARITY_TO } from "../db/schema";
 import { sql } from "drizzle-orm";
 
 /**
@@ -37,7 +38,7 @@ export async function ensureSchema() {
       id integer PRIMARY KEY AUTOINCREMENT,
       van_code text NOT NULL,
       title text NOT NULL,
-      rarity text NOT NULL DEFAULT 'common',
+      rarity text NOT NULL DEFAULT 'n',
       owner_name text,
       size integer,
       acceptance text,
@@ -51,11 +52,13 @@ export async function ensureSchema() {
   `);
   // 兼容旧库：tasks 表可能没有 rarity 列，幂等添加
   try {
-    db.run(
-      sql`ALTER TABLE tasks ADD COLUMN rarity text NOT NULL DEFAULT 'common'`,
-    );
+    db.run(sql`ALTER TABLE tasks ADD COLUMN rarity text NOT NULL DEFAULT 'n'`);
   } catch {
     // 列已存在，忽略
+  }
+  // 稀有度五级重构（N/R/SR/SSR/UR）：把旧六级存量值幂等迁移到新值域，旧值迁移后不再存在
+  for (const [from, to] of Object.entries(LEGACY_RARITY_TO)) {
+    await db.run(sql`UPDATE tasks SET rarity = ${to} WHERE rarity = ${from}`);
   }
   // 兼容旧库：tasks 表可能没有 requester 列，幂等添加
   try {

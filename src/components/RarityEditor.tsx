@@ -1,26 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 
-const RARITIES = [
-  "common",
-  "uncommon",
-  "rare",
-  "epic",
-  "legendary",
-  "mythic",
-] as const;
-
-const RARITY_LABEL: Record<string, string> = {
-  common: "普通",
-  uncommon: "优秀",
-  rare: "稀有",
-  epic: "史诗",
-  legendary: "传说",
-  mythic: "神话",
-};
+const RARITIES = ["n", "r", "sr", "ssr", "ur"] as const;
 
 /**
- * 稀有度下拉编辑器组件：显示中文标签，返回英文值。
+ * 稀有度下拉编辑器组件：显示大写英文缩写（N/R/SR/SSR/UR），返回小写存储值。
  * 使用 Portal 渲染到 body，逃出 backdrop-filter 层叠上下文。
  */
 export default function RarityEditor({
@@ -119,7 +103,7 @@ export default function RarityEditor({
             onChange={() => select(r)}
             style={{ accentColor: "#0ea5e9", marginRight: 8 }}
           />
-          <span>{RARITY_LABEL[r] ?? r}</span>
+          <span>{r.toUpperCase()}</span>
         </label>
       ))}
     </div>
