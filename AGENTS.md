@@ -14,11 +14,11 @@ delivery_van 是一个**周度发车管理工具**，机制设计见 `docs/周�
 
 ### 核心业务规则（改动代码时不得破坏）
 
-- **班次编码**：仿期货合约风格 `DV` + 2 位年 + 2 位月 + 字母序号（如 `DV2607A`）。班次由「发新车」**手动创建**，不绑定周五；字母 = 当月第几班车（A–Z，单月最多 26 班），Z 之后跨月回 A。已发班次存 `vans` 表。规则与测试在 `contracts/vans.ts`、`contracts/vans.test.ts`。
+- **班次编码**：仿期货合约风格 `DV` + 2 位年 + 2 位月 + 字母序号（如 `DV2607A`）。班次由「发新车」**手动创建**，不绑定周五；编码锚定创建时所在的日历月份，**每个自然月从 A 重新计数**（跨月发新车不沿用旧月份字母），同月内 A–Z 递增（单月最多 26 班），当月到 Z 之后再发车跨月回 A。已发班次存 `vans` 表。规则与测试在 `contracts/vans.ts`、`contracts/vans.test.ts`。
 - **三档粒度**：任务体量只允许 1 / 3 / 5 天，接口层用 zod 强制（拒绝 2/4 天）。
 - **多人负责**：一个任务可由多人共同负责（勾选式多选编辑器，可在编辑器内即时新增成员标签），运力仅做记录不做校验（超载只显示提示）。
 - **送达二值化**：没有"完成 80%"。打勾 `done` 自动记送达日期（今天），取消完成自动清空日期；送达日期可手工补录/改填。
-- **滞留结转**：未完成任务一键转下一班（只能转**紧邻的下一班**，服务端校验 `toVan === nextVanCode(fromVan)`，目标班不存在时自动创建），记录 `carriedFrom` 来源班次；同一事务内把源班任务标记为 `carried`（🔁结转，任务四态 todo/doing/done/carried，仅由结转动作写入）；统计的滞留率 = 结转出去的任务数 / 总数（设计方案「结转率」指标）。`carryCount >= 2` 触发强制复盘**提示**（仅提示不拦截）；同一对班次幂等 + 事务包裹，防重复转运与半截数据。**结转归档只读**：只要班次存在 carried 任务，整班不可增/改/删（服务端 `isVanArchived` 强制校验，前端同步禁用编辑与操作按钮）。
+- **滞留结转**：未完成任务一键转下一班（只能转**紧邻的下一班**，服务端用 `carryTargetCode` 校验：已存在则必须转去已存在的最近一班，否则按当前日期推导下一班——跨月时为新月份 A 班，目标班不存在时自动创建），记录 `carriedFrom` 来源班次；同一事务内把源班任务标记为 `carried`（🔁结转，任务四态 todo/doing/done/carried，仅由结转动作写入）；统计的滞留率 = 结转出去的任务数 / 总数（设计方案「结转率」指标）。`carryCount >= 2` 触发强制复盘**提示**（仅提示不拦截）；同一对班次幂等 + 事务包裹，防重复转运与半截数据。**结转归档只读**：只要班次存在 carried 任务，整班不可增/改/删（服务端 `isVanArchived` 强制校验，前端同步禁用编辑与操作按钮）。
 - **稀有度**：快件带五级稀有度（`n/r/sr/ssr/ur`，显示大写 N/R/SR/SSR/UR，抽卡风格英文缩写），是价值/优先度/工作量的综合标签，凭直觉定级。**稀有度只是标记（标题与稀有度列文字着色：绿/蓝/紫，ur 彩虹动画），系统不做任何校验或上车拦截**。快件另有**提出人**（`requester`）字段，记录谁提的需求，同样仅作记录。旧六级（common~mythic）已废弃，`ensureSchema` 启动时按 `LEGACY_RARITY_TO` 幂等迁移存量数据（顶级两档归并 ur）。
 
 ## 技术栈
@@ -46,7 +46,7 @@ api/        Hono + tRPC 薄后端
   lib/vite.ts   生产模式静态文件托管 + SPA 回退（静态根按模块路径定位，不依赖 cwd）
   queries/      数据访问与业务逻辑（connection.ts 惰性连接；van.ts 全部查询/校验/结转/统计）
 contracts/    前后端共享代码
-  vans.ts       班次编码工具（isVanCode / nextVanCode / firstVanCodeOf / todayStr 上海时区等）
+  vans.ts       班次编码工具（isVanCode / nextVanCode / nextVanCodeFrom 跨月从 A 重计 / carryTargetCode 结转目标 / firstVanCodeOf / todayStr 上海时区等）
   vans.test.ts              班次编码规则测试
   multi-select.test.ts      多选标签纯函数测试（函数直接定义在测试文件内）
 db/
@@ -58,11 +58,11 @@ src/          React 前端
   pages/BoardPage.tsx  看板主页面（AG Grid 快件表 + 统计条 + 成员运力 + 班次切换）
   lib/trpc.ts   createTRPCReact<AppRouter>()
   providers/trpc.tsx   QueryClient + httpBatchLink(/api/trpc) + superjson
-  components/   AG Grid 自定义单元格编辑器：MultiSelectCellEditor（负责人多选）、RarityCellEditor（稀有度）、RequesterCellEditor（提出人）、DateCellEditorComp（送达日期），配套内层组件 MultiSelectEditor / RarityEditor / RequesterSelect / DateCellEditor / TagEditorInner
+  components/   AG Grid 自定义单元格编辑器：MultiSelectCellEditor（负责人多选）、RarityCellEditor（稀有度）、RequesterCellEditor（提出人）、DateCellEditorComp（送达日期）——四者均由 popupCellEditor.tsx 的 createPopupCellEditor 工厂生成（Portal 弹层 + 类适配的通用逻辑），配套内层组件 MultiSelectEditor / RarityEditor / RequesterSelect / DateCellEditor
   components/ui/       shadcn 组件（目前仅 sonner）
 e2e/          Playwright E2E：board.spec.ts（核心动线回归）、bugs.spec.ts（历史 bug 回归）、helpers.ts、global-setup.ts（每次跑前删测试库）；配置见 playwright.config.ts——独立测试库 e2e/test.db，先 npm run build 再起生产服务（4173 端口），串行执行（workers=1）零重试
 scripts/      start.mjs：跨平台生产启动（Windows 不支持 POSIX 的 VAR=x 语法）
-docs/         文档目录，按状态分类（规则见下文「文档组织」）：根目录放常驻核心文档（《周度发车机制设计方案.md》，理解规则先读它）；doing/ 进行中（《v1.0-niulai-发版计划.md》）；archived/ 已归档（稀有度方案、测试覆盖率计划、评审决策存档）
+docs/         文档目录，按状态分类（规则见下文「文档组织」）：根目录放常驻核心文档（《周度发车机制设计方案.md》，理解规则先读它）；doing/ 进行中（《v1.0-niulai-发版计划.md》）；archived/ 已归档（稀有度方案、测试覆盖率计划、评审决策存档、发版前评审报告）
 dist/         构建产物（前端 dist/public + 服务端 dist/boot.js），由 npm run build 生成，勿手改
 ```
 
@@ -116,7 +116,7 @@ npm run db:seed    # 写入示例成员（tsx db/seed.ts，全新库可用，会
 ## 测试策略
 
 - 单测框架 Vitest，`vitest.config.ts` 只收集 `api/**/*.test.ts`、`api/**/*.spec.ts`、`contracts/**/*.test.ts`（E2E 由 Playwright 单独跑，见 `playwright.config.ts`）。
-- 现有单测：`contracts/vans.test.ts`（班次编码规则）、`contracts/multi-select.test.ts`（多选标签纯函数）、`api/queries/van.test.ts` 与 `van.unit.test.ts`（`toStrandedTask` / `rarityStatsOf` / `taskStatsOf` 等纯函数）、`van.mock.test.ts`（mock `getDb()` 覆盖成员/快件/结转等 DB 业务逻辑，含归档只读校验）、`api/ensureSchema.test.ts`（旧六级稀有度迁移映射 `LEGACY_RARITY_TO` 完整性）。
+- 现有单测：`contracts/vans.test.ts`（班次编码规则，含跨月从 A 重计与结转目标推导）、`contracts/multi-select.test.ts`（多选标签纯函数）、`api/queries/van.test.ts` 与 `van.unit.test.ts`（`toStrandedTask` / `rarityStatsOf` / `taskStatsOf` 等纯函数）、`van.mock.test.ts`（mock `getDb()` 覆盖成员/快件/发车/结转等 DB 业务逻辑，含归档只读与并发撞约束防御）、`api/vanRouter.test.ts`（`memberTag` 标签校验，拒绝半角逗号）、`api/ensureSchema.test.ts`（旧六级稀有度迁移映射 `LEGACY_RARITY_TO` 完整性）。
 - E2E（`e2e/`）：Playwright 跑真实部署形态（先 build 再起服务），`board.spec.ts` 覆盖核心动线（发新车 → 录快件 → 编辑 → 送达 → 结转 → 归档只读），`bugs.spec.ts` 回归历史 bug；共享一个测试库、班次跨用例累积，必须串行（workers=1）、零重试（失败即真实回归）。
 - 偏好为纯函数写无库单测；涉及 DB 的逻辑尽量拆出纯函数再测，实在拆不出的用 mock DB。
 - 新增业务规则（尤其是 `contracts/` 与 `api/queries/` 中的校验逻辑）应配套测试。
