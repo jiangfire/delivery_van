@@ -59,6 +59,28 @@ jobs:
           curl -sf http://localhost:3000/ | grep -q 'lang="zh-CN"'
           curl -sf http://localhost:3000/api/trpc/ping | grep -q ok
           docker logs dv
+      - name: 数据卷持久化验证（发版验收项：容器重建数据不丢）
+        run: |
+          docker rm -f dv
+          # 第一段：挂数据卷启动，写入一班新车
+          docker run -d --name dv-vol -p 3000:3000 -v dv_data:/app/data delivery_van
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/trpc/ping > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf -X POST -H 'content-type: application/json' \
+            -d '{"json":{}}' \
+            http://localhost:3000/api/trpc/van.vans.dispatch | grep -q '"DV'
+          # 第二段：销毁容器后用同一数据卷重建，数据应仍在
+          docker rm -f dv-vol
+          docker run -d --name dv-vol2 -p 3000:3000 -v dv_data:/app/data delivery_van
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:3000/api/trpc/ping > /dev/null; then break; fi
+            sleep 1
+          done
+          curl -sf http://localhost:3000/api/trpc/van.vans.list | grep -q '"DV'
       - name: 清理
         if: always()
-        run: docker rm -f dv
+        run: |
+          docker rm -f dv dv-vol dv-vol2 2>/dev/null || true
+          docker volume rm dv_data 2>/dev/null || true

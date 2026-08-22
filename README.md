@@ -61,14 +61,25 @@ npm start          # 生产模式（跨平台，首次启动自动建表）
 
 CI（GitHub Actions）覆盖以上门禁、Playwright E2E 与 Docker 构建冒烟，见 `.github/workflows/ci.yml`。
 
-## 部署（Docker）
+## 部署
+
+**方式一 · Docker**（镜像在 GitHub Container Registry，也可自行 `docker build`）：
 
 ```bash
-docker build -t delivery_van .
-docker run -p 3000:3000 -v delivery_van_data:/app/data delivery_van
+docker pull ghcr.io/jiangfire/delivery_van:v1.0.0
+docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v1.0.0
 ```
 
-⚠️ 务必挂载数据卷（`-v ...:/app/data`），否则容器重建后数据全部丢失。库文件路径可用 `-e DATABASE_URL=...` 覆盖。
+⚠️ 务必挂载数据卷（`-v ...:/app/data`），否则容器重建后数据全部丢失。库文件路径可用 `-e DATABASE_URL=...` 覆盖。容器自动建表与「重建容器数据不丢」由 CI 的 docker job 持续验证。
+
+**方式二 · zip 包**（无 Docker，需 Node >= 22）：从 [GitHub Release](https://github.com/jiangfire/delivery_van/releases) 下载 `delivery_van-vX.Y.Z.zip`（内含已构建的 `dist/`），解压后：
+
+```bash
+npm ci
+npm start        # 生产模式，端口可用 PORT 覆盖
+```
+
+发版流程：CI 全绿后打 `v*` tag 推送，`.github/workflows/release.yml` 自动构建镜像推 GHCR 并创建带 zip 附件的 Release。
 
 ## 业务规则速查
 
