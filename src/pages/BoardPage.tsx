@@ -431,7 +431,14 @@ export default function BoardPage() {
         },
       },
     ],
-    [memberNamesKey, memberNames, removeTask, addMember, vanReadonly],
+    [
+      memberNamesKey,
+      memberNames,
+      removeTask,
+      addMember,
+      vanReadonly,
+      vanArchived,
+    ],
   );
 
   /* ── 单元格编辑回调 ── */
