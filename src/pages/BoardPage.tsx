@@ -48,6 +48,13 @@ type TaskRow = TaskWithOwners;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
+/** 档位徽标颜色分桶：≤2 点（≤1 天）蓝、≤6 点（≤3 天）橙、更大红 */
+function sizeBucket(size: number): 1 | 3 | 5 {
+  if (size <= 2) return 1;
+  if (size <= 6) return 3;
+  return 5;
+}
+
 export default function BoardPage() {
   const [van, setVan] = useState<string | null>(null);
   const utils = trpc.useUtils();
@@ -285,10 +292,10 @@ export default function BoardPage() {
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
           if (!d || !d.size) return null;
-          // 颜色按点数分桶：≤2 点（≤1 天）蓝、≤6 点（≤3 天）橙、其余红
-          const bucket = d.size <= 2 ? 1 : d.size <= 6 ? 3 : 5;
           return (
-            <span className={`size-badge size-${bucket}`}>{d.size} 点</span>
+            <span className={`size-badge size-${sizeBucket(d.size)}`}>
+              {d.size} 点
+            </span>
           );
         },
       },
