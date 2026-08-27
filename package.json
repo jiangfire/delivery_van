@@ -2,7 +2,7 @@
   "name": "delivery_van",
   "private": true,
   "license": "MIT",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "codename": "niulai",
   "type": "module",
   "engines": {
