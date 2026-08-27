@@ -62,7 +62,7 @@ src/          React 前端
   components/ui/       shadcn 组件（目前仅 sonner）
 e2e/          Playwright E2E：board.spec.ts（核心动线回归）、bugs.spec.ts（历史 bug 回归）、helpers.ts、global-setup.ts（每次跑前删测试库）；配置见 playwright.config.ts——独立测试库 e2e/test.db，先 npm run build 再起生产服务（4173 端口），串行执行（workers=1）零重试
 scripts/      start.mjs：跨平台生产启动（Windows 不支持 POSIX 的 VAR=x 语法）
-docs/         文档目录，按状态分类（规则见下文「文档组织」）：根目录放常驻核心文档（《周度发车机制设计方案.md》，理解规则先读它）；doing/ 进行中（《v1.0-niulai-发版计划.md》）；archived/ 已归档（稀有度方案、测试覆盖率计划、评审决策存档、发版前评审报告）
+docs/         文档目录，按状态分类（规则见下文「文档组织」）：根目录放常驻核心文档（《周度发车机制设计方案.md》，理解规则先读它）；doing/ 进行中（《博弈机制科研探索-PM与开发显性博弈设计.md》，调研提案未立项）；archived/ 已归档（稀有度方案、测试覆盖率计划、评审决策存档、发版计划与评审报告、半天点数制改造方案）
 dist/         构建产物（前端 dist/public + 服务端 dist/boot.js），由 npm run build 生成，勿手改
 ```
 
