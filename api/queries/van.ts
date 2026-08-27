@@ -36,6 +36,7 @@ export function toStrandedTask(
     carryCount: task.carryCount + 1,
     doneAt: null,
     note: task.note,
+    sortOrder: task.sortOrder,
   };
 }
 
@@ -194,13 +195,14 @@ export async function listTasksByVan(van: string): Promise<TaskWithOwners[]> {
       carryCount: tasks.carryCount,
       doneAt: tasks.doneAt,
       note: tasks.note,
+      sortOrder: tasks.sortOrder,
       createdAt: tasks.createdAt,
       owners: sql<string>`coalesce(${ownerAgg.owners}, '')`.as("owners"),
     })
     .from(tasks)
     .leftJoin(ownerAgg, eq(tasks.id, ownerAgg.taskId))
     .where(eq(tasks.vanCode, van))
-    .orderBy(asc(tasks.id));
+    .orderBy(asc(tasks.sortOrder), asc(tasks.id));
   return rows.map((r) => ({
     ...r,
     owners: r.owners ? r.owners.split(",") : [],
@@ -237,6 +239,11 @@ export async function addTask(input: {
     });
   }
   const db = getDb();
+  // 新快件排在班次末尾
+  const [maxRow] = await db
+    .select({ max: sql<number | null>`max(${tasks.sortOrder})` })
+    .from(tasks)
+    .where(eq(tasks.vanCode, input.van));
   const [inserted] = await db
     .insert(tasks)
     .values({
@@ -246,12 +253,42 @@ export async function addTask(input: {
       requester: input.requester ?? null,
       size: input.size ?? null,
       acceptance: input.acceptance ?? null,
+      sortOrder: (maxRow?.max ?? 0) + 1,
     })
     .returning({ id: tasks.id });
   if (input.owners && input.owners.length > 0) {
     await replaceOwners(db, inserted.id, input.owners);
   }
   return listTasksByVan(input.van);
+}
+
+/** 拖拽排序：按传入 id 顺序全量重写班次内 sort_order（幂等，可重复调用） */
+export async function reorderTasks(van: string, ids: number[]) {
+  if (await isVanArchived(van)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `班次 ${van} 已结转归档，不可调整顺序`,
+    });
+  }
+  const db = getDb();
+  // 防御：ids 必须恰好覆盖本班全部快件，避免越权改别班数据或漏排
+  const rows = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(eq(tasks.vanCode, van));
+  const vanIds = new Set(rows.map((r) => r.id));
+  if (ids.length !== vanIds.size || ids.some((id) => !vanIds.has(id))) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "排序列表与本班快件不一致，请刷新后重试",
+    });
+  }
+  db.transaction((tx) => {
+    ids.forEach((id, idx) => {
+      tx.update(tasks).set({ sortOrder: idx }).where(eq(tasks.id, id)).run();
+    });
+  });
+  return listTasksByVan(van);
 }
 
 export async function updateTask(
@@ -365,11 +402,19 @@ export async function carryOver(
       .where(and(eq(tasks.vanCode, fromVan), ne(tasks.status, "done")))
       .all();
 
+    // 结转快件追加到目标班末尾（拖拽排序列：从目标班现有 max(sort_order) 起递增）
+    const [maxRow] = tx
+      .select({ max: sql<number | null>`max(${tasks.sortOrder})` })
+      .from(tasks)
+      .where(eq(tasks.vanCode, toVan))
+      .all();
+    let nextSort = (maxRow?.max ?? 0) + 1;
+
     for (const t of unfinished) {
       // 结转快件
       const [inserted] = tx
         .insert(tasks)
-        .values(toStrandedTask(t, toVan))
+        .values({ ...toStrandedTask(t, toVan), sortOrder: nextSort++ })
         .returning({ id: tasks.id })
         .all();
       // 结转负责人标签

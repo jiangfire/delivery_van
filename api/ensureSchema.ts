@@ -47,6 +47,7 @@ export async function ensureSchema() {
       carry_count integer NOT NULL DEFAULT 0,
       done_at text,
       note text,
+      sort_order integer,
       created_at integer NOT NULL DEFAULT (unixepoch())
     )
   `);
@@ -66,6 +67,14 @@ export async function ensureSchema() {
   } catch {
     // 列已存在，忽略
   }
+  // 兼容旧库：tasks 表可能没有 sort_order 列（行内拖拽排序），幂等添加；
+  // 存量行按 id 顺序回填，保持升级前后展示顺序一致
+  try {
+    db.run(sql`ALTER TABLE tasks ADD COLUMN sort_order integer`);
+  } catch {
+    // 列已存在，忽略
+  }
+  await db.run(sql`UPDATE tasks SET sort_order = id WHERE sort_order IS NULL`);
   await db.run(
     sql`CREATE INDEX IF NOT EXISTS tasks_van_code_idx ON tasks (van_code)`,
   );

@@ -7,6 +7,7 @@ import {
   type ColDef,
   type ICellRendererParams,
   type CellValueChangedEvent,
+  type RowDragEndEvent,
 } from "ag-grid-community";
 
 type TaskColDef = ColDef<TaskRow> & { editField?: string };
@@ -136,6 +137,14 @@ export default function BoardPage() {
     onError,
   });
 
+  const reorderM = trpc.van.tasks.reorder.useMutation({
+    onSuccess: refresh,
+    onError: (e) => {
+      toast.error(e.message);
+      utils.invalidate();
+    },
+  });
+
   const carryM = trpc.van.carry.run.useMutation({
     onSuccess: (r) => {
       toast.success(
@@ -158,6 +167,17 @@ export default function BoardPage() {
   // react-query 的 structural sharing 保证数据不变时引用稳定；编辑参数延迟到编辑时求值。
   const columnDefs = useMemo<TaskColDef[]>(
     () => [
+      // 拖拽排序手柄列（仅无列排序时可拖，managed 模式约束；归档班由 suppressRowDrag 禁用）
+      {
+        colId: "_drag",
+        headerName: "",
+        width: 40,
+        rowDrag: true,
+        sortable: false,
+        resizable: false,
+        editable: false,
+        suppressHeaderMenuButton: true,
+      },
       {
         field: "title",
         headerName: "标题",
@@ -504,6 +524,16 @@ export default function BoardPage() {
     >[0]);
   };
 
+  /* ── 行拖拽排序：拖完后把整班 id 顺序全量发给服务端重写 sort_order ── */
+  const onRowDragEnd = (e: RowDragEndEvent<TaskRow>) => {
+    if (!curVan) return;
+    const ids: number[] = [];
+    e.api.forEachNode((node) => {
+      if (node.data) ids.push(node.data.id);
+    });
+    reorderM.mutate({ van: curVan, ids });
+  };
+
   return (
     <div className="aurora-bg">
       <div className="relative z-10 mx-auto max-w-[1400px] px-8 py-8">
@@ -677,6 +707,9 @@ export default function BoardPage() {
               columnDefs={columnDefs}
               defaultColDef={{ sortable: true, resizable: true }}
               loading={tasksQ.isLoading}
+              rowDragManaged
+              suppressRowDrag={vanReadonly}
+              onRowDragEnd={onRowDragEnd}
               onCellValueChanged={onCellValueChanged}
               getRowClass={(p) => {
                 if (p.data && p.data.carryCount >= 2) return "bg-amber-50/60";

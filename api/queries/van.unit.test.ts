@@ -18,6 +18,7 @@ describe("toStrandedTask", () => {
     carryCount: 0,
     doneAt: null,
     note: "阻塞于下游",
+    sortOrder: null,
     createdAt: new Date("2026-07-01T00:00:00Z"),
   };
 

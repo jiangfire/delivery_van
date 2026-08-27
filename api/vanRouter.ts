@@ -11,6 +11,7 @@ import {
   listTasksByVan,
   listVans,
   removeTask,
+  reorderTasks,
   updateMemberCapacity,
   updateTask,
   weeklyStats,
@@ -102,6 +103,9 @@ export const vanRouter = createRouter({
     remove: publicQuery
       .input(z.object({ id: idField }))
       .mutation(({ input }) => removeTask(input.id)),
+    reorder: publicQuery
+      .input(z.object({ van: vanCode, ids: z.array(idField).max(1000) }))
+      .mutation(({ input }) => reorderTasks(input.van, input.ids)),
   }),
 
   /* ── 结转与统计 ── */

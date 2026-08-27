@@ -76,6 +76,8 @@ export const tasks = sqliteTable(
     /** 完成日期，YYYY-MM-DD */
     doneAt: text("done_at"),
     note: text("note"),
+    /** 班次内手动排序序号（拖拽排序），班次内按 sort_order ASC, id ASC 展示 */
+    sortOrder: integer("sort_order"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .default(sql`(unixepoch())`),

@@ -182,6 +182,81 @@ test.describe("快件增删改", () => {
   });
 });
 
+test.describe("行拖拽排序", () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoard(page);
+    await dispatchVan(page);
+  });
+
+  test("拖拽调整行顺序，刷新后保持", async ({ page }) => {
+    // 造 3 行可区分的快件：先连加 3 行，再走接口改名（比三次行内编辑稳定）
+    await addTaskAndWait(page);
+    await addTaskAndWait(page);
+    await addTaskAndWait(page);
+
+    const van = await page.locator("select").inputValue();
+    const tasks: { id: number }[] = await page.evaluate(async (v) => {
+      const res = await fetch(
+        `/api/trpc/van.tasks.byVan?input=${encodeURIComponent(JSON.stringify({ json: { van: v } }))}`,
+      );
+      return (await res.json()).result.data.json;
+    }, van);
+    expect(tasks).toHaveLength(3);
+    for (const [i, title] of ["甲", "乙", "丙"].entries()) {
+      await trpcCall(page, "van.tasks.update", { id: tasks[i].id, title });
+    }
+    await page.reload();
+    await page.getByText("快递发车台").waitFor();
+
+    const titleCells = page.locator('[role="gridcell"][col-id="title"]');
+    await expect(titleCells).toHaveCount(3, { timeout: 5000 });
+    // AG Grid 用 translateY 定位行，拖拽后 DOM 顺序 ≠ 视觉顺序，按 row-index 属性读
+    const titles = () =>
+      page.evaluate(() =>
+        [...document.querySelectorAll(".ag-row[row-index]")]
+          .sort(
+            (a, b) =>
+              Number(a.getAttribute("row-index")) -
+              Number(b.getAttribute("row-index")),
+          )
+          .map(
+            (r) =>
+              r.querySelector('[col-id="title"]')?.textContent?.trim() ?? "",
+          ),
+      );
+    expect(await titles()).toEqual(["甲", "乙", "丙"]);
+
+    // 拖「甲」的手柄到末行（丙）底部边缘：落点在丙之后
+    const reordered = page.waitForResponse(
+      (r) => r.url().includes("van.tasks.reorder") && r.status() === 200,
+      { timeout: 8000 },
+    );
+    const handle = page.locator('.ag-row[row-index="0"] .ag-drag-handle');
+    const lastRow = page.locator('.ag-row[row-index="2"]');
+    const hb = await handle.boundingBox();
+    const lb = await lastRow.boundingBox();
+    if (!hb || !lb) throw new Error("拖拽手柄或目标行未渲染");
+    await page.mouse.move(hb.x + hb.width / 2, hb.y + hb.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(lb.x + lb.width / 2, lb.y + lb.height - 2, {
+      steps: 15,
+    });
+    await page.mouse.up();
+    await reordered;
+
+    // 等 invalidate 重取后的网格顺序落位
+    await expect
+      .poll(() => titles(), { timeout: 5000 })
+      .toEqual(["乙", "丙", "甲"]);
+
+    // 刷新后顺序保持（已持久化到 sort_order）
+    await page.reload();
+    await page.getByText("快递发车台").waitFor();
+    await expect(titleCells).toHaveCount(3, { timeout: 5000 });
+    expect(await titles()).toEqual(["乙", "丙", "甲"]);
+  });
+});
+
 test.describe("滞留件结转与归档", () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoard(page);

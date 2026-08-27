@@ -50,7 +50,7 @@ contracts/    前后端共享代码
   vans.test.ts              班次编码规则测试
   multi-select.test.ts      多选标签纯函数测试（函数直接定义在测试文件内）
 db/
-  schema.ts     Drizzle 表定义：members（成员）、tasks（快件，含 rarity/requester）、task_owners（任务·负责人关联）、vans（已发班次）；pool_items 已废弃保留
+  schema.ts     Drizzle 表定义：members（成员）、tasks（快件，含 rarity/requester/sort_order 行内拖拽排序序号）、task_owners（任务·负责人关联）、vans（已发班次）；pool_items 已废弃保留
   seed.ts       种子脚本（仅示例成员），npm run db:seed 运行（会先自动建表，全新库可直接跑）
 src/          React 前端
   main.tsx      入口：BrowserRouter + TRPCProvider
@@ -117,7 +117,7 @@ npm run db:seed    # 写入示例成员（tsx db/seed.ts，全新库可用，会
 
 - 单测框架 Vitest，`vitest.config.ts` 只收集 `api/**/*.test.ts`、`api/**/*.spec.ts`、`contracts/**/*.test.ts`（E2E 由 Playwright 单独跑，见 `playwright.config.ts`）。
 - 现有单测：`contracts/vans.test.ts`（班次编码规则，含跨月从 A 重计与结转目标推导）、`contracts/multi-select.test.ts`（多选标签纯函数）、`api/queries/van.test.ts` 与 `van.unit.test.ts`（`toStrandedTask` / `rarityStatsOf` / `taskStatsOf` 等纯函数）、`van.mock.test.ts`（mock `getDb()` 覆盖成员/快件/发车/结转等 DB 业务逻辑，含归档只读与并发撞约束防御）、`api/vanRouter.test.ts`（`memberTag` 标签校验，拒绝半角逗号）、`api/ensureSchema.test.ts`（旧六级稀有度迁移映射 `LEGACY_RARITY_TO` 完整性）。
-- E2E（`e2e/`）：Playwright 跑真实部署形态（先 build 再起服务），`board.spec.ts` 覆盖核心动线（发新车 → 录快件 → 编辑 → 送达 → 结转 → 归档只读），`bugs.spec.ts` 回归历史 bug；共享一个测试库、班次跨用例累积，必须串行（workers=1）、零重试（失败即真实回归）。
+- E2E（`e2e/`）：Playwright 跑真实部署形态（先 build 再起服务），`board.spec.ts` 覆盖核心动线（发新车 → 录快件 → 编辑 → 送达 → 行拖拽排序 → 结转 → 归档只读），`bugs.spec.ts` 回归历史 bug；共享一个测试库、班次跨用例累积，必须串行（workers=1）、零重试（失败即真实回归）。
 - 偏好为纯函数写无库单测；涉及 DB 的逻辑尽量拆出纯函数再测，实在拆不出的用 mock DB。
 - 新增业务规则（尤其是 `contracts/` 与 `api/queries/` 中的校验逻辑）应配套测试。
 
