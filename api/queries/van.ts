@@ -227,7 +227,7 @@ export async function addTask(input: {
   rarity?: Rarity;
   requester?: string;
   owners?: string[];
-  size?: 1 | 3 | 5 | null;
+  size?: number | null;
   acceptance?: string | null;
 }) {
   if (await isVanArchived(input.van)) {
@@ -261,7 +261,7 @@ export async function updateTask(
     rarity: Rarity;
     requester: string | null;
     owners: string[];
-    size: 1 | 3 | 5 | null;
+    size: number | null;
     acceptance: string | null;
     status: "todo" | "doing" | "done";
     doneAt: string | null;

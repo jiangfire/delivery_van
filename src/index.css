@@ -260,7 +260,7 @@ body {
   }
 }
 
-/* ── 档位标签 ── */
+/* ── 档位标签（半天点数制，按点数分桶着色：size-1 ≤2 点、size-3 ≤6 点、size-5 更大） ── */
 .size-badge {
   display: inline-flex;
   align-items: center;

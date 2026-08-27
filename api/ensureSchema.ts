@@ -75,4 +75,17 @@ export async function ensureSchema() {
       owner_name text NOT NULL
     )
   `);
+  // 半天点数制迁移：旧三档 1/3/5 天 ×2 变 2/6/10 点，成员运力 ≤7 天 ×2。
+  // 用 PRAGMA user_version 作迁移标记保证只执行一次——值域迁移无法幂等
+  // （迁移后新写入的 1/3/5 点与旧天数值撞车），新库表为空时 UPDATE 为 no-op。
+  const [versionRow] = await db.all<{ user_version: number }>(
+    sql`PRAGMA user_version`,
+  );
+  if (versionRow.user_version === 0) {
+    await db.run(sql`UPDATE tasks SET size = size * 2 WHERE size IN (1, 3, 5)`);
+    await db.run(
+      sql`UPDATE members SET capacity = capacity * 2 WHERE capacity <= 7`,
+    );
+    await db.run(sql`PRAGMA user_version = 1`);
+  }
 }

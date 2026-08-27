@@ -72,21 +72,21 @@ test.describe("快件增删改", () => {
     await expect(titleCell).toHaveText("优惠券接口联调", { timeout: 5000 });
   });
 
-  test("档位仅 1/3/5 三档可选", async ({ page }) => {
+  test("档位为 1~10 点数可选", async ({ page }) => {
     await addTaskAndWait(page);
     const sizeCell = dataCell(page, "_size");
     await sizeCell.dblclick();
     const combo = sizeCell.getByRole("combobox");
     await expect(combo).toBeVisible({ timeout: 3000 });
     await combo.click();
-    // 下拉只提供 1 / 3 / 5 三档（富下拉选项渲染在页面级浮层）
-    for (const tier of ["1", "3", "5"]) {
+    // 半天点数制：下拉提供 1~10 十个点档（富下拉选项渲染在页面级浮层）
+    for (const p of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]) {
       await expect(
-        page.getByRole("option", { name: tier, exact: true }),
+        page.getByRole("option", { name: p, exact: true }),
       ).toBeVisible();
     }
-    await page.getByRole("option", { name: "3", exact: true }).click();
-    await expect(sizeCell).toHaveText("3 天");
+    await page.getByRole("option", { name: "7", exact: true }).click();
+    await expect(sizeCell).toHaveText("7 点");
   });
 
   test("置完成自动记送达日期，取消完成清空日期", async ({ page }) => {

@@ -269,12 +269,15 @@ export default function BoardPage() {
         editable: !vanReadonly,
         editField: "size",
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: ["1", "3", "5"] },
+        // 半天点数制：1 点 = 半天，1~10 整数
+        cellEditorParams: {
+          values: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
+        },
         valueGetter: (p) => String(p.data?.size ?? ""),
         valueSetter: (p) => {
           if (p.data) {
             const v = p.newValue === "" ? null : Number(p.newValue);
-            p.data.size = v as 1 | 3 | 5 | null;
+            p.data.size = v as number | null;
             return true;
           }
           return false;
@@ -282,8 +285,10 @@ export default function BoardPage() {
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
           if (!d || !d.size) return null;
+          // 颜色按点数分桶：≤2 点（≤1 天）蓝、≤6 点（≤3 天）橙、其余红
+          const bucket = d.size <= 2 ? 1 : d.size <= 6 ? 3 : 5;
           return (
-            <span className={`size-badge size-${d.size}`}>{d.size} 天</span>
+            <span className={`size-badge size-${bucket}`}>{d.size} 点</span>
           );
         },
       },
@@ -699,12 +704,12 @@ export default function BoardPage() {
                       {m.name}
                     </span>
                     <span className="text-xs text-muted-foreground">
-                      运力 {m.capacity} 天
+                      运力 {m.capacity} 点
                     </span>
                     <span
                       className={`flex-1 text-xs ${overloaded ? "font-bold text-red-500" : "text-muted-foreground"}`}
                     >
-                      已装 {m.assigned} 天 · {m.taskCount} 件 · 送达 {m.done} ·
+                      已装 {m.assigned} 点 · {m.taskCount} 件 · 送达 {m.done} ·
                       滞留 {m.carriedIn}
                       {overloaded && "（超载！）"}
                     </span>

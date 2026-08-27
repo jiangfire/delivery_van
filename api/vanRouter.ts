@@ -19,7 +19,8 @@ import {
 const vanCode = z
   .string()
   .regex(VAN_CODE_RE, "班次编码格式应为 DV2607A（年+月+当月第几班）");
-const sizeTier = z.union([z.literal(1), z.literal(3), z.literal(5)]);
+/** 半天点数制：1 点 = 半天，只允许 1~10 整数（10 点 = 5 天） */
+export const sizePoints = z.number().int().min(1).max(10);
 const idField = z.number().int().positive();
 const rarity = z.enum(RARITIES);
 
@@ -50,13 +51,13 @@ export const vanRouter = createRouter({
       .input(
         z.object({
           name: memberTag,
-          capacity: z.number().int().min(0).max(7).default(5),
+          capacity: z.number().int().min(0).max(14).default(10),
         }),
       )
       .mutation(({ input }) => addMember(input.name, input.capacity)),
     setCapacity: publicQuery
       .input(
-        z.object({ id: idField, capacity: z.number().int().min(0).max(7) }),
+        z.object({ id: idField, capacity: z.number().int().min(0).max(14) }),
       )
       .mutation(({ input }) => updateMemberCapacity(input.id, input.capacity)),
   }),
@@ -74,7 +75,7 @@ export const vanRouter = createRouter({
           rarity: rarity.default("n"),
           requester: z.string().max(64).optional(),
           owners: z.array(memberTag).optional(),
-          size: sizeTier.nullable().optional(),
+          size: sizePoints.nullable().optional(),
           acceptance: z.string().max(255).nullable().optional(),
         }),
       )
@@ -87,7 +88,7 @@ export const vanRouter = createRouter({
           rarity: rarity.optional(),
           requester: z.string().max(64).nullable().optional(),
           owners: z.array(memberTag).optional(),
-          size: sizeTier.nullable().optional(),
+          size: sizePoints.nullable().optional(),
           acceptance: z.string().max(255).nullable().optional(),
           status: z.enum(["todo", "doing", "done"]).optional(),
           doneAt: z.string().nullable().optional(),
