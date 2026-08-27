@@ -53,7 +53,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           NOTES=$(cat <<EOF
-          快递发车台 $GITHUB_REF_NAME「niulai」——首个正式版。
+          快递发车台 $GITHUB_REF_NAME「niulai」。
+
+          本版变化：任务体量从三档粒度（1/3/5 天）改为**半天点数制**（1 点 = 半天，1~10 点，10 点 = 5 天），
+          成员运力同口径（默认 10 点/周、上限 14 点）；旧库启动时自动幂等迁移（旧档位与运力 ×2）。
 
           周度发车管理工具：DV 班次编码（每月从 A 重计）、快件半天点数制（1~10 点，1 点 = 半天）、
           送达二值化 + 日期补录、滞留结转（紧邻班次校验 + 归档只读 + ≥2 班强制复盘提示）、
@@ -74,7 +77,7 @@ jobs:
           库文件默认 ./data/delivery_van.db，可用 DATABASE_URL 覆盖；端口默认 3000 可用 PORT 覆盖。
           详细规则见仓库 README 与《周度发车机制设计方案》。
 
-          质量：单测 92 / E2E 15 / CI 三 job 全绿；容器自动建表与数据卷持久化（重建容器数据不丢）由 CI 的 docker job 验证。
+          质量：单测 95 / E2E 15 / CI 三 job 全绿；容器自动建表与数据卷持久化（重建容器数据不丢）由 CI 的 docker job 验证。
           EOF
           )
           gh release create "$GITHUB_REF_NAME" "delivery_van-${GITHUB_REF_NAME}.zip" \
