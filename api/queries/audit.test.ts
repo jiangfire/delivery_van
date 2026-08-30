@@ -66,7 +66,7 @@ describe("序列化格式锁定（评审补：防重构悄悄改格式导致全�
 
 describe("appendAudit 落库", () => {
   it("读链尾→算 hash→插入，多条成链且 verify 通过", async () => {
-    await appendAudit("张三", [
+    appendAudit(mockDb, "张三", [
       {
         entity: "task",
         entityId: 1,
@@ -82,7 +82,7 @@ describe("appendAudit 落库", () => {
         newValue: "done",
       },
     ]);
-    await appendAudit(undefined, [
+    appendAudit(mockDb, undefined, [
       {
         entity: "member",
         entityId: "李四",
@@ -104,7 +104,7 @@ describe("appendAudit 落库", () => {
   });
 
   it("跨 entity 混合写入（task / member / van）不断链", async () => {
-    await appendAudit("张三", [
+    appendAudit(mockDb, "张三", [
       {
         entity: "van",
         entityId: "DV2608A",
@@ -135,7 +135,7 @@ describe("appendAudit 落库", () => {
 
 describe("verifyAuditChain 篡改检测", () => {
   async function seed() {
-    await appendAudit("张三", [
+    appendAudit(mockDb, "张三", [
       {
         entity: "task",
         entityId: 1,

@@ -15,70 +15,34 @@ import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { carryTargetCode } from "@contracts/vans";
 import {
-  CARRY_REASONS,
   CARRY_REASON_LABELS,
   SOURCE_LABELS,
   type CarryReason,
-  type Source,
 } from "@contracts/enums";
 import { getActor, saveActor } from "@/lib/actor";
+import {
+  RARITY_CLASS,
+  SOURCE_CODE,
+  SOURCE_COLOR,
+  STATUS_CODE,
+  STATUS_LABEL,
+  sizeBucket,
+} from "@/lib/display";
 import type { TaskWithOwners } from "../../api/queries/van";
 import MultiSelectCellEditor from "@/components/MultiSelectCellEditor";
 import RarityCellEditor from "@/components/RarityCellEditor";
 import RequesterCellEditor from "@/components/RequesterCellEditor";
 import DateCellEditorComp from "@/components/DateCellEditorComp";
+import { StatsBar } from "@/components/StatsBar";
+import { StatsPanel } from "@/components/StatsPanel";
+import { CarryDialog } from "@/components/CarryDialog";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
-/* ── 稀有度配置：N/R/SR/SSR/UR，展示统一大写英文缩写 ── */
 type Rarity = "n" | "r" | "sr" | "ssr" | "ur";
-const RARITY_CLASS: Record<Rarity, string> = {
-  n: "",
-  r: "text-emerald-600",
-  sr: "text-sky-600",
-  ssr: "text-violet-600",
-  ur: "rarity-ur-text",
-};
-
-/* ── 任务四态的中文标签（存储值仍是英文枚举） ── */
-const STATUS_LABEL: Record<string, string> = {
-  todo: "未开始",
-  doing: "进行中",
-  done: "完成",
-  carried: "结转",
-};
-const STATUS_CODE: Record<string, TaskRow["status"]> = {
-  未开始: "todo",
-  进行中: "doing",
-  完成: "done",
-};
-
-/* ── 快件来源（三方占比）：中文标签 ↔ 存储枚举 ── */
-const SOURCE_CODE = Object.fromEntries(
-  Object.entries(SOURCE_LABELS).map(([code, label]) => [label, code]),
-) as Record<string, Source>;
-/** 三方占比迷你条配色：客户天蓝 / 平台琥珀 / 探索紫 */
-const SOURCE_COLOR: Record<Source, string> = {
-  customer: "#0ea5e9",
-  platform: "#d97706",
-  exploration: "#8b5cf6",
-};
-
 type TaskRow = TaskWithOwners;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
-
-/** 档位徽标颜色分桶：≤2 点（≤1 天）蓝、≤6 点（≤3 天）橙、更大红 */
-function sizeBucket(size: number): 1 | 3 | 5 {
-  if (size <= 2) return 1;
-  if (size <= 6) return 3;
-  return 5;
-}
-
-/** 比率显示：null → “–” */
-function fmtRate(x: number | null | undefined): string {
-  return x == null ? "–" : `${Math.round(x * 100)}%`;
-}
 
 export default function BoardPage() {
   const [van, setVan] = useState<string | null>(null);
@@ -492,7 +456,7 @@ export default function BoardPage() {
         valueSetter: (p) => {
           if (p.data) {
             const code = STATUS_CODE[p.newValue as string];
-            if (code) p.data.status = code;
+            if (code) p.data.status = code as TaskRow["status"];
             return true;
           }
           return false;
@@ -717,9 +681,6 @@ export default function BoardPage() {
     reorderM.mutate({ van: curVan, ids, actor: actorArg });
   };
 
-  /* ── 统计条的三方占比数据 ── */
-  const sourceTotal = stats?.source.reduce((s, x) => s + x.total, 0) ?? 0;
-
   return (
     <div className="aurora-bg">
       <div className="relative z-10 mx-auto max-w-[1400px] px-8 py-8">
@@ -821,141 +782,26 @@ export default function BoardPage() {
         )}
 
         {/* ── 统计条 ── */}
-        <div className="glass-card mb-6 flex flex-wrap items-center gap-8 px-6 py-5">
-          <Stat
-            label="未送达 / 共"
-            value={stats ? `${stats.remaining} / ${stats.total} 件` : "–"}
-          />
-          <Stat
-            label="送达率"
-            value={
-              stats?.completionRate == null
-                ? "–"
-                : `${Math.round(stats.completionRate * 100)}%`
-            }
-          />
-          <Stat
-            label="滞留率"
-            value={
-              stats?.carryRate == null
-                ? "–"
-                : `${Math.round(stats.carryRate * 100)}%`
-            }
-          />
-          <Stat
-            label="强制复盘"
-            value={stats ? `${stats.reviewNeeded} 个` : "–"}
-            tone={stats && stats.reviewNeeded > 0 ? "warn" : undefined}
-          />
-          {/* 未签收提示（WP3）：周五验收会前看这里，是否结转仍由人决定 */}
-          {stats && stats.unconfirmed > 0 && (
-            <Stat
-              label="未签收"
-              value={`${stats.unconfirmed} 件`}
-              tone="warn"
-            />
-          )}
-          {/* 昨日天气（WP4）：建议装载上限 = 上一班实际送达点数，只提示不拦截 */}
-          {stats?.suggestedLoad != null && (
-            <Stat label="建议装载上限" value={`${stats.suggestedLoad} 点`} />
-          )}
-          {/* 三方占比迷你条（WP1）：一眼看快件结构 */}
-          <div>
-            <div className="label-caps">三方占比</div>
-            {sourceTotal > 0 ? (
-              <div className="mt-1.5">
-                <div className="flex h-2 w-44 overflow-hidden rounded-full border border-white/60">
-                  {stats!.source
-                    .filter((s) => s.total > 0)
-                    .map((s) => (
-                      <span
-                        key={s.source}
-                        title={`${SOURCE_LABELS[s.source]} ${s.total} 件`}
-                        style={{
-                          width: `${(s.total / sourceTotal) * 100}%`,
-                          background: SOURCE_COLOR[s.source],
-                        }}
-                      />
-                    ))}
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {stats!.source
-                    .map(
-                      (s) =>
-                        `${SOURCE_LABELS[s.source]} ${Math.round((s.total / sourceTotal) * 100)}%`,
-                    )
-                    .join(" · ")}
-                </div>
-              </div>
-            ) : (
-              <div className="text-base font-bold">–</div>
-            )}
-          </div>
-          {/* 徽章角标（WP6）：实时推导不落库 */}
-          {badges && (badges.teamPunctual || badges.streaks.length > 0) && (
-            <div className="flex items-center gap-1">
-              {badges.teamPunctual && (
-                <span
-                  className="badge-chip badge-green"
-                  title="整班准点：本班快件全部送达"
-                >
-                  🚚 整班准点
-                </span>
-              )}
-              {badges.streaks.length > 0 && (
-                <span
-                  className="badge-chip"
-                  title={`${badges.streaks.join("、")}：连续 2 个班次负责快件零滞留`}
-                >
-                  📦 送达连击 ×{badges.streaks.length}
-                </span>
-              )}
-            </div>
-          )}
-          {/* 日志指纹（WP2）：链头 hash 前 8 位，周五锚定仪式抄进会议纪要 */}
-          {stats?.auditFingerprint && (
-            <button
-              className="btn btn-ghost font-mono text-xs"
-              title="链式审计日志指纹（点击复制，周五复盘会抄进纪要锚定）"
-              onClick={() => copyFingerprint(stats.auditFingerprint!)}
-            >
-              日志指纹 {stats.auditFingerprint}
-            </button>
-          )}
-          {/* 快捷操作 */}
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              className="btn btn-glass px-4 py-2 text-sm"
-              disabled={curVan === null || vanReadonly || addTaskM.isPending}
-              title={
-                vanArchived
-                  ? "班次已结转归档，不可新增快件"
-                  : "在本班次末尾新增一行快件"
-              }
-              onClick={() => {
-                if (!curVan) return;
-                addTaskM.mutate(
-                  { van: curVan, title: "新快件", actor: actorArg },
-                  {
-                    onSuccess: () => {
-                      toast.success("已添加，点击标题可编辑");
-                    },
-                  },
-                );
-              }}
-            >
-              + 快件
-            </button>
-            <button
-              className="btn btn-glass px-4 py-2 text-sm"
-              disabled={curVan === null || vanReadonly}
-              title={vanArchived ? "本班次已结转过，请勿重复操作" : undefined}
-              onClick={openCarryAsk}
-            >
-              滞留件转下一班
-            </button>
-          </div>
-        </div>
+        <StatsBar
+          stats={stats}
+          curVan={curVan}
+          vanArchived={vanArchived}
+          vanReadonly={vanReadonly}
+          addPending={addTaskM.isPending}
+          onAddTask={() => {
+            if (!curVan) return;
+            addTaskM.mutate(
+              { van: curVan, title: "新快件", actor: actorArg },
+              {
+                onSuccess: () => {
+                  toast.success("已添加，点击标题可编辑");
+                },
+              },
+            );
+          }}
+          onOpenCarry={openCarryAsk}
+          onCopyFingerprint={copyFingerprint}
+        />
 
         {/* ── 快件表格 ── */}
         <div className="glass-card mb-6 p-2" style={{ isolation: "isolate" }}>
@@ -1019,221 +865,31 @@ export default function BoardPage() {
           </section>
         )}
 
-        {/* ── 统计面板（默认折叠，v2.0 隐形预算：不占主界面） ── */}
-        <details className="glass-card mt-6 p-5">
-          <summary className="cursor-pointer text-sm font-bold select-none">
-            统计面板（v2）
-            <span className="ml-2 text-xs font-normal text-muted-foreground">
-              提出人记分卡 · 稀有度通胀 · 滞留原因瀑布
-            </span>
-          </summary>
-          <div className="mt-4 grid gap-8 lg:grid-cols-2">
-            {/* 提出人记分卡（WP1） */}
-            <section>
-              <h3 className="mb-2 text-xs font-bold text-muted-foreground">
-                提出人记分卡（送达 = 签收口径）
-              </h3>
-              {stats && stats.requester.length > 0 ? (
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="text-left text-[11px] text-muted-foreground">
-                      <th className="py-1 pr-4 font-semibold">提出人</th>
-                      <th className="py-1 pr-4 font-semibold">提出</th>
-                      <th className="py-1 pr-4 font-semibold">送达</th>
-                      <th className="py-1 pr-4 font-semibold">滞留</th>
-                      <th className="py-1 pr-4 font-semibold">UR+SSR</th>
-                      <th className="py-1 font-semibold">在车班数</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stats.requester.map((r) => (
-                      <tr key={r.requester} className="border-t border-black/5">
-                        <td className="py-1.5 pr-4 font-medium">
-                          {r.requester}
-                        </td>
-                        <td className="py-1.5 pr-4">{r.total}</td>
-                        <td className="py-1.5 pr-4">{r.delivered}</td>
-                        <td className="py-1.5 pr-4">{r.stranded}</td>
-                        <td className="py-1.5 pr-4">
-                          {Math.round(r.urSsrRate * 100)}%
-                        </td>
-                        <td className="py-1.5">{r.avgVans}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              ) : (
-                <p className="text-xs text-muted-foreground">本班暂无快件</p>
-              )}
-            </section>
-            {/* 稀有度通胀报表（WP1） */}
-            <section>
-              <h3 className="mb-2 text-xs font-bold text-muted-foreground">
-                稀有度通胀（done × 滞留交叉）
-              </h3>
-              {stats && stats.inflation.byRarity.length > 0 ? (
-                <>
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="text-left text-[11px] text-muted-foreground">
-                        <th className="py-1 pr-4 font-semibold">稀有度</th>
-                        <th className="py-1 pr-4 font-semibold">总数</th>
-                        <th className="py-1 pr-4 font-semibold">送达</th>
-                        <th className="py-1 font-semibold">滞留</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {stats.inflation.byRarity.map((r) => (
-                        <tr key={r.rarity} className="border-t border-black/5">
-                          <td
-                            className={`py-1.5 pr-4 font-medium ${RARITY_CLASS[r.rarity as Rarity]}`}
-                          >
-                            {r.rarity.toUpperCase()}
-                          </td>
-                          <td className="py-1.5 pr-4">{r.total}</td>
-                          <td className="py-1.5 pr-4">{r.done}</td>
-                          <td className="py-1.5">{r.stranded}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    UR 滞留率 {fmtRate(stats.inflation.urStrandRate)} vs N
-                    滞留率 {fmtRate(stats.inflation.nStrandRate)}
-                    （UR 显著更高 = 集体压级/定级通胀信号）
-                  </p>
-                </>
-              ) : (
-                <p className="text-xs text-muted-foreground">本班暂无快件</p>
-              )}
-            </section>
-            {/* 滞留原因瀑布（WP5） */}
-            <section className="lg:col-span-2">
-              <h3 className="mb-2 text-xs font-bold text-muted-foreground">
-                滞留原因瀑布（本班结转出去的件，无人名排序）
-              </h3>
-              {stats && stats.carryReasons.length > 0 ? (
-                <ul className="max-w-xl space-y-1.5">
-                  {stats.carryReasons.map((r) => {
-                    const max = Math.max(
-                      ...stats.carryReasons.map((x) => x.count),
-                    );
-                    return (
-                      <li
-                        key={r.reason ?? "unclassified"}
-                        className="flex items-center gap-3 text-sm"
-                      >
-                        <span className="w-20 shrink-0 text-xs">
-                          {r.reason
-                            ? CARRY_REASON_LABELS[r.reason as CarryReason]
-                            : "未分类"}
-                        </span>
-                        <span className="h-2 flex-1 overflow-hidden rounded-full bg-black/5">
-                          <span
-                            className="block h-full rounded-full bg-amber-500/60"
-                            style={{ width: `${(r.count / max) * 100}%` }}
-                          />
-                        </span>
-                        <span className="w-6 text-right text-xs text-muted-foreground">
-                          {r.count}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  本班暂无结转出去的滞留件
-                </p>
-              )}
-              <p className="mt-4 text-xs text-muted-foreground">
-                口径说明：三方占比与来源自 v2.0 起采集，历史快件统一记为客户件；
-                记分卡「送达」为签收口径，滞留率/完成率仍为 v1
-                口径（基线连续）。
-              </p>
-            </section>
-          </div>
-        </details>
+        {/* ── 统计面板（默认折叠） ── */}
+        <StatsPanel stats={stats} />
 
-        {/* ── 结转确认弹层（WP5：原因下拉，默认未分类） ── */}
+        {/* ── 结转确认弹层 ── */}
         {carryAsk && (
-          <div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 px-4"
-            role="dialog"
-            aria-label="结转确认"
-          >
-            <div className="glass-card w-full max-w-sm p-5">
-              <h3 className="mb-1 text-sm font-bold">滞留件转下一班</h3>
-              <p className="mb-3 text-xs text-muted-foreground">
-                把 {carryAsk.fromVan} 的滞留件转到 {carryAsk.toVan}
-                ？结转后本班归档只读。
-              </p>
-              <label className="label-caps" htmlFor="carry-reason">
-                结转原因（可选，喂滞留瀑布与可控性分层）
-              </label>
-              <select
-                id="carry-reason"
-                className="select-liquid mt-1 w-full px-3 py-2 text-sm"
-                value={carryReason}
-                onChange={(e) => setCarryReason(e.target.value)}
-              >
-                <option value="">未分类</option>
-                {CARRY_REASONS.map((r) => (
-                  <option key={r} value={r}>
-                    {CARRY_REASON_LABELS[r]}
-                  </option>
-                ))}
-              </select>
-              <div className="mt-4 flex justify-end gap-2">
-                <button
-                  className="btn btn-ghost px-3 py-1.5 text-sm"
-                  onClick={() => setCarryAsk(null)}
-                >
-                  取消
-                </button>
-                <button
-                  className="btn btn-primary px-4 py-1.5 text-sm"
-                  disabled={carryM.isPending}
-                  onClick={() => {
-                    carryM.mutate(
-                      {
-                        fromVan: carryAsk.fromVan,
-                        toVan: carryAsk.toVan,
-                        carryReason: (carryReason || undefined) as
-                          CarryReason | undefined,
-                        actor: actorArg,
-                      },
-                      { onSuccess: () => setCarryAsk(null) },
-                    );
-                  }}
-                >
-                  确认结转
-                </button>
-              </div>
-            </div>
-          </div>
+          <CarryDialog
+            ask={carryAsk}
+            reason={carryReason}
+            pending={carryM.isPending}
+            onReasonChange={setCarryReason}
+            onCancel={() => setCarryAsk(null)}
+            onConfirm={() => {
+              carryM.mutate(
+                {
+                  fromVan: carryAsk.fromVan,
+                  toVan: carryAsk.toVan,
+                  carryReason: (carryReason || undefined) as
+                    CarryReason | undefined,
+                  actor: actorArg,
+                },
+                { onSuccess: () => setCarryAsk(null) },
+              );
+            }}
+          />
         )}
-      </div>
-    </div>
-  );
-}
-
-function Stat({
-  label,
-  value,
-  tone,
-}: {
-  label: string;
-  value: string;
-  tone?: "warn";
-}) {
-  return (
-    <div>
-      <div className="label-caps">{label}</div>
-      <div
-        className={`text-base font-bold ${tone === "warn" ? "text-amber-500" : ""}`}
-      >
-        {value}
       </div>
     </div>
   );

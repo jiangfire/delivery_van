@@ -22,7 +22,12 @@ import {
   nextVanCodeFrom,
   todayStr,
 } from "../../contracts/vans";
-import { appendAudit, fingerprintOf, type AuditEntry } from "./audit";
+import {
+  appendAudit,
+  fingerprintOf,
+  type AuditDb,
+  type AuditEntry,
+} from "./audit";
 import { auditLog } from "../../db/schema";
 
 /* ── 纯函数（无库可测） ── */
@@ -306,7 +311,19 @@ export async function dispatchVan(
   const code =
     list.length === 0 ? firstVanCodeOf(today) : nextVanCodeFrom(list[0], today);
   try {
-    await getDb().insert(vans).values({ code });
+    // 发车与审计同事务
+    getDb().transaction((tx) => {
+      tx.insert(vans).values({ code }).run();
+      appendAudit(tx, actor, [
+        {
+          entity: "van",
+          entityId: code,
+          field: "*",
+          oldValue: null,
+          newValue: code,
+        },
+      ]);
+    });
   } catch (e) {
     // 并发双击等极端情况下编码已被抢先插入：视为对方已发车，幂等返回当前列表
     if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
@@ -314,15 +331,6 @@ export async function dispatchVan(
     }
     throw e;
   }
-  await appendAudit(actor, [
-    {
-      entity: "van",
-      entityId: code,
-      field: "*",
-      oldValue: null,
-      newValue: code,
-    },
-  ]);
   return listVans();
 }
 
@@ -347,7 +355,19 @@ export async function addMember(
     throw new TRPCError({ code: "CONFLICT", message: `成员「${name}」已存在` });
   }
   try {
-    await db.insert(members).values({ name, capacity });
+    // 成员新增与审计同事务
+    db.transaction((tx) => {
+      tx.insert(members).values({ name, capacity }).run();
+      appendAudit(tx, actor, [
+        {
+          entity: "member",
+          entityId: name,
+          field: "*",
+          oldValue: null,
+          newValue: name,
+        },
+      ]);
+    });
   } catch (e) {
     // 并发窗口内被抢先插入（UNIQUE 唯一约束）：按重名处理，不给前端裸 500
     if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE") {
@@ -358,15 +378,6 @@ export async function addMember(
     }
     throw e;
   }
-  await appendAudit(actor, [
-    {
-      entity: "member",
-      entityId: name,
-      field: "*",
-      oldValue: null,
-      newValue: name,
-    },
-  ]);
   return listMembers();
 }
 
@@ -477,17 +488,16 @@ function taskAuditValue(t: {
   });
 }
 
-/** 替换快件的负责人标签（先删后插） */
-async function replaceOwners(
-  db: ReturnType<typeof getDb>,
-  taskId: number,
-  owners: string[],
-) {
-  await db.delete(taskOwners).where(eq(taskOwners.taskId, taskId));
+/** 事务对象的最小结构约束（业务写与审计同事务，回调内同步调用） */
+type TxDb = AuditDb & Pick<ReturnType<typeof getDb>, "update" | "delete">;
+
+/** 替换快件的负责人标签（先删后插；事务内同步调用） */
+function replaceOwners(tx: TxDb, taskId: number, owners: string[]) {
+  tx.delete(taskOwners).where(eq(taskOwners.taskId, taskId)).run();
   if (owners.length > 0) {
-    await db
-      .insert(taskOwners)
-      .values(owners.map((name) => ({ taskId, ownerName: name })));
+    tx.insert(taskOwners)
+      .values(owners.map((name) => ({ taskId, ownerName: name })))
+      .run();
   }
 }
 
@@ -514,38 +524,42 @@ export async function addTask(input: {
     .select({ max: sql<number | null>`max(${tasks.sortOrder})` })
     .from(tasks)
     .where(eq(tasks.vanCode, input.van));
-  const [inserted] = await db
-    .insert(tasks)
-    .values({
-      vanCode: input.van,
-      title: input.title,
-      rarity: input.rarity ?? "n",
-      requester: input.requester ?? null,
-      size: input.size ?? null,
-      acceptance: input.acceptance ?? null,
-      source: input.source ?? "customer",
-      sortOrder: (maxRow?.max ?? 0) + 1,
-    })
-    .returning({ id: tasks.id });
-  if (input.owners && input.owners.length > 0) {
-    await replaceOwners(db, inserted.id, input.owners);
-  }
-  await appendAudit(input.actor, [
-    {
-      entity: "task",
-      entityId: inserted.id,
-      field: "*",
-      oldValue: null,
-      newValue: taskAuditValue({
+  // 业务写与审计同事务：任何一侧失败整体回滚，不留未记账的写
+  db.transaction((tx) => {
+    const [inserted] = tx
+      .insert(tasks)
+      .values({
+        vanCode: input.van,
         title: input.title,
         rarity: input.rarity ?? "n",
         requester: input.requester ?? null,
         size: input.size ?? null,
+        acceptance: input.acceptance ?? null,
         source: input.source ?? "customer",
-        owners: input.owners,
-      }),
-    },
-  ]);
+        sortOrder: (maxRow?.max ?? 0) + 1,
+      })
+      .returning({ id: tasks.id })
+      .all();
+    if (input.owners && input.owners.length > 0) {
+      replaceOwners(tx, inserted.id, input.owners);
+    }
+    appendAudit(tx, input.actor, [
+      {
+        entity: "task",
+        entityId: inserted.id,
+        field: "*",
+        oldValue: null,
+        newValue: taskAuditValue({
+          title: input.title,
+          rarity: input.rarity ?? "n",
+          requester: input.requester ?? null,
+          size: input.size ?? null,
+          source: input.source ?? "customer",
+          owners: input.owners,
+        }),
+      },
+    ]);
+  });
   return listTasksByVan(input.van);
 }
 
@@ -570,30 +584,31 @@ export async function reorderTasks(van: string, ids: number[], actor?: string) {
       message: "排序列表与本班快件不一致，请刷新后重试",
     });
   }
+  // 只记实际变化的行（单次拖拽通常只动 1~3 行）
+  const oldById = new Map(rows.map((r) => [r.id, r.sortOrder]));
   db.transaction((tx) => {
     ids.forEach((id, idx) => {
       tx.update(tasks).set({ sortOrder: idx }).where(eq(tasks.id, id)).run();
     });
+    appendAudit(
+      tx,
+      actor,
+      ids.flatMap((id, idx) => {
+        const old = oldById.get(id);
+        return old === idx
+          ? []
+          : [
+              {
+                entity: "task",
+                entityId: id,
+                field: "sort_order",
+                oldValue: old == null ? null : String(old),
+                newValue: String(idx),
+              },
+            ];
+      }),
+    );
   });
-  // 只记实际变化的行（单次拖拽通常只动 1~3 行）
-  const oldById = new Map(rows.map((r) => [r.id, r.sortOrder]));
-  await appendAudit(
-    actor,
-    ids.flatMap((id, idx) => {
-      const old = oldById.get(id);
-      return old === idx
-        ? []
-        : [
-            {
-              entity: "task",
-              entityId: id,
-              field: "sort_order",
-              oldValue: old == null ? null : String(old),
-              newValue: String(idx),
-            },
-          ];
-    }),
-  );
   return listTasksByVan(van);
 }
 
@@ -650,14 +665,6 @@ export async function updateTask(
 
   // 分离 task_owners 字段（不写入 tasks 表）
   const { owners, ...taskPatch } = patch;
-  if (Object.keys(taskPatch).length > 0) {
-    await db.update(tasks).set(taskPatch).where(eq(tasks.id, id));
-  }
-
-  // 更新负责人标签
-  if (owners !== undefined) {
-    await replaceOwners(db, id, owners);
-  }
 
   // 审计：逐字段 diff，值未变不记；note / acceptance 自由文本以占位符进链
   const FIELD_KEYS = [
@@ -715,7 +722,18 @@ export async function updateTask(
       newValue: owners.length > 0 ? owners.join(",") : null,
     });
   }
-  await appendAudit(actor, entries);
+
+  // 业务写与审计同事务：任何一侧失败整体回滚，不留未记账的写
+  db.transaction((tx) => {
+    if (Object.keys(taskPatch).length > 0) {
+      tx.update(tasks).set(taskPatch).where(eq(tasks.id, id)).run();
+    }
+    // 更新负责人标签
+    if (owners !== undefined) {
+      replaceOwners(tx, id, owners);
+    }
+    appendAudit(tx, actor, entries);
+  });
 
   return listTasksByVan(current.vanCode);
 }
@@ -731,17 +749,19 @@ export async function removeTask(id: number, actor?: string) {
       message: `班次 ${task.vanCode} 已结转归档，不可删除`,
     });
   }
-  // ON DELETE CASCADE 会自动清理 task_owners
-  await db.delete(tasks).where(eq(tasks.id, id));
-  await appendAudit(actor, [
-    {
-      entity: "task",
-      entityId: id,
-      field: "*",
-      oldValue: taskAuditValue(task),
-      newValue: null,
-    },
-  ]);
+  // ON DELETE CASCADE 会自动清理 task_owners；删除留痕与删除同事务
+  db.transaction((tx) => {
+    tx.delete(tasks).where(eq(tasks.id, id)).run();
+    appendAudit(tx, actor, [
+      {
+        entity: "task",
+        entityId: id,
+        field: "*",
+        oldValue: taskAuditValue(task),
+        newValue: null,
+      },
+    ]);
+  });
 }
 
 /* ── 结转（未完成 = 结转下周，不允许"完成 80%"） ── */
@@ -849,56 +869,58 @@ export async function carryOver(
         )
         .run();
     }
-    return {
+    const result = {
       count: unfinished.length,
       vanCreated: vanExists.length === 0,
       copies,
     };
-  });
-  await appendAudit(opts.actor, [
-    ...(carried.vanCreated
-      ? [
-          {
-            entity: "van",
-            entityId: toVan,
-            field: "*",
-            oldValue: null,
-            newValue: toVan,
-          },
-        ]
-      : []),
-    ...carried.copies.flatMap((c) => [
-      {
-        entity: "task",
-        entityId: c.src.id,
-        field: "status",
-        oldValue: String(c.src.status),
-        newValue: "carried",
-      },
-      ...(carryReason
+    // 审计与结转同事务：half-way 崩溃不产生「转了件但没记账」
+    appendAudit(tx, opts.actor, [
+      ...(result.vanCreated
         ? [
             {
-              entity: "task",
-              entityId: c.src.id,
-              field: "carry_reason",
+              entity: "van",
+              entityId: toVan,
+              field: "*",
               oldValue: null,
-              newValue: carryReason,
+              newValue: toVan,
             },
           ]
         : []),
-      {
-        entity: "task",
-        entityId: c.newId,
-        field: "*",
-        oldValue: null,
-        newValue: taskAuditValue({
-          ...c.src,
-          status: "todo",
-          carriedFrom: fromVan,
-        }),
-      },
-    ]),
-  ]);
+      ...result.copies.flatMap((c) => [
+        {
+          entity: "task",
+          entityId: c.src.id,
+          field: "status",
+          oldValue: String(c.src.status),
+          newValue: "carried",
+        },
+        ...(carryReason
+          ? [
+              {
+                entity: "task",
+                entityId: c.src.id,
+                field: "carry_reason",
+                oldValue: null,
+                newValue: carryReason,
+              },
+            ]
+          : []),
+        {
+          entity: "task",
+          entityId: c.newId,
+          field: "*",
+          oldValue: null,
+          newValue: taskAuditValue({
+            ...c.src,
+            status: "todo",
+            carriedFrom: fromVan,
+          }),
+        },
+      ]),
+    ]);
+    return result;
+  });
   return { carried: carried.count, tasks: await listTasksByVan(toVan) };
 }
 
@@ -944,19 +966,22 @@ export async function confirmTask(taskId: number, actor: string) {
   if (task.requester === null || task.confirmedAt !== null) {
     return listTasksByVan(task.vanCode);
   }
-  await db
-    .update(tasks)
-    .set({ confirmedBy: actor, confirmedAt: todayStr() })
-    .where(eq(tasks.id, taskId));
-  await appendAudit(actor, [
-    {
-      entity: "task",
-      entityId: taskId,
-      field: "confirm",
-      oldValue: null,
-      newValue: actor,
-    },
-  ]);
+  // 签收留痕与签收同事务
+  db.transaction((tx) => {
+    tx.update(tasks)
+      .set({ confirmedBy: actor, confirmedAt: todayStr() })
+      .where(eq(tasks.id, taskId))
+      .run();
+    appendAudit(tx, actor, [
+      {
+        entity: "task",
+        entityId: taskId,
+        field: "confirm",
+        oldValue: null,
+        newValue: actor,
+      },
+    ]);
+  });
   return listTasksByVan(task.vanCode);
 }
 

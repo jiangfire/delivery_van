@@ -64,32 +64,31 @@ export function fingerprintOf(hash: string | null | undefined): string | null {
   return typeof hash === "string" && hash.length > 0 ? hash.slice(0, 8) : null;
 }
 
-/** 读链尾（最新一条的 hash）；空链返回创世哈希 */
-async function tailHash(
-  db: Pick<ReturnType<typeof getDb>, "select">,
-): Promise<string> {
-  const [row] = await db
+/** 事务对象的最小结构约束（db 与 tx 均满足） */
+export type AuditDb = Pick<ReturnType<typeof getDb>, "select" | "insert">;
+
+/**
+ * 追加审计记录（同步）：读链尾 → 逐条算 hash 串成链 → 批量插入。
+ *
+ * **必须在 db.transaction 回调内调用**——业务写与审计同生共死：任何一侧失败
+ * 整体回滚，崩溃/异常都不留「未记账的写」；better-sqlite3 单连接同步驱动，
+ * 事务内「读链尾→算 hash→插入」天然串行，无并发断链风险。actor 缺省
+ * '(unknown)'（软身份，链上可对质即可）。
+ */
+export function appendAudit(
+  db: AuditDb,
+  actor: string | undefined,
+  entries: AuditEntry[],
+): void {
+  if (entries.length === 0) return;
+  // 读链尾（最新一条的 hash）；空链为创世哈希
+  const [tail] = db
     .select({ hash: auditLog.hash })
     .from(auditLog)
     .orderBy(desc(auditLog.id))
-    .limit(1);
-  return row?.hash ?? GENESIS_HASH;
-}
-
-/**
- * 追加审计记录：读链尾 → 逐条算 hash 串成链 → 批量插入。
- * better-sqlite3 同步单线程驱动，读尾与插入之间没有并发写者，「读链尾→算
- * hash→插入」天然串行，无并发断链风险。actor 缺省 '(unknown)'（软身份，
- * 链上可对质即可）。审计与业务写不在同一事务：即使审计插入失败，链尾未动、
- * 链完整性不受影响，只是该次操作缺记。
- */
-export async function appendAudit(
-  actor: string | undefined,
-  entries: AuditEntry[],
-  db: Pick<ReturnType<typeof getDb>, "select" | "insert"> = getDb(),
-): Promise<void> {
-  if (entries.length === 0) return;
-  let prev = await tailHash(db);
+    .limit(1)
+    .all();
+  let prev = tail?.hash ?? GENESIS_HASH;
   const ts = Math.floor(Date.now() / 1000);
   const who = actor?.trim() || "(unknown)";
   const values = entries.map((e) => {
@@ -106,5 +105,5 @@ export async function appendAudit(
     prev = auditHash(base);
     return { ...base, hash: prev };
   });
-  await db.insert(auditLog).values(values);
+  db.insert(auditLog).values(values).run();
 }

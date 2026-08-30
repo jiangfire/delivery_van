@@ -24,7 +24,7 @@ delivery_van 是一个**周度发车管理工具**，机制设计见 `docs/周�
 - **签收制（v2.0 WP3）**：done 拆两拍——送达（承运人打勾）→ 签收（提出人一次点击，`tasks.confirm` 端点）。校验：任务必须 `done`、班次未归档、actor 必须是成员；**无提出人的自驱件不写库直接视同签收**（`isConfirmed` 推导，遵守「能推导不落库」）；重签幂等不覆盖首签；归档班次的 done 件不可签收。存量 done 由 `ensureSchema` 一次性回填 `'(历史)'`（`PRAGMA user_version` 1→2 门控，重启不误伤新 done）。
 - **快件来源（v2.0 WP1）**：`source` 三枚举 `customer/platform/exploration`（客户/平台/探索），NOT NULL 默认 customer，存量数据统一回填 customer（统计面板标注「v2.0 起才有此口径」）；仅供三方占比统计，不做任何拦截。
 - **结转原因（v2.0 WP5）**：结转确认弹层可选五枚举 `requirement-change/blocker/estimate/capacity/priority`（默认空=未分类），写入源班 carried 行与目标班副本；swap 让位原因 Phase 2 另加。滞留原因瀑布只统计**本班结转出去**（status=carried）的件，与滞留率口径一致。
-- **链式审计日志（v2.0 WP2）**：`audit_log` 表以 SHA256 hash 链记录一切写操作（快件增/改/删、状态与送达日期、排序、结转、发车、成员新增、签收；读操作不记）。写操作出口统一调 `api/queries/audit.ts` 的 `appendAudit(actor, entries)`；**序列化格式锁定**（字段序 + 每值 JSON 编码 + U+001F 定界，见 `serializeAudit`），改格式=旧链全量失效，配套锁定单测防悄悄变更；`verifyAuditChain(rows)` 重算全链返回首个断点。note/acceptance 自由文本以 `'(text)'` 占位进链（留「变过」的事实不留内容）。actor 是软身份：前端页头「我是谁」单选（localStorage 记住），缺省 `'(unknown)'`。统计条「日志指纹」= 链头 hash 前 8 位，周五复盘会抄进会议纪要锚定（模板见 `docs/会议纪要模板.md`）。
+- **链式审计日志（v2.0 WP2）**：`audit_log` 表以 SHA256 hash 链记录一切写操作（快件增/改/删、状态与送达日期、排序、结转、发车、成员新增、签收；读操作不记）。**业务写与审计追加在同一个 `db.transaction` 内**（任何一侧失败整体回滚，不留未记账的写），统一调 `api/queries/audit.ts` 的 `appendAudit(tx, actor, entries)`——同步函数，必须在事务回调内调用；**序列化格式锁定**（字段序 + 每值 JSON 编码 + U+001F 定界，见 `serializeAudit`），改格式=旧链全量失效，配套锁定单测防悄悄变更；`verifyAuditChain(rows)` 重算全链返回首个断点。note/acceptance 自由文本以 `'(text)'` 占位进链（留「变过」的事实不留内容）。actor 是软身份：前端页头「我是谁」单选（localStorage 记住），缺省 `'(unknown)'`。统计条「日志指纹」= 链头 hash 前 8 位，周五复盘会抄进会议纪要锚定（模板见 `docs/会议纪要模板.md`）。
 - **昨日天气（v2.0 WP4）**：建议装载上限 = 上一班（编码字典序紧邻）done 任务点数合计（`suggestedLoadOf`，**v1 done 口径**），无历史班返回 null；只提示不拦截，与运力「仅记录不校验」哲学一致。
 - **徽章 v1（v2.0 WP6）**：仅两枚、全自动、**实时推导不落库**——🚚 整班准点（本班有件且全部送达）、📦 送达连击（成员连续 2 个「实际负责过件的班次」零滞留，跳班不补给）。`badgesOf` 纯函数；状态变化 sonner 单次轻提示（首次加载静默）。
 - **口径连续性（v2.0 评审决议，防基线断裂）**：滞留率/完成率/三方占比/通胀沿用 v1 的 done/carried 定义；记分卡「送达」用**签收口径**（`isConfirmed`）；昨日天气与徽章统一 **done 口径**——一处函数一个口径，禁止混用。
@@ -65,10 +65,11 @@ src/          React 前端
   main.tsx      入口：BrowserRouter + TRPCProvider
   App.tsx       路由（仅看板页，path="*" 通配是有意的 SPA 回退）
   pages/BoardPage.tsx  看板主页面（AG Grid 快件表 + 统计条 + 成员运力 + 班次切换 + 折叠统计面板 + 结转确认弹层 + 我是谁）
-  lib/trpc.ts   createTRPCReact<AppRouter>()
+  lib/trpc.ts   createTRPCReact<AppRouter>()，导出 RouterOutputs / VanStats 共享类型
   lib/actor.ts  「我是谁」软身份存取（localStorage）
+  lib/display.ts 看板展示层共享工具（稀有度着色/状态与来源标签映射/档位分桶/比率格式化）
   providers/trpc.tsx   QueryClient + httpBatchLink(/api/trpc) + superjson
-  components/   AG Grid 自定义单元格编辑器：MultiSelectCellEditor（负责人多选）、RarityCellEditor（稀有度）、RequesterCellEditor（提出人）、DateCellEditorComp（送达日期）——四者均由 popupCellEditor.tsx 的 createPopupCellEditor 工厂生成（Portal 弹层 + 类适配的通用逻辑），配套内层组件 MultiSelectEditor / RarityEditor / RequesterSelect / DateCellEditor
+  components/   AG Grid 自定义单元格编辑器：MultiSelectCellEditor（负责人多选）、RarityCellEditor（稀有度）、RequesterCellEditor（提出人）、DateCellEditorComp（送达日期）——四者均由 popupCellEditor.tsx 的 createPopupCellEditor 工厂生成（Portal 弹层 + 类适配的通用逻辑），配套内层组件 MultiSelectEditor / RarityEditor / RequesterSelect / DateCellEditor；v2 统计组件：StatsBar（统计条）、StatsPanel（折叠面板）、CarryDialog（结转确认弹层）
   components/ui/       shadcn 组件（目前仅 sonner）
 e2e/          Playwright E2E：board.spec.ts（核心动线回归）、bugs.spec.ts（历史 bug 回归）、v2.spec.ts（v2.0 签收/原因/指纹/天气/徽章动线）、helpers.ts、global-setup.ts（每次跑前删测试库）；配置见 playwright.config.ts——独立测试库 e2e/test.db，先 npm run build 再起生产服务（4173 端口），串行执行（workers=1）零重试
 scripts/      start.mjs：跨平台生产启动（Windows 不支持 POSIX 的 VAR=x 语法）
@@ -129,8 +130,8 @@ npm run db:seed    # 写入示例成员（tsx db/seed.ts，全新库可用，会
 ## 测试策略
 
 - 单测框架 Vitest，`vitest.config.ts` 只收集 `api/**/*.test.ts`、`api/**/*.spec.ts`、`contracts/**/*.test.ts`（E2E 由 Playwright 单独跑，见 `playwright.config.ts`）。
-- 现有单测：`contracts/vans.test.ts`（班次编码规则，含跨月从 A 重计与结转目标推导）、`contracts/multi-select.test.ts`（多选标签纯函数）、`api/queries/van.test.ts` 与 `van.unit.test.ts`（`toStrandedTask` / `rarityStatsOf` / `taskStatsOf` 等纯函数）、`van.v2.test.ts`（v2.0 六件套纯函数：`isConfirmed` / `requesterStatsOf` / `rarityInflationOf` / `sourceStatsOf` / `suggestedLoadOf` / `carryReasonStatsOf` / `badgesOf`）、`van.mock.test.ts`（mock `getDb()` 覆盖成员/快件/发车/结转等 DB 业务逻辑，含归档只读与并发撞约束防御）、`van.reorder.test.ts`（行内拖拽排序，内存 SQLite 跑真实 `ensureSchema` + 数据层）、`van.confirm.test.ts`（签收制 / 结转原因 / 审计接线 / weeklyStats 扩展，内存 SQLite）、`audit.test.ts`（序列化格式锁定、hash 链、篡改断链检测、appendAudit 落库）、`api/vanRouter.test.ts`（`memberTag` 标签校验 + `source`/`carryReason` 枚举校验）、`api/ensureSchema.test.ts`（`LEGACY_RARITY_TO` 完整性、半天点数迁移、v2.0 签收一次性回填与 source 回填）。
-- E2E（`e2e/`）：Playwright 跑真实部署形态（先 build 再起服务），`board.spec.ts` 覆盖核心动线（发新车 → 录快件 → 编辑 → 送达 → 行拖拽排序 → 结转 → 归档只读），`bugs.spec.ts` 回归历史 bug，`v2.spec.ts` 覆盖 v2.0 动线（签收 → 未签收提示 → 结转选原因 → 归档拒签 → 指纹 → 昨日天气 → 三方占比 → 徽章）；共享一个测试库、班次跨用例累积，必须串行（workers=1）、零重试（失败即真实回归）。
+- 现有单测：`contracts/vans.test.ts`（班次编码规则，含跨月从 A 重计与结转目标推导）、`contracts/multi-select.test.ts`（多选标签纯函数）、`api/queries/van.test.ts` 与 `van.unit.test.ts`（`toStrandedTask` / `rarityStatsOf` / `taskStatsOf` 等纯函数）、`van.v2.test.ts`（v2.0 六件套纯函数：`isConfirmed` / `requesterStatsOf` / `rarityInflationOf` / `sourceStatsOf` / `suggestedLoadOf` / `carryReasonStatsOf` / `badgesOf`）、`van.write.test.ts`（发新车/成员/快件增改删写路径 + **审计同事务原子性**，内存 SQLite）、`van.mock.test.ts`（仅并发异常注入——撞主键/唯一约束的窗口期行为——与写路径前置校验早退；行为回归一律走内存库）、`van.reorder.test.ts`（行内拖拽排序，内存 SQLite 跑真实 `ensureSchema` + 数据层）、`van.confirm.test.ts`（签收制 / 结转原因 / 审计接线 / weeklyStats 扩展，内存 SQLite）、`audit.test.ts`（序列化格式锁定、hash 链、篡改断链检测、appendAudit 落库）、`api/vanRouter.test.ts`（`memberTag` 标签校验 + `source`/`carryReason` 枚举校验）、`api/ensureSchema.test.ts`（`LEGACY_RARITY_TO` 完整性、半天点数迁移、v2.0 签收一次性回填与 source 回填）。
+- E2E（`e2e/`）：Playwright 跑真实部署形态（先 build 再起服务），`board.spec.ts` 覆盖核心动线（发新车 → 录快件 → 编辑 → 送达 → 行拖拽排序 → 结转 → 归档只读），`bugs.spec.ts` 回归历史 bug，`v2.spec.ts` 覆盖 v2.0 动线（签收 → 未签收提示 → 结转选原因 → 归档拒签 → 指纹复制 → 昨日天气 → 三方占比 → 折叠面板 → 送达连击/整班准点徽章）；共享一个测试库、班次跨用例累积，必须串行（workers=1）、零重试（失败即真实回归）。
 - 偏好为纯函数写无库单测；涉及 DB 的逻辑尽量拆出纯函数再测；数据层行为优先用**内存 SQLite 跑真实 `ensureSchema`**（`van.reorder.test.ts` / `van.confirm.test.ts` 模式），mock DB 只用于历史遗留用例与并发异常注入。
 - 新增业务规则（尤其是 `contracts/` 与 `api/queries/` 中的校验逻辑）应配套测试；改审计序列化格式必须同步改锁定单测。
 

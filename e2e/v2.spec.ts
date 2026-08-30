@@ -125,8 +125,18 @@ test.describe("v2 签收与博弈机制", () => {
       timeout: 5000,
     });
 
-    // 日志指纹（链头 hash 前 8 位，周五锚定用）
-    await expect(page.getByText(/日志指纹 [0-9a-f]{8}/)).toBeVisible();
+    // 日志指纹（链头 hash 前 8 位，周五锚定用）：可一键复制
+    await page
+      .context()
+      .grantPermissions(["clipboard-read", "clipboard-write"]);
+    const fpButton = page.getByText(/日志指纹 [0-9a-f]{8}/);
+    await expect(fpButton).toBeVisible();
+    await fpButton.click();
+    await expect(page.getByText("日志指纹已复制")).toBeVisible({
+      timeout: 5000,
+    });
+    const clipped = await page.evaluate(() => navigator.clipboard.readText());
+    expect(clipped).toMatch(/^[0-9a-f]{8}$/);
   });
 
   test("昨日天气与三方占比：建议装载上限取上一班送达点数，source 可编辑", async ({
@@ -155,6 +165,48 @@ test.describe("v2 签收与博弈机制", () => {
       timeout: 5000,
     });
     await expect(page.getByText("探索 100%")).toBeVisible({ timeout: 5000 });
+
+    // 折叠统计面板（默认收起，点开可见记分卡 / 通胀 / 瀑布三块）
+    await page.getByText("统计面板（v2）").click();
+    await expect(
+      page.getByText("提出人记分卡（送达 = 签收口径）"),
+    ).toBeVisible();
+    await expect(page.getByText("稀有度通胀（done × 滞留交叉）")).toBeVisible();
+    await expect(
+      page.getByText("滞留原因瀑布（本班结转出去的件，无人名排序）"),
+    ).toBeVisible();
+    // 本班无结转出去的件 → 瀑布空态
+    await expect(page.getByText("本班暂无结转出去的滞留件")).toBeVisible();
+  });
+
+  test("送达连击徽章：成员连续两班负责快件零滞留点亮", async ({ page }) => {
+    // 第一班：签收人负责的件送达（零滞留）
+    await addTaskAndWait(page);
+    let van = await page.getByLabel("班次").inputValue();
+    let [t] = await tasksOf(page, van);
+    await trpcCall(page, "van.tasks.update", {
+      id: t.id,
+      owners: ["签收人"],
+      status: "done",
+    });
+
+    // 第二班：同样零滞留 → 连击点亮（×1 = 一名成员）
+    await dispatchVan(page);
+    van = await page.getByLabel("班次").inputValue();
+    await addTaskAndWait(page);
+    [t] = await tasksOf(page, van);
+    await trpcCall(page, "van.tasks.update", {
+      id: t.id,
+      owners: ["签收人"],
+      status: "done",
+    });
+    // 徽章由 stats 实时推导：API 改数据不触发前端缓存刷新，reload 后断言
+    await page.reload();
+    await expect(page.getByText("快递发车台")).toBeVisible();
+    // 用「送达连击 ×1」定位角标本体（轻提示 toast 文案相近，避免 strict mode 冲突）
+    await expect(page.getByText("送达连击 ×1")).toBeVisible({
+      timeout: 5000,
+    });
   });
 
   test("整班准点徽章：本班全部送达即点亮", async ({ page }) => {

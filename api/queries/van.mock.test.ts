@@ -1,4 +1,8 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/* mock DB 单测：只保留两类无法在内存库真实模拟的用例——
+ * ① 并发异常注入（撞主键/唯一约束的窗口期行为）；
+ * ② 写路径前置校验的早退（NOT_FOUND / 归档只读，未触及事务）。
+ * 行为回归一律走内存 SQLite（van.write.test.ts / van.confirm.test.ts / van.reorder.test.ts）。 */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { TRPCError } from "@trpc/server";
 
@@ -24,15 +28,6 @@ const createQueryable = <T>(resolveValue: T) => {
   return query;
 };
 
-// 通用 insert mock：审计日志等写操作出口会调用 db.insert，测试不关心其落库细节
-const anyInsert = () =>
-  vi.fn().mockReturnValue({
-    values: vi.fn().mockReturnValue({
-      then: (resolve: (value: any) => any) =>
-        Promise.resolve(undefined).then(resolve),
-    }),
-  });
-
 // Mock 数据库
 let mockDb: any;
 
@@ -50,6 +45,8 @@ import {
   addTask,
   updateTask,
   removeTask,
+  carryOver,
+  weeklyStats,
 } from "./van";
 
 describe("班次管理", () => {
@@ -84,94 +81,23 @@ describe("班次管理", () => {
   });
 
   describe("dispatchVan", () => {
-    it("空表时创建当月首班车", async () => {
-      const firstQuery = createQueryable([]);
-      const secondQuery = createQueryable([{ code: "DV2607A" }]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? firstQuery : secondQuery;
-        }),
-        insert: vi.fn().mockReturnValue({
-          values: vi.fn().mockReturnValue({
-            then: (resolve: (value: any) => any) =>
-              Promise.resolve({}).then(resolve),
-          }),
-        }),
-      };
-
-      const result = await dispatchVan(new Date(2026, 6, 15));
-
-      expect(result).toEqual(["DV2607A"]);
-      expect(mockDb.insert).toHaveBeenCalled();
-    });
-
-    it("已有班次时同月自动递增", async () => {
-      const firstQuery = createQueryable([{ code: "DV2607A" }]);
-      const secondQuery = createQueryable([
-        { code: "DV2607B" },
-        { code: "DV2607A" },
-      ]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? firstQuery : secondQuery;
-        }),
-        insert: vi.fn().mockReturnValue({
-          values: vi.fn().mockReturnValue({
-            then: (resolve: (value: any) => any) =>
-              Promise.resolve({}).then(resolve),
-          }),
-        }),
-      };
-
-      const result = await dispatchVan(new Date(2026, 6, 20));
-
-      expect(result).toEqual(["DV2607B", "DV2607A"]);
-    });
-
-    it("跨月发新车从新月份 A 重新计数", async () => {
-      const firstQuery = createQueryable([{ code: "DV2607E" }]);
-      const secondQuery = createQueryable([
-        { code: "DV2608A" },
-        { code: "DV2607E" },
-      ]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? firstQuery : secondQuery;
-        }),
-        insert: vi.fn().mockReturnValue({
-          values: vi.fn().mockReturnValue({
-            then: (resolve: (value: any) => any) =>
-              Promise.resolve({}).then(resolve),
-          }),
-        }),
-      };
-
-      const result = await dispatchVan(new Date(2026, 7, 5));
-
-      expect(result).toEqual(["DV2608A", "DV2607E"]);
-    });
-
     it("并发撞主键时幂等返回当前列表，不抛错", async () => {
-      const listQuery = createQueryable([{ code: "DV2607A" }]);
-
       mockDb = {
-        select: vi.fn().mockReturnValue(listQuery),
-        insert: vi.fn().mockReturnValue({
-          values: vi
-            .fn()
-            .mockReturnValue(
-              Promise.reject({ code: "SQLITE_CONSTRAINT_PRIMARYKEY" }),
-            ),
-        }),
+        select: vi.fn().mockReturnValue(createQueryable([{ code: "DV2607A" }])),
+        // 事务内的 van 插入在 run() 时同步抛主键冲突
+        transaction: vi.fn(
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+          (fn: Function) =>
+            fn({
+              insert: vi.fn().mockReturnValue({
+                values: vi.fn().mockReturnValue({
+                  run: vi.fn().mockImplementation(() => {
+                    throw { code: "SQLITE_CONSTRAINT_PRIMARYKEY" };
+                  }),
+                }),
+              }),
+            }),
+        ),
       };
 
       const result = await dispatchVan(new Date(2026, 6, 20));
@@ -203,51 +129,23 @@ describe("成员管理", () => {
   });
 
   describe("addMember", () => {
-    it("正常添加新成员", async () => {
-      const emptyQuery = createQueryable([]);
-      const memberQuery = createQueryable([
-        { id: 1, name: "张三", capacity: 5 },
-      ]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? emptyQuery : memberQuery;
-        }),
-        insert: vi.fn().mockReturnValue({
-          values: vi.fn().mockReturnValue({
-            then: (resolve: (value: any) => any) =>
-              Promise.resolve({}).then(resolve),
-          }),
-        }),
-      };
-
-      const result = await addMember("张三", 5);
-
-      expect(result).toEqual([{ id: 1, name: "张三", capacity: 5 }]);
-      expect(mockDb.insert).toHaveBeenCalled();
-    });
-
-    it("重名时抛出 CONFLICT 错误", async () => {
-      mockDb = {
-        select: vi.fn().mockReturnValue(createQueryable([{ id: 1 }])),
-      };
-
-      await expect(addMember("张三", 5)).rejects.toThrow(TRPCError);
-      await expect(addMember("张三", 5)).rejects.toThrow("已存在");
-    });
-
     it("并发撞唯一约束时按重名处理，不裸抛 500", async () => {
       mockDb = {
         select: vi.fn().mockReturnValue(createQueryable([])),
-        insert: vi.fn().mockReturnValue({
-          values: vi
-            .fn()
-            .mockImplementation(() =>
-              Promise.reject({ code: "SQLITE_CONSTRAINT_UNIQUE" }),
-            ),
-        }),
+        // 事务内的成员插入在 run() 时同步抛唯一约束
+        transaction: vi.fn(
+          // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
+          (fn: Function) =>
+            fn({
+              insert: vi.fn().mockReturnValue({
+                values: vi.fn().mockReturnValue({
+                  run: vi.fn().mockImplementation(() => {
+                    throw { code: "SQLITE_CONSTRAINT_UNIQUE" };
+                  }),
+                }),
+              }),
+            }),
+        ),
       };
 
       await expect(addMember("张三", 5)).rejects.toThrow(TRPCError);
@@ -296,274 +194,47 @@ describe("成员管理", () => {
   });
 });
 
-describe("快件管理", () => {
+describe("快件管理（前置校验早退）", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  describe("addTask", () => {
-    it("正常创建快件", async () => {
-      const emptyQuery = createQueryable([]);
-      const taskQuery = createQueryable([]);
-      let callCount = 0;
+  it("更新不存在的快件抛 NOT_FOUND", async () => {
+    mockDb = {
+      select: vi.fn().mockReturnValue(createQueryable([])),
+    };
 
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount <= 1 ? emptyQuery : taskQuery;
-        }),
-        insert: vi.fn().mockReturnValue({
-          values: vi.fn().mockReturnValue({
-            returning: vi.fn().mockReturnValue({
-              then: (resolve: (value: any) => any) =>
-                Promise.resolve([{ id: 1 }]).then(resolve),
-            }),
-          }),
-        }),
-      };
-
-      const result = await addTask({
-        van: "DV2607A",
-        title: "测试快件",
-      });
-
-      expect(result).toEqual([]);
-    });
-
-    it("创建快件时写入负责人标签", async () => {
-      const emptyQuery = createQueryable([]);
-      const taskQuery = createQueryable([]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount <= 1 ? emptyQuery : taskQuery;
-        }),
-        insert: vi.fn().mockReturnValue({
-          values: vi.fn().mockReturnValue({
-            returning: vi.fn().mockReturnValue({
-              then: (resolve: (value: any) => any) =>
-                Promise.resolve([{ id: 1 }]).then(resolve),
-            }),
-          }),
-        }),
-        delete: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            then: (resolve: (value: any) => any) =>
-              Promise.resolve(undefined).then(resolve),
-          }),
-        }),
-      };
-
-      const result = await addTask({
-        van: "DV2607A",
-        title: "测试快件",
-        owners: ["张三"],
-      });
-
-      expect(result).toEqual([]);
-      expect(mockDb.insert).toHaveBeenCalled();
-    });
+    await expect(updateTask(999, { status: "done" })).rejects.toThrow(
+      TRPCError,
+    );
+    await expect(updateTask(999, { status: "done" })).rejects.toThrow("不存在");
   });
 
-  describe("updateTask", () => {
-    it("更新快件状态时自动填充完成日期", async () => {
-      const taskQuery = createQueryable([
-        { id: 1, vanCode: "DV2607A", status: "todo" },
-      ]);
-      const listQuery = createQueryable([]);
-      let callCount = 0;
+  it("删除不存在的快件抛 NOT_FOUND", async () => {
+    mockDb = {
+      select: vi.fn().mockReturnValue(createQueryable([])),
+    };
 
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? taskQuery : listQuery;
-        }),
-        update: vi.fn().mockReturnValue({
-          set: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              then: (resolve: (value: any) => any) =>
-                Promise.resolve(undefined).then(resolve),
-            }),
-          }),
-        }),
-        insert: anyInsert(),
-      };
-
-      const result = await updateTask(1, { status: "done" });
-
-      expect(result).toEqual([]);
-    });
-
-    it("取消完成时清空完成日期", async () => {
-      const taskQuery = createQueryable([
-        { id: 1, vanCode: "DV2607A", status: "done" },
-      ]);
-      const listQuery = createQueryable([]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? taskQuery : listQuery;
-        }),
-        update: vi.fn().mockReturnValue({
-          set: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              then: (resolve: (value: any) => any) =>
-                Promise.resolve(undefined).then(resolve),
-            }),
-          }),
-        }),
-        insert: anyInsert(),
-      };
-
-      const result = await updateTask(1, { status: "todo" });
-
-      expect(result).toEqual([]);
-    });
-
-    it("更新负责人标签", async () => {
-      const taskQuery = createQueryable([
-        { id: 1, vanCode: "DV2607A", status: "todo" },
-      ]);
-      const listQuery = createQueryable([]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? taskQuery : listQuery;
-        }),
-        update: vi.fn().mockReturnValue({
-          set: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              then: (resolve: (value: any) => any) =>
-                Promise.resolve(undefined).then(resolve),
-            }),
-          }),
-        }),
-        delete: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            then: (resolve: (value: any) => any) =>
-              Promise.resolve(undefined).then(resolve),
-          }),
-        }),
-        insert: vi.fn().mockReturnValue({
-          values: vi.fn().mockReturnValue({
-            then: (resolve: (value: any) => any) =>
-              Promise.resolve(undefined).then(resolve),
-          }),
-        }),
-      };
-
-      const result = await updateTask(1, { owners: ["张三", "李四"] });
-
-      expect(result).toEqual([]);
-      // 回归测试：仅更新 owners 时不应调用 db.update(tasks)
-      expect(mockDb.update).not.toHaveBeenCalled();
-    });
-
-    it("设置完成日期时的边界情况", async () => {
-      const taskQuery = createQueryable([
-        { id: 1, vanCode: "DV2607A", status: "todo" },
-      ]);
-      const listQuery = createQueryable([]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? taskQuery : listQuery;
-        }),
-        update: vi.fn().mockReturnValue({
-          set: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              then: (resolve: (value: any) => any) =>
-                Promise.resolve(undefined).then(resolve),
-            }),
-          }),
-        }),
-        insert: anyInsert(),
-      };
-
-      const result = await updateTask(1, {
-        status: "done",
-        doneAt: "2026-07-20",
-      });
-
-      expect(result).toEqual([]);
-    });
-
-    it("快件不存在时抛出 NOT_FOUND 错误", async () => {
-      mockDb = {
-        select: vi.fn().mockReturnValue(createQueryable([])),
-      };
-
-      await expect(updateTask(999, { status: "done" })).rejects.toThrow(
-        TRPCError,
-      );
-      await expect(updateTask(999, { status: "done" })).rejects.toThrow(
-        "不存在",
-      );
-    });
+    await expect(removeTask(999)).rejects.toThrow(TRPCError);
+    await expect(removeTask(999)).rejects.toThrow("不存在");
   });
 
-  describe("removeTask", () => {
-    it("正常删除快件", async () => {
-      const taskQuery = createQueryable([{ id: 1, vanCode: "DV2607A" }]);
-      const lockQuery = createQueryable([]);
-      let callCount = 0;
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? taskQuery : lockQuery;
-        }),
-        delete: vi.fn().mockReturnValue({
-          where: vi.fn().mockReturnValue({
-            then: (resolve: (value: any) => any) =>
-              Promise.resolve(undefined).then(resolve),
-          }),
-        }),
-        insert: anyInsert(),
-      };
+  it("已结转归档的班次不可删除快件", async () => {
+    const taskQuery = createQueryable([{ id: 1, vanCode: "DV2607A" }]);
+    const lockQuery = createQueryable([{ id: 1 }]);
+    let callCount = 0;
+    mockDb = {
+      select: vi.fn().mockImplementation(() => {
+        callCount++;
+        return callCount === 1 ? taskQuery : lockQuery;
+      }),
+    };
 
-      await removeTask(1);
-
-      expect(mockDb.delete).toHaveBeenCalled();
-    });
-
-    it("快件不存在时抛出 NOT_FOUND 错误", async () => {
-      mockDb = {
-        select: vi.fn().mockReturnValue(createQueryable([])),
-      };
-
-      await expect(removeTask(999)).rejects.toThrow(TRPCError);
-      await expect(removeTask(999)).rejects.toThrow("不存在");
-    });
-
-    it("已结转归档的班次不可删除快件", async () => {
-      const taskQuery = createQueryable([{ id: 1, vanCode: "DV2607A" }]);
-      const lockQuery = createQueryable([{ id: 1 }]);
-      let callCount = 0;
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? taskQuery : lockQuery;
-        }),
-      };
-
-      await expect(removeTask(1)).rejects.toThrow(TRPCError);
-      await expect(removeTask(1)).rejects.toThrow("已结转归档");
-    });
+    await expect(removeTask(1)).rejects.toThrow(TRPCError);
+    await expect(removeTask(1)).rejects.toThrow("已结转归档");
   });
 
   describe("结转归档只读", () => {
-    beforeEach(() => {
-      vi.clearAllMocks();
-    });
-
     it("已结转归档的班次不可新增快件", async () => {
       mockDb = {
         select: vi.fn().mockReturnValue(createQueryable([{ id: 9 }])),
@@ -600,9 +271,6 @@ describe("快件管理", () => {
   });
 });
 
-// 导入结转和统计函数
-import { carryOver, weeklyStats } from "./van";
-
 describe("结转逻辑", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -638,6 +306,12 @@ describe("结转逻辑", () => {
             }),
             all: vi.fn().mockReturnValue([]),
           }),
+          // 审计链尾读取（事务内 appendAudit：select→from→orderBy→limit→all）
+          orderBy: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              all: vi.fn().mockReturnValue([]),
+            }),
+          }),
         }),
       }),
       insert: vi.fn().mockReturnValue({
@@ -663,7 +337,6 @@ describe("结转逻辑", () => {
             : [{ id: 10, vanCode: "DV2607B", owners: "张三" }],
         );
       }),
-      insert: anyInsert(), // 审计日志出口（entries 为空时不触发，补齐以防未来用例带入数据）
     };
 
     const result = await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
@@ -687,6 +360,12 @@ describe("结转逻辑", () => {
             }),
             all: vi.fn().mockReturnValue(unfinished),
           }),
+          // 审计链尾读取（事务内 appendAudit：select→from→orderBy→limit→all）
+          orderBy: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              all: vi.fn().mockReturnValue([]),
+            }),
+          }),
         }),
       }),
       insert: vi.fn().mockReturnValue({
@@ -708,7 +387,6 @@ describe("结转逻辑", () => {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
       transaction: vi.fn((fn: Function) => fn(mockTx)),
       select: vi.fn().mockReturnValue(createQueryable([])),
-      insert: anyInsert(), // 审计日志出口（结转带原因时逐条进链）
     };
 
     const result = await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
@@ -729,6 +407,11 @@ describe("结转逻辑", () => {
             }),
             all: vi.fn().mockReturnValue([]),
           }),
+          orderBy: vi.fn().mockReturnValue({
+            limit: vi.fn().mockReturnValue({
+              all: vi.fn().mockReturnValue([]),
+            }),
+          }),
         }),
       })),
       insert: vi.fn().mockImplementation(() => ({
@@ -748,7 +431,6 @@ describe("结转逻辑", () => {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
       transaction: vi.fn((fn: Function) => fn(mockTx)),
       select: vi.fn().mockReturnValue(createQueryable([])),
-      insert: anyInsert(), // 审计日志出口（van 自动创建也进链）
     };
 
     await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
@@ -859,8 +541,14 @@ describe("周统计", () => {
           // listTasksByVan 的两次查询
           return createQueryable(callCount === 1 ? [] : mockTasks);
         } else {
-          // listMembers
-          return createQueryable(mockMembers);
+          // listMembers / listVans / listAllTasks / audit 链尾
+          return createQueryable(
+            callCount === 3
+              ? mockMembers
+              : callCount === 4
+                ? [{ code: "DV2607B" }, { code: "DV2607A" }]
+                : [],
+          );
         }
       }),
     };
@@ -880,16 +568,8 @@ describe("周统计", () => {
   });
 
   it("空班次返回 null 完成率", async () => {
-    let callCount = 0;
     mockDb = {
-      select: vi.fn().mockImplementation(() => {
-        callCount++;
-        if (callCount <= 2) {
-          return createQueryable([]);
-        } else {
-          return createQueryable([]);
-        }
-      }),
+      select: vi.fn().mockReturnValue(createQueryable([])),
     };
 
     const result = await weeklyStats("DV2607A");
