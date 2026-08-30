@@ -2,8 +2,8 @@
   "name": "delivery_van",
   "private": true,
   "license": "MIT",
-  "version": "1.2.0",
-  "codename": "niulai",
+  "version": "2.0.0",
+  "codename": "STEINS;GATE",
   "type": "module",
   "engines": {
     "node": ">=22"
