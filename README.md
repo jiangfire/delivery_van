@@ -50,7 +50,7 @@ npm run db:seed    # 写入示例成员（可选）
 ## 验证与构建
 
 ```bash
-npm test           # vitest：班次编码、多选纯函数、稀有度/统计纯函数、mock DB 业务逻辑
+npm test           # vitest：班次编码、多选纯函数、稀有度/统计纯函数、mock DB 与内存 SQLite 业务逻辑
 npm run test:e2e   # Playwright E2E（先构建生产产物再起服务，独立测试库）
 npm run check      # tsc -b 类型检查
 npm run lint       # eslint
@@ -66,8 +66,8 @@ CI（GitHub Actions）覆盖以上门禁、Playwright E2E 与 Docker 构建冒�
 **方式一 · Docker**（镜像在 GitHub Container Registry，也可自行 `docker build`）：
 
 ```bash
-docker pull ghcr.io/jiangfire/delivery_van:v1.0.0
-docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v1.0.0
+docker pull ghcr.io/jiangfire/delivery_van:v1.1.0
+docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v1.1.0
 ```
 
 ⚠️ 务必挂载数据卷（`-v ...:/app/data`），否则容器重建后数据全部丢失。库文件路径可用 `-e DATABASE_URL=...` 覆盖。容器自动建表与「重建容器数据不丢」由 CI 的 docker job 持续验证。

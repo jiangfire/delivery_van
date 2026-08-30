@@ -61,7 +61,7 @@ export const tasks = sqliteTable(
     rarity: text("rarity", { enum: RARITIES }).notNull().default("n"),
     /** 提出人：谁提的需求 */
     requester: text("requester"),
-    /** 档位：1 / 3 / 5 天 */
+    /** 档位（半天点数制）：1~10 整数，1 点 = 半天，10 点 = 5 天 */
     size: integer("size"),
     /** 验收标准：周五凭什么说它做完了 */
     acceptance: text("acceptance"),
