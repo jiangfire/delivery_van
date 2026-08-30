@@ -11,11 +11,19 @@
 这个隐喻不是装饰，是机制本身：
 
 - 快件只有两种状态：**送到**或**没送到**。没有"完成 80%"
-- 没送完的件自动跟下一班车走（滞留结转），系统记录来源班次；结转后整班归档只读
+- 没送完的件自动跟下一班车走（滞留结转），系统记录来源班次与**结转原因**（五枚举：需求变更/依赖阻塞/估算偏差/产能不足/优先级被挤）；结转后整班归档只读
 - 连续两班都没送到？亮黄灯——是该拆得更小了，还是真有阻塞该升级了
 - 每个快件直接标**稀有度**（五级 N/R/SR/SSR/UR，凭直觉定级）和**提出人**；稀有度只是颜色标记，不做拦截
 
-设计细节见 [`docs/周度发车机制设计方案.md`](docs/周度发车机制设计方案.md)。
+v2.0 起（Phase 1）叠加一层**轻博弈机制**，全部是 v1 行为的叠加层（隐藏 UI = 回到 v1）：
+
+- **签收二拍**：送达（承运人打勾）→ 签收（提出人一次点击）；无提出人的自驱件视同签收
+- **链式审计日志**：一切写操作进 SHA256 hash 链，页头「我是谁」记操作人，周五把日志指纹抄进会议纪要锚定
+- **统计三件套**：提出人记分卡、稀有度通胀报表、三方占比（客户/平台/探索）——全部自动推导，默认折叠不占主界面
+- **昨日天气**：建议装载上限 = 上一班实际送达点数，只提示不拦截
+- **徽章 v1**：🚚 整班准点、📦 送达连击，实时推导不落库
+
+设计细节见 [`docs/周度发车机制设计方案.md`](docs/周度发车机制设计方案.md) 与 [`docs/doing/v2.0-博弈机制落地计划.md`](docs/doing/v2.0-博弈机制落地计划.md)。
 
 ## 班次编码
 
@@ -66,8 +74,8 @@ CI（GitHub Actions）覆盖以上门禁、Playwright E2E 与 Docker 构建冒�
 **方式一 · Docker**（镜像在 GitHub Container Registry，也可自行 `docker build`）：
 
 ```bash
-docker pull ghcr.io/jiangfire/delivery_van:v1.1.0
-docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v1.1.0
+docker pull ghcr.io/jiangfire/delivery_van:v1.2.0
+docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v1.2.0
 ```
 
 ⚠️ 务必挂载数据卷（`-v ...:/app/data`），否则容器重建后数据全部丢失。库文件路径可用 `-e DATABASE_URL=...` 覆盖。容器自动建表与「重建容器数据不丢」由 CI 的 docker job 持续验证。
@@ -88,16 +96,21 @@ npm start        # 生产模式，端口可用 PORT 覆盖
 - **多人负责** 一个任务可由多人共同负责（勾选式多选），运力仅做记录不做校验；成员是永久标签，不可删除
 - **滞留结转** 未完成一键转下一班（仅紧邻班次，目标班不存在时自动创建），事务 + 幂等防重；`carryCount >= 2` 触发强制复盘**提示**（仅提示不拦截）；**结转后整班归档只读**，不可增/改/删
 - **稀有度/提出人** 五级稀有度（N/R/SR/SSR/UR，抽卡风格英文缩写）直接标在快件上，整体文字着色（绿/蓝/紫，UR 彩虹动画）；提出人记录谁提的需求——都只是标记，系统不做拦截
-- **表头统计** 实时显示未送达 X / 共 Y 件、送达率、滞留率、强制复盘数、稀有度构成
+- **签收制（v2）** done 拆两拍：送达 → 提出人签收（一次点击）；统计条提示未签收 N 件；归档班次不可签
+- **结转原因（v2）** 结转确认时可选五枚举原因（默认未分类），统计面板出滞留原因瀑布
+- **审计日志（v2）** 写操作全进 hash 链（自由文本以占位符进链）；日志指纹（链头前 8 位）周五锚定进会议纪要；「我是谁」单选记操作人
+- **三方来源（v2）** 每件标客户/平台/探索（默认客户），统计条三方占比迷你条；v2.0 前历史件统一记客户件
+- **昨日天气（v2）** 建议装载上限 = 上一班 done 点数合计，只提示不拦截
+- **表头统计** 实时显示未送达 X / 共 Y 件、送达率、滞留率、强制复盘数、稀有度构成、未签收、建议装载上限、徽章角标、日志指纹
 
 ## 目录
 
 ```
-api/        Hono + tRPC 薄后端（router / vanRouter / queries / ensureSchema）
-contracts/  前后端共享：班次编码工具与纯函数测试
+api/        Hono + tRPC 薄后端（router / vanRouter / queries / ensureSchema；queries/audit.ts 链式审计日志）
+contracts/  前后端共享：班次编码工具、v2 枚举与纯函数测试
 db/         Drizzle schema、种子脚本
-e2e/        Playwright E2E（核心动线 + 历史 bug 回归）
+e2e/        Playwright E2E（核心动线 + 历史 bug 回归 + v2 动线）
 scripts/    跨平台生产启动
-src/        React 前端（pages/BoardPage 看板、components/*CellEditor 单元格编辑器）
-docs/       设计方案与发版计划（按 doing/archived 分类）
+src/        React 前端（pages/BoardPage 看板、components/*CellEditor 单元格编辑器、lib/actor 我是谁）
+docs/       设计方案与发版计划（按 doing/archived 分类；会议纪要模板常驻）
 ```

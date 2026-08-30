@@ -82,14 +82,12 @@ describe("签收制（WP3）", () => {
 
   it("归档班次（已结转）不可签收", async () => {
     const id = await seedDoneTask("张三");
-    await mockDb
-      .insert(schema.tasks)
-      .values({
-        vanCode: "DV2607A",
-        title: "滞留件",
-        status: "todo",
-        requester: "张三",
-      });
+    await mockDb.insert(schema.tasks).values({
+      vanCode: "DV2607A",
+      title: "滞留件",
+      status: "todo",
+      requester: "张三",
+    });
     await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
 
     await expect(confirmTask(id, "张三")).rejects.toThrow(TRPCError);
@@ -129,14 +127,12 @@ describe("签收制（WP3）", () => {
 
 describe("结转原因（WP5）", () => {
   it("结转带原因：源班 carried 行与目标班副本都带 carry_reason", async () => {
-    await mockDb
-      .insert(schema.tasks)
-      .values({
-        vanCode: "DV2607A",
-        title: "滞留件",
-        status: "todo",
-        requester: "张三",
-      });
+    await mockDb.insert(schema.tasks).values({
+      vanCode: "DV2607A",
+      title: "滞留件",
+      status: "todo",
+      requester: "张三",
+    });
 
     await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20), {
       carryReason: "blocker",
