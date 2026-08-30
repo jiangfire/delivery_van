@@ -610,6 +610,9 @@ export async function updateTask(
     doneAt: string | null;
     note: string | null;
     source: Source;
+    /* confirmed_* 仅数据层内部使用：取消完成时作废签收，路由层不暴露 */
+    confirmedBy?: string | null;
+    confirmedAt?: string | null;
   }>,
   actor?: string,
 ) {
@@ -631,11 +634,18 @@ export async function updateTask(
       .where(eq(taskOwners.taskId, id))
   ).map((r) => r.ownerName);
 
-  // 完成日期：打勾时随手填的自动化——置完成且无日期时记今天，取消完成则清空
+  // 完成日期：打勾时随手填的自动化——置完成且无日期时记今天，取消完成则清空；
+  // 取消完成同时作废签收（重新送达后需重新签收，与 doneAt 同口径）
+  let confirmVoided = false;
   if (patch.status === "done" && patch.doneAt === undefined) {
     patch.doneAt = todayStr();
   } else if (patch.status && patch.status !== "done") {
     patch.doneAt = null;
+    if (current.confirmedBy !== null || current.confirmedAt !== null) {
+      patch.confirmedBy = null;
+      patch.confirmedAt = null;
+      confirmVoided = true;
+    }
   }
 
   // 分离 task_owners 字段（不写入 tasks 表）
@@ -684,6 +694,16 @@ export async function updateTask(
           : next == null
             ? null
             : String(next),
+    });
+  }
+  // 签收作废留痕：留「谁签过的」事实，重新签收另行入链
+  if (confirmVoided) {
+    entries.push({
+      entity: "task",
+      entityId: id,
+      field: "confirm",
+      oldValue: current.confirmedBy,
+      newValue: null,
     });
   }
   if (owners !== undefined && owners.join(",") !== currentOwners.join(",")) {

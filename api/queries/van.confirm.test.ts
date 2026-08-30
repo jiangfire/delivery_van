@@ -123,6 +123,31 @@ describe("签收制（WP3）", () => {
   it("任务不存在抛 NOT_FOUND", async () => {
     await expect(confirmTask(999, "张三")).rejects.toThrow(TRPCError);
   });
+
+  it("取消完成时签收作废：confirmed_* 清空，重新送达后需重新签收", async () => {
+    const id = await seedDoneTask("张三");
+    await confirmTask(id, "张三");
+
+    await updateTask(id, { status: "todo" });
+    const [afterUndo] = await listTasksByVan("DV2607A");
+    expect(afterUndo.status).toBe("todo");
+    expect(afterUndo.doneAt).toBeNull();
+    expect(afterUndo.confirmedBy).toBeNull();
+    expect(afterUndo.confirmedAt).toBeNull();
+
+    // 重新送达：回到未签收状态（不沿用旧签收，isConfirmed 口径正确）
+    await updateTask(id, { status: "done" });
+    const [afterRedo] = await listTasksByVan("DV2607A");
+    expect(afterRedo.status).toBe("done");
+    expect(afterRedo.confirmedAt).toBeNull();
+
+    // 签收作废进审计链（留痕可对质）
+    const rows = await mockDb.select().from(auditLog).orderBy(auditLog.id);
+    const voided = rows.find(
+      (r) => r.field === "confirm" && r.newValue === null,
+    );
+    expect(voided?.oldValue).toBe("张三");
+  });
 });
 
 describe("结转原因（WP5）", () => {
