@@ -48,6 +48,10 @@ export async function ensureSchema() {
       done_at text,
       note text,
       sort_order integer,
+      source text NOT NULL DEFAULT 'customer',
+      carry_reason text,
+      confirmed_by text,
+      confirmed_at text,
       created_at integer NOT NULL DEFAULT (unixepoch())
     )
   `);
@@ -75,6 +79,43 @@ export async function ensureSchema() {
     // 列已存在，忽略
   }
   await db.run(sql`UPDATE tasks SET sort_order = id WHERE sort_order IS NULL`);
+  // v2.0 兼容旧库：source（三方占比口径，存量统一客户件）与结转原因列，幂等添加
+  try {
+    db.run(sql`ALTER TABLE tasks ADD COLUMN source text NOT NULL DEFAULT 'customer'`);
+  } catch {
+    // 列已存在，忽略
+  }
+  try {
+    db.run(sql`ALTER TABLE tasks ADD COLUMN carry_reason text`);
+  } catch {
+    // 列已存在，忽略
+  }
+  // v2.0 签收制：confirmed_by / confirmed_at 列，幂等添加
+  try {
+    db.run(sql`ALTER TABLE tasks ADD COLUMN confirmed_by text`);
+  } catch {
+    // 列已存在，忽略
+  }
+  try {
+    db.run(sql`ALTER TABLE tasks ADD COLUMN confirmed_at text`);
+  } catch {
+    // 列已存在，忽略
+  }
+  // 链式审计日志表（WP2）：只追加不改写，读链校验见 queries/audit.ts
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS audit_log (
+      id integer PRIMARY KEY AUTOINCREMENT,
+      ts integer NOT NULL,
+      actor text NOT NULL,
+      entity text NOT NULL,
+      entity_id text NOT NULL,
+      field text NOT NULL,
+      old_value text,
+      new_value text,
+      prev_hash text NOT NULL,
+      hash text NOT NULL
+    )
+  `);
   await db.run(
     sql`CREATE INDEX IF NOT EXISTS tasks_van_code_idx ON tasks (van_code)`,
   );
@@ -96,5 +137,19 @@ export async function ensureSchema() {
       sql`UPDATE members SET capacity = capacity * 2 WHERE capacity <= 7`,
     );
     await db.run(sql`PRAGMA user_version = 1`);
+  }
+  // 签收制一次性回填（v1 → v2）：存量 done 视同已签收，历史班次完成率不突变；
+  // 此后新产生的 done 未签收即保持 NULL。回填无法幂等（新 done 未签收是合法状态），
+  // 沿用 PRAGMA user_version 作迁移标记保证只执行一次（全新库表为空时为 no-op）。
+  if (versionRow.user_version <= 1) {
+    // 远古库可能连 done_at 列都没有（早于送达日期特性），无日期可回填时以 '(历史)' 占位
+    const cols = await db.all<{ name: string }>(sql`PRAGMA table_info(tasks)`);
+    const hasDoneAt = cols.some((c) => c.name === "done_at");
+    await db.run(
+      hasDoneAt
+        ? sql`UPDATE tasks SET confirmed_at = done_at, confirmed_by = '(历史)' WHERE status = 'done' AND confirmed_at IS NULL`
+        : sql`UPDATE tasks SET confirmed_at = '(历史)', confirmed_by = '(历史)' WHERE status = 'done' AND confirmed_at IS NULL`,
+    );
+    await db.run(sql`PRAGMA user_version = 2`);
   }
 }

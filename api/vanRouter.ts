@@ -1,11 +1,13 @@
 import { z } from "zod";
 import { createRouter, publicQuery } from "./middleware";
 import { VAN_CODE_RE } from "../contracts/vans";
+import { CARRY_REASONS, SOURCES } from "../contracts/enums";
 import { RARITIES } from "../db/schema";
 import {
   addMember,
   addTask,
   carryOver,
+  confirmTask,
   dispatchVan,
   listMembers,
   listTasksByVan,
@@ -24,6 +26,12 @@ const vanCode = z
 export const sizePoints = z.number().int().min(1).max(10);
 const idField = z.number().int().positive();
 const rarity = z.enum(RARITIES);
+/** 快件来源（三方占比口径，v2.0） */
+export const sourceField = z.enum(SOURCES);
+/** 结转原因五枚举（v2.0 WP5；swap 让位原因 Phase 2 另加） */
+export const carryReasonField = z.enum(CARRY_REASONS);
+/** 操作人标签（软身份，缺省 '(unknown)'，链式审计日志用） */
+const actorField = z.string().trim().max(64).optional();
 
 /**
  * 成员/负责人标签的统一约束：trim 后 1~64 字符，且不含半角逗号——
@@ -41,8 +49,8 @@ export const vanRouter = createRouter({
   vans: createRouter({
     list: publicQuery.query(() => listVans()),
     dispatch: publicQuery
-      .input(z.object({}).optional())
-      .mutation(() => dispatchVan()),
+      .input(z.object({ actor: actorField }).optional())
+      .mutation(({ input }) => dispatchVan(new Date(), input?.actor)),
   }),
 
   /* ── 成员 ── */
@@ -53,9 +61,12 @@ export const vanRouter = createRouter({
         z.object({
           name: memberTag,
           capacity: z.number().int().min(0).max(14).default(10),
+          actor: actorField,
         }),
       )
-      .mutation(({ input }) => addMember(input.name, input.capacity)),
+      .mutation(({ input }) =>
+        addMember(input.name, input.capacity, input.actor),
+      ),
     setCapacity: publicQuery
       .input(
         z.object({ id: idField, capacity: z.number().int().min(0).max(14) }),
@@ -78,6 +89,8 @@ export const vanRouter = createRouter({
           owners: z.array(memberTag).optional(),
           size: sizePoints.nullable().optional(),
           acceptance: z.string().max(255).nullable().optional(),
+          source: sourceField.optional(),
+          actor: actorField,
         }),
       )
       .mutation(({ input }) => addTask(input)),
@@ -94,25 +107,51 @@ export const vanRouter = createRouter({
           status: z.enum(["todo", "doing", "done"]).optional(),
           doneAt: z.string().nullable().optional(),
           note: z.string().max(255).nullable().optional(),
+          source: sourceField.optional(),
+          actor: actorField,
         }),
       )
       .mutation(({ input }) => {
-        const { id, ...patch } = input;
-        return updateTask(id, patch);
+        const { id, actor, ...patch } = input;
+        return updateTask(id, patch, actor);
       }),
     remove: publicQuery
-      .input(z.object({ id: idField }))
-      .mutation(({ input }) => removeTask(input.id)),
+      .input(z.object({ id: idField, actor: actorField }))
+      .mutation(({ input }) => removeTask(input.id, input.actor)),
     reorder: publicQuery
-      .input(z.object({ van: vanCode, ids: z.array(idField).max(1000) }))
-      .mutation(({ input }) => reorderTasks(input.van, input.ids)),
+      .input(
+        z.object({
+          van: vanCode,
+          ids: z.array(idField).max(1000),
+          actor: actorField,
+        }),
+      )
+      .mutation(({ input }) =>
+        reorderTasks(input.van, input.ids, input.actor),
+      ),
+    /* 签收制（v2.0 WP3）：done 后由提出人一次点击签收 */
+    confirm: publicQuery
+      .input(z.object({ taskId: idField, actor: memberTag }))
+      .mutation(({ input }) => confirmTask(input.taskId, input.actor)),
   }),
 
   /* ── 结转与统计 ── */
   carry: createRouter({
     run: publicQuery
-      .input(z.object({ fromVan: vanCode, toVan: vanCode }))
-      .mutation(({ input }) => carryOver(input.fromVan, input.toVan)),
+      .input(
+        z.object({
+          fromVan: vanCode,
+          toVan: vanCode,
+          carryReason: carryReasonField.optional(),
+          actor: actorField,
+        }),
+      )
+      .mutation(({ input }) =>
+        carryOver(input.fromVan, input.toVan, new Date(), {
+          actor: input.actor,
+          carryReason: input.carryReason,
+        }),
+      ),
   }),
   stats: createRouter({
     byVan: publicQuery

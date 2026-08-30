@@ -78,6 +78,87 @@ describe("ensureSchema 稀有度迁移", () => {
   });
 });
 
+// ── v2.0 迁移：source / carry_reason / confirmed_* 列 + 签收一次性回填 ──
+
+describe("ensureSchema v2.0 签收与来源迁移", () => {
+  it("存量 done 视同已签收（一次性回填），重启不误伤新 done；source 回填 customer；建 audit_log 表", async () => {
+    mockDb = drizzle(new Database(":memory:"), { schema });
+    // 模拟 v1.2.0 旧库：tasks 无 source / carry_reason / confirmed_* 列，user_version = 1
+    await mockDb.run(sql`
+      CREATE TABLE tasks (
+        id integer PRIMARY KEY AUTOINCREMENT,
+        van_code text NOT NULL,
+        title text NOT NULL,
+        rarity text NOT NULL DEFAULT 'n',
+        requester text,
+        size integer,
+        acceptance text,
+        status text NOT NULL DEFAULT 'todo',
+        carried_from text,
+        carry_count integer NOT NULL DEFAULT 0,
+        done_at text,
+        note text,
+        sort_order integer,
+        created_at integer NOT NULL DEFAULT (unixepoch())
+      )
+    `);
+    await mockDb.run(sql`PRAGMA user_version = 1`);
+    await mockDb.run(sql`
+      INSERT INTO tasks (van_code, title, status, done_at) VALUES
+        ('DV2607A', '已送达件', 'done', '2026-08-20'),
+        ('DV2607A', '滞留件', 'carried', NULL),
+        ('DV2607A', '未开始件', 'todo', NULL)
+    `);
+
+    await ensureSchema();
+
+    // 存量 done 视同已签收：confirmed_at ← done_at，confirmed_by = '(历史)'
+    const rows = await mockDb.all<{
+      title: string;
+      confirmed_by: string | null;
+      confirmed_at: string | null;
+      source: string;
+    }>(
+      sql`SELECT title, confirmed_by, confirmed_at, source FROM tasks ORDER BY id`,
+    );
+    expect(rows).toEqual([
+      {
+        title: "已送达件",
+        confirmed_by: "(历史)",
+        confirmed_at: "2026-08-20",
+        source: "customer",
+      },
+      { title: "滞留件", confirmed_by: null, confirmed_at: null, source: "customer" },
+      { title: "未开始件", confirmed_by: null, confirmed_at: null, source: "customer" },
+    ]);
+
+    // audit_log 表已建（链式审计日志写入口）
+    await mockDb.run(
+      sql`INSERT INTO audit_log (ts, actor, entity, entity_id, field, prev_hash, hash) VALUES (0, 'a', 'task', '1', '*', '0', '0')`,
+    );
+
+    // cutover 后新产生的 done 未签收保持 NULL，重启不得被回填（user_version 门控）
+    await mockDb.run(
+      sql`INSERT INTO tasks (van_code, title, status, done_at, source) VALUES ('DV2607A', '新送达件', 'done', '2026-08-21', 'customer')`,
+    );
+    await ensureSchema();
+    const fresh = await mockDb.all<{ title: string; confirmed_at: string | null }>(
+      sql`SELECT title, confirmed_at FROM tasks WHERE title = '新送达件'`,
+    );
+    expect(fresh).toEqual([{ title: "新送达件", confirmed_at: null }]);
+  });
+
+  it("全新库（user_version 0）一次走完两级迁移，空表回填为 no-op", async () => {
+    mockDb = drizzle(new Database(":memory:"), { schema });
+    await ensureSchema();
+
+    const [v] = await mockDb.all<{ user_version: number }>(
+      sql`PRAGMA user_version`,
+    );
+    expect(v.user_version).toBe(2);
+  });
+});
+
 // ── 半天点数制迁移：旧三档 1/3/5 天 ×2 变 2/6/10 点，成员运力 ≤7 天 ×2 ──
 
 describe("ensureSchema 半天点数制迁移", () => {

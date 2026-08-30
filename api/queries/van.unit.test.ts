@@ -19,6 +19,10 @@ describe("toStrandedTask", () => {
     doneAt: null,
     note: "阻塞于下游",
     sortOrder: null,
+    source: "customer",
+    carryReason: null,
+    confirmedBy: null,
+    confirmedAt: null,
     createdAt: new Date("2026-07-01T00:00:00Z"),
   };
 

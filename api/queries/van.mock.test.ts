@@ -24,6 +24,15 @@ const createQueryable = <T>(resolveValue: T) => {
   return query;
 };
 
+// 通用 insert mock：审计日志等写操作出口会调用 db.insert，测试不关心其落库细节
+const anyInsert = () =>
+  vi.fn().mockReturnValue({
+    values: vi.fn().mockReturnValue({
+      then: (resolve: (value: any) => any) =>
+        Promise.resolve(undefined).then(resolve),
+    }),
+  });
+
 // Mock 数据库
 let mockDb: any;
 
@@ -379,6 +388,7 @@ describe("快件管理", () => {
             }),
           }),
         }),
+        insert: anyInsert(),
       };
 
       const result = await updateTask(1, { status: "done" });
@@ -406,6 +416,7 @@ describe("快件管理", () => {
             }),
           }),
         }),
+        insert: anyInsert(),
       };
 
       const result = await updateTask(1, { status: "todo" });
@@ -474,6 +485,7 @@ describe("快件管理", () => {
             }),
           }),
         }),
+        insert: anyInsert(),
       };
 
       const result = await updateTask(1, {
@@ -514,6 +526,7 @@ describe("快件管理", () => {
               Promise.resolve(undefined).then(resolve),
           }),
         }),
+        insert: anyInsert(),
       };
 
       await removeTask(1);
@@ -650,6 +663,7 @@ describe("结转逻辑", () => {
             : [{ id: 10, vanCode: "DV2607B", owners: "张三" }],
         );
       }),
+      insert: anyInsert(), // 审计日志出口（entries 为空时不触发，补齐以防未来用例带入数据）
     };
 
     const result = await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
@@ -694,6 +708,7 @@ describe("结转逻辑", () => {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
       transaction: vi.fn((fn: Function) => fn(mockTx)),
       select: vi.fn().mockReturnValue(createQueryable([])),
+      insert: anyInsert(), // 审计日志出口（结转带原因时逐条进链）
     };
 
     const result = await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
@@ -733,6 +748,7 @@ describe("结转逻辑", () => {
       // eslint-disable-next-line @typescript-eslint/no-unsafe-function-type
       transaction: vi.fn((fn: Function) => fn(mockTx)),
       select: vi.fn().mockReturnValue(createQueryable([])),
+      insert: anyInsert(), // 审计日志出口（van 自动创建也进链）
     };
 
     await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));

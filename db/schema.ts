@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { CARRY_REASONS, SOURCES } from "../contracts/enums";
 
 /** 团队成员 */
 export const members = sqliteTable("members", {
@@ -78,6 +79,14 @@ export const tasks = sqliteTable(
     note: text("note"),
     /** 班次内手动排序序号（拖拽排序），班次内按 sort_order ASC, id ASC 展示 */
     sortOrder: integer("sort_order"),
+    /** 快件来源（三方占比口径）：v2.0 起采集，存量统一回填 customer */
+    source: text("source", { enum: SOURCES }).notNull().default("customer"),
+    /** 结转原因（五枚举，可空 = 未分类），swap 让位原因 Phase 2 另加 */
+    carryReason: text("carry_reason", { enum: CARRY_REASONS }),
+    /** 签收人（WP3 签收制：done 后由提出人签收；无提出人的自驱件不落库视同签收） */
+    confirmedBy: text("confirmed_by"),
+    /** 签收日期 YYYY-MM-DD（存量 done 由 ensureSchema 一次性回填 '(历史)'） */
+    confirmedAt: text("confirmed_at"),
     createdAt: integer("created_at", { mode: "timestamp" })
       .notNull()
       .default(sql`(unixepoch())`),
@@ -92,8 +101,30 @@ export const taskOwners = sqliteTable("task_owners", {
   ownerName: text("owner_name").notNull(),
 });
 
+/**
+ * 链式审计日志（WP2）：hash 链记录一切写操作。
+ * hash = SHA256(prev_hash ‖ 本行内容序列化)，序列化格式锁定在 queries/audit.ts。
+ * ts 为 Unix 秒原始整数（不经过 timestamp 模式），保证入链字节确定。
+ */
+export const auditLog = sqliteTable("audit_log", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ts: integer("ts").notNull(),
+  /** 操作人标签（软身份，缺省 '(unknown)'） */
+  actor: text("actor").notNull(),
+  /** 实体类型：'task' | 'member' | 'van' | ... */
+  entity: text("entity").notNull(),
+  entityId: text("entity_id").notNull(),
+  /** 变更字段，整行新增/删除记 '*' */
+  field: text("field").notNull(),
+  oldValue: text("old_value"),
+  newValue: text("new_value"),
+  prevHash: text("prev_hash").notNull(),
+  hash: text("hash").notNull(),
+});
+
 export type Member = typeof members.$inferSelect;
 export type Van = typeof vans.$inferSelect;
 export type PoolItem = typeof poolItems.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type TaskOwner = typeof taskOwners.$inferSelect;
+export type AuditLogRow = typeof auditLog.$inferSelect;
