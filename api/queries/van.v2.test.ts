@@ -179,7 +179,13 @@ describe("sourceStatsOf（三方占比）", () => {
         strandRate: 0.5,
       },
       { source: "platform", total: 1, done: 0, stranded: 0, strandRate: 0 },
-      { source: "exploration", total: 0, done: 0, stranded: 0, strandRate: null },
+      {
+        source: "exploration",
+        total: 0,
+        done: 0,
+        stranded: 0,
+        strandRate: null,
+      },
     ]);
   });
 
@@ -194,14 +200,18 @@ describe("suggestedLoadOf（昨日天气）", () => {
     t({ vanCode: van, status, size });
 
   it("取上一班 done 任务（v1 口径）点数合计，size 为空不计", () => {
-    const load = suggestedLoadOf("DV2608A", ["DV2608A", "DV2607B"], [
-      rows("DV2607B", "done", 3),
-      rows("DV2607B", "done", 4),
-      rows("DV2607B", "carried", 10),
-      rows("DV2607B", "todo", 2),
-      rows("DV2607B", "done", null),
-      rows("DV2608A", "done", 8),
-    ]);
+    const load = suggestedLoadOf(
+      "DV2608A",
+      ["DV2608A", "DV2607B"],
+      [
+        rows("DV2607B", "done", 3),
+        rows("DV2607B", "done", 4),
+        rows("DV2607B", "carried", 10),
+        rows("DV2607B", "todo", 2),
+        rows("DV2607B", "done", null),
+        rows("DV2608A", "done", 8),
+      ],
+    );
     expect(load).toBe(7);
   });
 
@@ -212,10 +222,11 @@ describe("suggestedLoadOf（昨日天气）", () => {
 
   it("跨月按编码字典序取紧邻上一班（加班车点数计入下一班天气）", () => {
     // vans 列表按最新在前传入（listVans 口径）；DV2608A 的上一班是 DV2607C（加班车）
-    const load = suggestedLoadOf("DV2608A", ["DV2608A", "DV2607C", "DV2607B"], [
-      rows("DV2607C", "done", 6),
-      rows("DV2607B", "done", 10),
-    ]);
+    const load = suggestedLoadOf(
+      "DV2608A",
+      ["DV2608A", "DV2607C", "DV2607B"],
+      [rows("DV2607C", "done", 6), rows("DV2607B", "done", 10)],
+    );
     expect(load).toBe(6);
   });
 });

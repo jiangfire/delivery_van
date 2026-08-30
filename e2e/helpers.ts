@@ -9,7 +9,7 @@ export async function waitForBoard(page: Page) {
 /** 发一班新车（发完停在最新班次） */
 export async function dispatchVan(page: Page) {
   await page.getByRole("button", { name: "发新车" }).click();
-  await expect(page.locator("select")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByLabel("班次")).toBeVisible({ timeout: 5000 });
   await page.waitForTimeout(300);
 }
 

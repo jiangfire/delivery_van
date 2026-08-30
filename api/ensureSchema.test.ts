@@ -128,8 +128,18 @@ describe("ensureSchema v2.0 签收与来源迁移", () => {
         confirmed_at: "2026-08-20",
         source: "customer",
       },
-      { title: "滞留件", confirmed_by: null, confirmed_at: null, source: "customer" },
-      { title: "未开始件", confirmed_by: null, confirmed_at: null, source: "customer" },
+      {
+        title: "滞留件",
+        confirmed_by: null,
+        confirmed_at: null,
+        source: "customer",
+      },
+      {
+        title: "未开始件",
+        confirmed_by: null,
+        confirmed_at: null,
+        source: "customer",
+      },
     ]);
 
     // audit_log 表已建（链式审计日志写入口）
@@ -142,9 +152,10 @@ describe("ensureSchema v2.0 签收与来源迁移", () => {
       sql`INSERT INTO tasks (van_code, title, status, done_at, source) VALUES ('DV2607A', '新送达件', 'done', '2026-08-21', 'customer')`,
     );
     await ensureSchema();
-    const fresh = await mockDb.all<{ title: string; confirmed_at: string | null }>(
-      sql`SELECT title, confirmed_at FROM tasks WHERE title = '新送达件'`,
-    );
+    const fresh = await mockDb.all<{
+      title: string;
+      confirmed_at: string | null;
+    }>(sql`SELECT title, confirmed_at FROM tasks WHERE title = '新送达件'`);
     expect(fresh).toEqual([{ title: "新送达件", confirmed_at: null }]);
   });
 

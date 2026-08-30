@@ -67,11 +67,29 @@ describe("序列化格式锁定（评审补：防重构悄悄改格式导致全�
 describe("appendAudit 落库", () => {
   it("读链尾→算 hash→插入，多条成链且 verify 通过", async () => {
     await appendAudit("张三", [
-      { entity: "task", entityId: 1, field: "*", oldValue: null, newValue: '{"title":"甲"}' },
-      { entity: "task", entityId: 1, field: "status", oldValue: "todo", newValue: "done" },
+      {
+        entity: "task",
+        entityId: 1,
+        field: "*",
+        oldValue: null,
+        newValue: '{"title":"甲"}',
+      },
+      {
+        entity: "task",
+        entityId: 1,
+        field: "status",
+        oldValue: "todo",
+        newValue: "done",
+      },
     ]);
     await appendAudit(undefined, [
-      { entity: "member", entityId: "李四", field: "*", oldValue: null, newValue: "李四" },
+      {
+        entity: "member",
+        entityId: "李四",
+        field: "*",
+        oldValue: null,
+        newValue: "李四",
+      },
     ]);
 
     const rows = await mockDb.select().from(auditLog).orderBy(auditLog.id);
@@ -87,9 +105,27 @@ describe("appendAudit 落库", () => {
 
   it("跨 entity 混合写入（task / member / van）不断链", async () => {
     await appendAudit("张三", [
-      { entity: "van", entityId: "DV2608A", field: "*", oldValue: null, newValue: "DV2608A" },
-      { entity: "task", entityId: 9, field: "carry", oldValue: "DV2607A", newValue: "DV2608A" },
-      { entity: "member", entityId: "王五", field: "*", oldValue: null, newValue: "王五" },
+      {
+        entity: "van",
+        entityId: "DV2608A",
+        field: "*",
+        oldValue: null,
+        newValue: "DV2608A",
+      },
+      {
+        entity: "task",
+        entityId: 9,
+        field: "carry",
+        oldValue: "DV2607A",
+        newValue: "DV2608A",
+      },
+      {
+        entity: "member",
+        entityId: "王五",
+        field: "*",
+        oldValue: null,
+        newValue: "王五",
+      },
     ]);
     const rows = await mockDb.select().from(auditLog).orderBy(auditLog.id);
     expect(verifyAuditChain(rows)).toBeNull();
@@ -100,9 +136,27 @@ describe("appendAudit 落库", () => {
 describe("verifyAuditChain 篡改检测", () => {
   async function seed() {
     await appendAudit("张三", [
-      { entity: "task", entityId: 1, field: "*", oldValue: null, newValue: "a" },
-      { entity: "task", entityId: 1, field: "status", oldValue: "todo", newValue: "done" },
-      { entity: "task", entityId: 2, field: "note", oldValue: "(text)", newValue: "(text)" },
+      {
+        entity: "task",
+        entityId: 1,
+        field: "*",
+        oldValue: null,
+        newValue: "a",
+      },
+      {
+        entity: "task",
+        entityId: 1,
+        field: "status",
+        oldValue: "todo",
+        newValue: "done",
+      },
+      {
+        entity: "task",
+        entityId: 2,
+        field: "note",
+        oldValue: "(text)",
+        newValue: "(text)",
+      },
     ]);
     return mockDb.select().from(auditLog).orderBy(auditLog.id);
   }

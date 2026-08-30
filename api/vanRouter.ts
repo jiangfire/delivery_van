@@ -126,9 +126,7 @@ export const vanRouter = createRouter({
           actor: actorField,
         }),
       )
-      .mutation(({ input }) =>
-        reorderTasks(input.van, input.ids, input.actor),
-      ),
+      .mutation(({ input }) => reorderTasks(input.van, input.ids, input.actor)),
     /* 签收制（v2.0 WP3）：done 后由提出人一次点击签收 */
     confirm: publicQuery
       .input(z.object({ taskId: idField, actor: memberTag }))

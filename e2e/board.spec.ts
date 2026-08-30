@@ -24,27 +24,33 @@ test.describe("发车与班次切换", () => {
     // + 快件在首屏顶部可见（无需滚到表格底部）
     await expect(page.getByRole("button", { name: "+ 快件" })).toBeInViewport();
 
-    const optionsBefore = await page.locator("select option").count();
+    const optionsBefore = await page
+      .getByLabel("班次")
+      .locator("option")
+      .count();
     await dispatchVan(page);
-    await expect(page.locator("select option")).toHaveCount(optionsBefore + 1, {
-      timeout: 5000,
-    });
+    await expect(page.getByLabel("班次").locator("option")).toHaveCount(
+      optionsBefore + 1,
+      {
+        timeout: 5000,
+      },
+    );
     if (optionsBefore === 0) {
       // 首次运行只有一班，再发一班才能验证切换
       await dispatchVan(page);
-      await expect(page.locator("select option")).toHaveCount(2, {
+      await expect(page.getByLabel("班次").locator("option")).toHaveCount(2, {
         timeout: 5000,
       });
     }
 
     // 最新班即当前班：› 禁用，‹ 切到上一班
-    const newest = await page.locator("select").inputValue();
+    const newest = await page.getByLabel("班次").inputValue();
     await expect(page.getByRole("button", { name: "›" })).toBeDisabled();
     await page.getByRole("button", { name: "‹" }).click();
-    await expect(page.locator("select")).not.toHaveValue(newest);
+    await expect(page.getByLabel("班次")).not.toHaveValue(newest);
     // › 切回最新班
     await page.getByRole("button", { name: "›" }).click();
-    await expect(page.locator("select")).toHaveValue(newest);
+    await expect(page.getByLabel("班次")).toHaveValue(newest);
   });
 });
 
@@ -194,7 +200,7 @@ test.describe("行拖拽排序", () => {
     await addTaskAndWait(page);
     await addTaskAndWait(page);
 
-    const van = await page.locator("select").inputValue();
+    const van = await page.getByLabel("班次").inputValue();
     const tasks: { id: number }[] = await page.evaluate(async (v) => {
       const res = await fetch(
         `/api/trpc/van.tasks.byVan?input=${encodeURIComponent(JSON.stringify({ json: { van: v } }))}`,
@@ -267,14 +273,14 @@ test.describe("滞留件结转与归档", () => {
     await addTaskAndWait(page);
     await dispatchVan(page); // 第二班
     // 切回旧班结转
-    await page.locator("select").selectOption({ index: 1 });
-    const fromVan = await page.locator("select").inputValue();
+    await page.getByLabel("班次").selectOption({ index: 1 });
+    const fromVan = await page.getByLabel("班次").inputValue();
     // 与服务端同口径推导结转目标（已存在的最近一班优先），避免整轮跨月零点时推错
     const allVans = await page.locator("select option").allTextContents();
     const toVan = carryTargetCode(fromVan, allVans, new Date());
 
-    page.once("dialog", (d) => d.accept());
     await page.getByRole("button", { name: "滞留件转下一班" }).click();
+    await page.getByRole("button", { name: "确认结转" }).click();
     await expect(page.getByText("已把 1 个滞留件转上下一班车")).toBeVisible({
       timeout: 4000,
     });
@@ -300,23 +306,23 @@ test.describe("滞留件结转与归档", () => {
 
     await dispatchVan(page); // 第二班
     // 第一班结转 → 第二班
-    await page.locator("select").selectOption({ index: 1 });
-    page.once("dialog", (d) => d.accept());
+    await page.getByLabel("班次").selectOption({ index: 1 });
     await page.getByRole("button", { name: "滞留件转下一班" }).click();
+    await page.getByRole("button", { name: "确认结转" }).click();
     await expect(dataCell(page, "_status")).toHaveText("🔁 结转", {
       timeout: 5000,
     });
 
     // 第二班再结转 → 第三班（目标班不存在时自动创建）
-    await page.locator("select").selectOption({ index: 0 });
-    page.once("dialog", (d) => d.accept());
+    await page.getByLabel("班次").selectOption({ index: 0 });
     await page.getByRole("button", { name: "滞留件转下一班" }).click();
+    await page.getByRole("button", { name: "确认结转" }).click();
     await expect(dataCell(page, "_status")).toHaveText("🔁 结转", {
       timeout: 5000,
     });
 
     // 第三班：连续滞留 2 班 → ⚠️ 复盘提示 + 强制复盘计数
-    await page.locator("select").selectOption({ index: 0 });
+    await page.getByLabel("班次").selectOption({ index: 0 });
     const carryCell = dataCell(page, "_carry");
     await expect(carryCell).toContainText("⚠️", { timeout: 5000 });
     await expect(page.getByText("1 个", { exact: true })).toBeVisible();
@@ -335,15 +341,15 @@ test.describe("滞留件结转与归档", () => {
       timeout: 5000,
     });
 
-    page.once("dialog", (d) => d.accept());
     await page.getByRole("button", { name: "滞留件转下一班" }).click();
+    await page.getByRole("button", { name: "确认结转" }).click();
     await expect(page.getByText("本班次全部送达，没有滞留件")).toBeVisible({
       timeout: 4000,
     });
 
     // 无结转发生：状态不变、滞留率 0%、班次保持可编辑
     await expect(dataCell(page, "_status")).toHaveText("完成");
-    await expect(page.getByText("0%", { exact: true })).toBeVisible();
+    await expect(page.getByText("0%", { exact: true }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: "+ 快件" })).toBeEnabled();
     await expect(page.getByText("已结转 · 归档")).toBeHidden();
   });

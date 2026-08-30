@@ -106,7 +106,9 @@ export function taskStatsOf(
 export function isConfirmed(
   t: Pick<Task, "status" | "requester" | "confirmedAt">,
 ): boolean {
-  return t.status === "done" && (t.confirmedAt !== null || t.requester === null);
+  return (
+    t.status === "done" && (t.confirmedAt !== null || t.requester === null)
+  );
 }
 
 /** 提出人记分卡（WP1）：按提出人聚合，送达用签收口径，滞留用 stranded 口径 */
@@ -129,9 +131,14 @@ export function requesterStatsOf(
   >();
   for (const t of rows) {
     const key = t.requester ?? "未标注";
-    const b =
-      buckets.get(key) ??
-      { key, total: 0, delivered: 0, stranded: 0, urSsr: 0, vans: 0 };
+    const b = buckets.get(key) ?? {
+      key,
+      total: 0,
+      delivered: 0,
+      stranded: 0,
+      urSsr: 0,
+      vans: 0,
+    };
     b.total += 1;
     if (isConfirmed(t)) b.delivered += 1;
     if (t.status === "carried") b.stranded += 1;
@@ -149,18 +156,21 @@ export function requesterStatsOf(
       urSsrRate: b.urSsr / b.total,
       avgVans: Math.round((b.vans / b.total) * 10) / 10,
     }))
-    .sort((a, b) => b.total - a.total || a.requester.localeCompare(b.requester));
+    .sort(
+      (a, b) => b.total - a.total || a.requester.localeCompare(b.requester),
+    );
 }
 
 /** 稀有度通胀报表（WP1）：稀有度 × {done, stranded} 交叉表 + UR/N 滞留率对比行 */
-export function rarityInflationOf(
-  rows: Pick<Task, "rarity" | "status">[],
-): {
+export function rarityInflationOf(rows: Pick<Task, "rarity" | "status">[]): {
   byRarity: { rarity: Rarity; total: number; done: number; stranded: number }[];
   urStrandRate: number | null;
   nStrandRate: number | null;
 } {
-  const buckets = new Map<Rarity, { total: number; done: number; stranded: number }>();
+  const buckets = new Map<
+    Rarity,
+    { total: number; done: number; stranded: number }
+  >();
   for (const t of rows) {
     const b = buckets.get(t.rarity) ?? { total: 0, done: 0, stranded: 0 };
     b.total += 1;
@@ -180,9 +190,7 @@ export function rarityInflationOf(
 }
 
 /** 三方占比（WP1）：全部三个来源桶都返回（含零桶，迷你条需要完整结构）+ 各方滞留率 */
-export function sourceStatsOf(
-  rows: Pick<Task, "source" | "status">[],
-): {
+export function sourceStatsOf(rows: Pick<Task, "source" | "status">[]): {
   source: Source;
   total: number;
   done: number;
@@ -213,7 +221,10 @@ export function suggestedLoadOf(
   vans: string[],
   rows: Pick<Task, "vanCode" | "status" | "size">[],
 ): number | null {
-  const prev = vans.filter((v) => v < van).sort().at(-1);
+  const prev = vans
+    .filter((v) => v < van)
+    .sort()
+    .at(-1);
   if (prev === undefined) return null;
   return rows
     .filter((t) => t.vanCode === prev && t.status === "done")
@@ -225,12 +236,11 @@ export function carryReasonStatsOf(
   rows: Pick<Task, "carryReason" | "status">[],
 ): { reason: CarryReason | null; count: number }[] {
   const stranded = rows.filter((t) => t.status === "carried");
-  const out: { reason: CarryReason | null; count: number }[] = CARRY_REASONS.map(
-    (reason) => ({
+  const out: { reason: CarryReason | null; count: number }[] =
+    CARRY_REASONS.map((reason) => ({
       reason,
       count: stranded.filter((t) => t.carryReason === reason).length,
-    }),
-  ).filter((r) => r.count > 0);
+    })).filter((r) => r.count > 0);
   const unclassified = stranded.filter((t) => t.carryReason === null).length;
   if (unclassified > 0) out.push({ reason: null, count: unclassified });
   return out;
@@ -305,7 +315,13 @@ export async function dispatchVan(
     throw e;
   }
   await appendAudit(actor, [
-    { entity: "van", entityId: code, field: "*", oldValue: null, newValue: code },
+    {
+      entity: "van",
+      entityId: code,
+      field: "*",
+      oldValue: null,
+      newValue: code,
+    },
   ]);
   return listVans();
 }
@@ -316,7 +332,11 @@ export async function listMembers() {
   return getDb().select().from(members).orderBy(asc(members.id));
 }
 
-export async function addMember(name: string, capacity: number, actor?: string) {
+export async function addMember(
+  name: string,
+  capacity: number,
+  actor?: string,
+) {
   const db = getDb();
   const dup = await db
     .select({ id: members.id })
@@ -339,7 +359,13 @@ export async function addMember(name: string, capacity: number, actor?: string) 
     throw e;
   }
   await appendAudit(actor, [
-    { entity: "member", entityId: name, field: "*", oldValue: null, newValue: name },
+    {
+      entity: "member",
+      entityId: name,
+      field: "*",
+      oldValue: null,
+      newValue: name,
+    },
   ]);
   return listMembers();
 }
@@ -524,11 +550,7 @@ export async function addTask(input: {
 }
 
 /** 拖拽排序：按传入 id 顺序全量重写班次内 sort_order（幂等，可重复调用） */
-export async function reorderTasks(
-  van: string,
-  ids: number[],
-  actor?: string,
-) {
+export async function reorderTasks(van: string, ids: number[], actor?: string) {
   if (await isVanArchived(van)) {
     throw new TRPCError({
       code: "BAD_REQUEST",
@@ -657,7 +679,11 @@ export async function updateTask(
             ? null
             : String(prev),
       newValue:
-        redact && next != null ? TEXT_REDACTED : next == null ? null : String(next),
+        redact && next != null
+          ? TEXT_REDACTED
+          : next == null
+            ? null
+            : String(next),
     });
   }
   if (owners !== undefined && owners.join(",") !== currentOwners.join(",")) {
@@ -803,7 +829,11 @@ export async function carryOver(
         )
         .run();
     }
-    return { count: unfinished.length, vanCreated: vanExists.length === 0, copies };
+    return {
+      count: unfinished.length,
+      vanCreated: vanExists.length === 0,
+      copies,
+    };
   });
   await appendAudit(opts.actor, [
     ...(carried.vanCreated
@@ -841,7 +871,11 @@ export async function carryOver(
         entityId: c.newId,
         field: "*",
         oldValue: null,
-        newValue: taskAuditValue({ ...c.src, status: "todo", carriedFrom: fromVan }),
+        newValue: taskAuditValue({
+          ...c.src,
+          status: "todo",
+          carriedFrom: fromVan,
+        }),
       },
     ]),
   ]);
@@ -859,7 +893,10 @@ export async function confirmTask(taskId: number, actor: string) {
   const db = getDb();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task)
-    throw new TRPCError({ code: "NOT_FOUND", message: `任务 ${taskId} 不存在` });
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: `任务 ${taskId} 不存在`,
+    });
   if (task.status !== "done") {
     throw new TRPCError({
       code: "BAD_REQUEST",
@@ -892,7 +929,13 @@ export async function confirmTask(taskId: number, actor: string) {
     .set({ confirmedBy: actor, confirmedAt: todayStr() })
     .where(eq(tasks.id, taskId));
   await appendAudit(actor, [
-    { entity: "task", entityId: taskId, field: "confirm", oldValue: null, newValue: actor },
+    {
+      entity: "task",
+      entityId: taskId,
+      field: "confirm",
+      oldValue: null,
+      newValue: actor,
+    },
   ]);
   return listTasksByVan(task.vanCode);
 }

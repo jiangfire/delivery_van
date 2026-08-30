@@ -81,7 +81,9 @@ export async function ensureSchema() {
   await db.run(sql`UPDATE tasks SET sort_order = id WHERE sort_order IS NULL`);
   // v2.0 兼容旧库：source（三方占比口径，存量统一客户件）与结转原因列，幂等添加
   try {
-    db.run(sql`ALTER TABLE tasks ADD COLUMN source text NOT NULL DEFAULT 'customer'`);
+    db.run(
+      sql`ALTER TABLE tasks ADD COLUMN source text NOT NULL DEFAULT 'customer'`,
+    );
   } catch {
     // 列已存在，忽略
   }

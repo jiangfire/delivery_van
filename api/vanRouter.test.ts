@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { memberTag, sizePoints, sourceField, carryReasonField } from "./vanRouter";
+import {
+  memberTag,
+  sizePoints,
+  sourceField,
+  carryReasonField,
+} from "./vanRouter";
 
 describe("memberTag（成员/负责人标签约束）", () => {
   it("拒绝含半角逗号的名称（负责人列表用逗号聚合，含逗号会错拆标签）", () => {

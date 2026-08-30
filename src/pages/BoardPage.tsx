@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgGridReact } from "ag-grid-react";
 import {
   AllCommunityModule,
@@ -14,6 +14,14 @@ type TaskColDef = ColDef<TaskRow> & { editField?: string };
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { carryTargetCode } from "@contracts/vans";
+import {
+  CARRY_REASONS,
+  CARRY_REASON_LABELS,
+  SOURCE_LABELS,
+  type CarryReason,
+  type Source,
+} from "@contracts/enums";
+import { getActor, saveActor } from "@/lib/actor";
 import type { TaskWithOwners } from "../../api/queries/van";
 import MultiSelectCellEditor from "@/components/MultiSelectCellEditor";
 import RarityCellEditor from "@/components/RarityCellEditor";
@@ -45,6 +53,17 @@ const STATUS_CODE: Record<string, TaskRow["status"]> = {
   完成: "done",
 };
 
+/* ── 快件来源（三方占比）：中文标签 ↔ 存储枚举 ── */
+const SOURCE_CODE = Object.fromEntries(
+  Object.entries(SOURCE_LABELS).map(([code, label]) => [label, code]),
+) as Record<string, Source>;
+/** 三方占比迷你条配色：客户天蓝 / 平台琥珀 / 探索紫 */
+const SOURCE_COLOR: Record<Source, string> = {
+  customer: "#0ea5e9",
+  platform: "#d97706",
+  exploration: "#8b5cf6",
+};
+
 type TaskRow = TaskWithOwners;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -56,8 +75,15 @@ function sizeBucket(size: number): 1 | 3 | 5 {
   return 5;
 }
 
+/** 比率显示：null → “–” */
+function fmtRate(x: number | null | undefined): string {
+  return x == null ? "–" : `${Math.round(x * 100)}%`;
+}
+
 export default function BoardPage() {
   const [van, setVan] = useState<string | null>(null);
+  /** 「我是谁」软身份：审计日志 actor 来源（localStorage 记住，未选择则 '(unknown)'） */
+  const [actor, setActor] = useState<string | null>(() => getActor());
   const utils = trpc.useUtils();
 
   const vansQ = trpc.van.vans.list.useQuery();
@@ -92,6 +118,8 @@ export default function BoardPage() {
   const vanIdx = curVan === null ? -1 : vans.indexOf(curVan);
   const refresh = () => utils.invalidate();
   const onError = (e: { message: string }) => toast.error(e.message);
+  /** mutation 通用附带：当前操作人（软身份） */
+  const actorArg = actor ?? undefined;
 
   const failedQ = [tasksQ, statsQ, membersQ, vansQ].find((q) => q.isError);
   const refetchAll = () => {
@@ -110,6 +138,7 @@ export default function BoardPage() {
   });
 
   /* ── mutations ── */
+
   const dispatchM = trpc.van.vans.dispatch.useMutation({
     onSuccess: (list) => {
       setVan(list[0] ?? null);
@@ -157,8 +186,73 @@ export default function BoardPage() {
     onError,
   });
 
+  const confirmM = trpc.van.tasks.confirm.useMutation({
+    onSuccess: () => {
+      toast.success("已签收");
+      refresh();
+    },
+    onError,
+  });
+
   const { mutate: removeTask } = removeTaskM;
   const { mutate: addMember } = addMemberM;
+  const { mutate: confirmTask } = confirmM;
+
+  /* ── 签收：done 且有提出人且未签收 → 待签收徽标，一次点击 ── */
+  const onConfirm = useCallback(
+    (d: TaskRow) => {
+      if (!actor) {
+        toast.error("请先在页头选择「我是谁」再签收");
+        return;
+      }
+      confirmTask({ taskId: d.id, actor });
+    },
+    [actor, confirmTask],
+  );
+
+  /* ── 徽章轻提示：状态变化时 sonner 单次提示（首次加载不提示） ── */
+  const badges = stats?.badges;
+  const badgesSig = badges
+    ? `${badges.teamPunctual ? 1 : 0}|${badges.streaks.join(",")}`
+    : "";
+  const prevBadgesSig = useRef<string | null>(null);
+  useEffect(() => {
+    const prev = prevBadgesSig.current;
+    prevBadgesSig.current = badgesSig;
+    if (prev === null || prev === badgesSig || !badges) return;
+    if (badges.teamPunctual) toast.success("🚚 整班准点：本班快件全部送达");
+    const prevStreaks = prev.split("|")[1]?.split(",").filter(Boolean) ?? [];
+    for (const name of badges.streaks) {
+      if (!prevStreaks.includes(name)) {
+        toast.success(`📦 ${name} 送达连击点亮（连续 2 班零滞留）`);
+      }
+    }
+  }, [badgesSig, badges]);
+
+  /* ── 日志指纹复制（周五锚定仪式：抄进会议纪要） ── */
+  const copyFingerprint = async (fp: string) => {
+    try {
+      await navigator.clipboard.writeText(fp);
+      toast.success("日志指纹已复制");
+    } catch {
+      toast.error("复制失败，请手动选中复制");
+    }
+  };
+
+  /* ── 结转确认弹层（含原因下拉，WP5）：替代原生 confirm ── */
+  const [carryAsk, setCarryAsk] = useState<{
+    fromVan: string;
+    toVan: string;
+  } | null>(null);
+  const [carryReason, setCarryReason] = useState<string>("");
+
+  const openCarryAsk = () => {
+    if (curVan === null) return;
+    // 与服务端同口径：已存在的最近一班优先，否则按日期推导下一班
+    const toVan = carryTargetCode(curVan, vans, new Date());
+    setCarryReason("");
+    setCarryAsk({ fromVan: curVan, toVan });
+  };
 
   /* ── 列定义 ── */
   const memberNames = useMemo(() => members.map((m) => m.name), [members]);
@@ -215,17 +309,17 @@ export default function BoardPage() {
           );
         },
       },
-      // 提出人列
+      // 提出人列：done 未签收时带「待签收」徽标（签收制 WP3）
       {
         colId: "_requester",
         headerName: "提出人",
-        width: 90,
+        width: 128,
         editable: !vanReadonly,
         editField: "requester",
         cellEditor: RequesterCellEditor,
         cellEditorParams: () => ({
           members: memberNames,
-          onAddMember: (name: string) => addMember({ name }),
+          onAddMember: (name: string) => addMember({ name, actor: actorArg }),
         }),
         valueGetter: (p) => p.data?.requester ?? "",
         valueSetter: (p) => {
@@ -237,8 +331,74 @@ export default function BoardPage() {
         },
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
-          if (!d?.requester) return null;
-          return <span className="text-sm">{d.requester}</span>;
+          if (!d) return null;
+          const pending = d.status === "done" && d.requester && !d.confirmedAt;
+          return (
+            <span className="flex h-full items-center gap-1">
+              {d.requester && <span className="text-sm">{d.requester}</span>}
+              {d.confirmedAt && (
+                <span title={`已签收：${d.confirmedBy}（${d.confirmedAt}）`}>
+                  ✅
+                </span>
+              )}
+              {pending && (
+                <button
+                  className="btn btn-glass px-1.5 py-0.5 text-[10px] leading-none"
+                  disabled={vanReadonly || confirmM.isPending}
+                  title={
+                    vanArchived
+                      ? "班次已结转归档，不可签收"
+                      : "提出人签收（一次点击）"
+                  }
+                  onClick={() => onConfirm(d)}
+                >
+                  待签收
+                </button>
+              )}
+            </span>
+          );
+        },
+      },
+      // 来源列（三方占比口径，v2.0 起采集）
+      {
+        colId: "_source",
+        headerName: "来源",
+        width: 84,
+        editable: !vanReadonly,
+        editField: "source",
+        cellEditor: "agSelectCellEditor",
+        cellEditorParams: {
+          values: Object.values(SOURCE_LABELS),
+        },
+        valueGetter: (p) =>
+          (p.data?.source && SOURCE_LABELS[p.data.source]) || "",
+        valueSetter: (p) => {
+          if (p.data) {
+            const code = SOURCE_CODE[p.newValue as string];
+            if (code) p.data.source = code;
+            return true;
+          }
+          return false;
+        },
+        cellRenderer: (p: ICellRendererParams<TaskRow>) => {
+          const d = p.data;
+          if (!d) return null;
+          return (
+            <span
+              className="flex h-full items-center gap-1.5 text-sm"
+              title={
+                d.source === "customer"
+                  ? "客户件（默认；v2.0 前的历史快件统一记客户件）"
+                  : undefined
+              }
+            >
+              <span
+                className="inline-block h-2 w-2 rounded-full"
+                style={{ background: SOURCE_COLOR[d.source] }}
+              />
+              {SOURCE_LABELS[d.source]}
+            </span>
+          );
         },
       },
       {
@@ -250,7 +410,7 @@ export default function BoardPage() {
         cellEditor: MultiSelectCellEditor,
         cellEditorParams: () => ({
           members: memberNames,
-          onAddMember: (name: string) => addMember({ name }),
+          onAddMember: (name: string) => addMember({ name, actor: actorArg }),
         }),
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
@@ -415,11 +575,11 @@ export default function BoardPage() {
           return false;
         },
       },
-      // 结转记录列
+      // 结转记录列（附滞留原因，WP5）
       {
         colId: "_carry",
         headerName: "结转记录",
-        width: 120,
+        width: 150,
         editable: false,
         valueGetter: (p) => {
           const t = p.data;
@@ -434,6 +594,14 @@ export default function BoardPage() {
               <span className="carry-badge" title={`滞留自 ${d.carriedFrom}`}>
                 📦 {d.carriedFrom}
               </span>
+              {d.carryReason && (
+                <span
+                  className="carry-badge"
+                  title={`滞留原因：${CARRY_REASON_LABELS[d.carryReason as CarryReason]}`}
+                >
+                  {CARRY_REASON_LABELS[d.carryReason as CarryReason]}
+                </span>
+              )}
               {d.carryCount >= 2 && (
                 <span
                   className="text-amber-500 font-bold"
@@ -460,7 +628,7 @@ export default function BoardPage() {
               title={vanArchived ? "班次已结转归档，不可删除" : undefined}
               onClick={() => {
                 if (window.confirm(`删除快件「${d.title}」？`)) {
-                  removeTask({ id: d.id });
+                  removeTask({ id: d.id, actor: actorArg });
                 }
               }}
             >
@@ -470,7 +638,16 @@ export default function BoardPage() {
         },
       },
     ],
-    [memberNames, removeTask, addMember, vanReadonly, vanArchived],
+    [
+      memberNames,
+      removeTask,
+      addMember,
+      vanReadonly,
+      vanArchived,
+      actorArg,
+      onConfirm,
+      confirmM.isPending,
+    ],
   );
 
   /* ── 单元格编辑回调 ── */
@@ -483,6 +660,7 @@ export default function BoardPage() {
     const colIdMap: Record<string, string> = {
       _rarity: "rarity",
       _requester: "requester",
+      _source: "source",
       _owners: "owners",
       _size: "size",
       _status: "status",
@@ -498,6 +676,9 @@ export default function BoardPage() {
     if (key === "status") {
       // 编辑器以中文标签交互，落库前反查回英文枚举
       value = STATUS_CODE[value as string] ?? value;
+    }
+    if (key === "source") {
+      value = SOURCE_CODE[value as string] ?? value;
     }
     if (key === "size") {
       value = value === "" || value == null ? null : Number(value);
@@ -519,9 +700,11 @@ export default function BoardPage() {
       if (value === "" || value === undefined) value = null;
     }
 
-    updateTaskM.mutate({ id: task.id, [key]: value } as Parameters<
-      typeof updateTaskM.mutate
-    >[0]);
+    updateTaskM.mutate({
+      id: task.id,
+      [key]: value,
+      actor: actorArg,
+    } as Parameters<typeof updateTaskM.mutate>[0]);
   };
 
   /* ── 行拖拽排序：拖完后把整班 id 顺序全量发给服务端重写 sort_order ── */
@@ -531,8 +714,11 @@ export default function BoardPage() {
     e.api.forEachNode((node) => {
       if (node.data) ids.push(node.data.id);
     });
-    reorderM.mutate({ van: curVan, ids });
+    reorderM.mutate({ van: curVan, ids, actor: actorArg });
   };
+
+  /* ── 统计条的三方占比数据 ── */
+  const sourceTotal = stats?.source.reduce((s, x) => s + x.total, 0) ?? 0;
 
   return (
     <div className="aurora-bg">
@@ -567,6 +753,7 @@ export default function BoardPage() {
                 </button>
                 {curVan !== null && (
                   <select
+                    aria-label="班次"
                     className="select-liquid ml-1 bg-transparent px-2 py-0.5 font-mono text-xs"
                     value={curVan}
                     onChange={(e) => setVan(e.target.value)}
@@ -589,13 +776,36 @@ export default function BoardPage() {
               </div>
             )}
           </div>
-          <button
-            className="btn btn-primary px-4 py-2 text-sm"
-            disabled={dispatchM.isPending}
-            onClick={() => dispatchM.mutate({})}
-          >
-            发新车
-          </button>
+          <div className="flex items-center gap-2">
+            {/* 「我是谁」软身份：链式审计日志的 actor（一次选择，localStorage 记住） */}
+            <div className="glass-sm flex items-center gap-1 px-2 py-1">
+              <span className="text-xs text-muted-foreground">我是谁</span>
+              <select
+                aria-label="我是谁（当前操作人）"
+                className="select-liquid bg-transparent px-1 py-0.5 text-xs"
+                value={actor ?? ""}
+                onChange={(e) => {
+                  const next = e.target.value || null;
+                  setActor(next);
+                  saveActor(next);
+                }}
+              >
+                <option value="">（未选择）</option>
+                {members.map((m) => (
+                  <option key={m.name} value={m.name}>
+                    {m.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              className="btn btn-primary px-4 py-2 text-sm"
+              disabled={dispatchM.isPending}
+              onClick={() => dispatchM.mutate({ actor: actorArg })}
+            >
+              发新车
+            </button>
+          </div>
         </header>
 
         {failedQ && (
@@ -637,25 +847,81 @@ export default function BoardPage() {
             value={stats ? `${stats.reviewNeeded} 个` : "–"}
             tone={stats && stats.reviewNeeded > 0 ? "warn" : undefined}
           />
-          {/* 稀有度构成 */}
+          {/* 未签收提示（WP3）：周五验收会前看这里，是否结转仍由人决定 */}
+          {stats && stats.unconfirmed > 0 && (
+            <Stat
+              label="未签收"
+              value={`${stats.unconfirmed} 件`}
+              tone="warn"
+            />
+          )}
+          {/* 昨日天气（WP4）：建议装载上限 = 上一班实际送达点数，只提示不拦截 */}
+          {stats?.suggestedLoad != null && (
+            <Stat label="建议装载上限" value={`${stats.suggestedLoad} 点`} />
+          )}
+          {/* 三方占比迷你条（WP1）：一眼看快件结构 */}
           <div>
-            <div className="label-caps">稀有度构成</div>
-            <div className="text-base font-bold">
-              {stats && stats.rarity.length > 0
-                ? stats.rarity.map((r, i) => (
-                    <span
-                      key={r.rarity}
-                      className={RARITY_CLASS[r.rarity as Rarity] ?? ""}
-                    >
-                      {i > 0 && (
-                        <span className="text-muted-foreground"> · </span>
-                      )}
-                      {(r.rarity as Rarity).toUpperCase()} {r.done}/{r.total}
-                    </span>
-                  ))
-                : "–"}
-            </div>
+            <div className="label-caps">三方占比</div>
+            {sourceTotal > 0 ? (
+              <div className="mt-1.5">
+                <div className="flex h-2 w-44 overflow-hidden rounded-full border border-white/60">
+                  {stats!.source
+                    .filter((s) => s.total > 0)
+                    .map((s) => (
+                      <span
+                        key={s.source}
+                        title={`${SOURCE_LABELS[s.source]} ${s.total} 件`}
+                        style={{
+                          width: `${(s.total / sourceTotal) * 100}%`,
+                          background: SOURCE_COLOR[s.source],
+                        }}
+                      />
+                    ))}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {stats!.source
+                    .map(
+                      (s) =>
+                        `${SOURCE_LABELS[s.source]} ${Math.round((s.total / sourceTotal) * 100)}%`,
+                    )
+                    .join(" · ")}
+                </div>
+              </div>
+            ) : (
+              <div className="text-base font-bold">–</div>
+            )}
           </div>
+          {/* 徽章角标（WP6）：实时推导不落库 */}
+          {badges && (badges.teamPunctual || badges.streaks.length > 0) && (
+            <div className="flex items-center gap-1">
+              {badges.teamPunctual && (
+                <span
+                  className="badge-chip badge-green"
+                  title="整班准点：本班快件全部送达"
+                >
+                  🚚 整班准点
+                </span>
+              )}
+              {badges.streaks.length > 0 && (
+                <span
+                  className="badge-chip"
+                  title={`${badges.streaks.join("、")}：连续 2 个班次负责快件零滞留`}
+                >
+                  📦 送达连击 ×{badges.streaks.length}
+                </span>
+              )}
+            </div>
+          )}
+          {/* 日志指纹（WP2）：链头 hash 前 8 位，周五锚定仪式抄进会议纪要 */}
+          {stats?.auditFingerprint && (
+            <button
+              className="btn btn-ghost font-mono text-xs"
+              title="链式审计日志指纹（点击复制，周五复盘会抄进纪要锚定）"
+              onClick={() => copyFingerprint(stats.auditFingerprint!)}
+            >
+              日志指纹 {stats.auditFingerprint}
+            </button>
+          )}
           {/* 快捷操作 */}
           <div className="ml-auto flex items-center gap-2">
             <button
@@ -669,7 +935,7 @@ export default function BoardPage() {
               onClick={() => {
                 if (!curVan) return;
                 addTaskM.mutate(
-                  { van: curVan, title: "新快件" },
+                  { van: curVan, title: "新快件", actor: actorArg },
                   {
                     onSuccess: () => {
                       toast.success("已添加，点击标题可编辑");
@@ -684,14 +950,7 @@ export default function BoardPage() {
               className="btn btn-glass px-4 py-2 text-sm"
               disabled={curVan === null || vanReadonly}
               title={vanArchived ? "本班次已结转过，请勿重复操作" : undefined}
-              onClick={() => {
-                if (curVan === null) return;
-                // 与服务端同口径：已存在的最近一班优先，否则按日期推导下一班
-                const toVan = carryTargetCode(curVan, vans, new Date());
-                if (window.confirm(`把 ${curVan} 的滞留件转到下一班车？`)) {
-                  carryM.mutate({ fromVan: curVan, toVan });
-                }
-              }}
+              onClick={openCarryAsk}
             >
               滞留件转下一班
             </button>
@@ -758,6 +1017,201 @@ export default function BoardPage() {
               })}
             </ul>
           </section>
+        )}
+
+        {/* ── 统计面板（默认折叠，v2.0 隐形预算：不占主界面） ── */}
+        <details className="glass-card mt-6 p-5">
+          <summary className="cursor-pointer text-sm font-bold select-none">
+            统计面板（v2）
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              提出人记分卡 · 稀有度通胀 · 滞留原因瀑布
+            </span>
+          </summary>
+          <div className="mt-4 grid gap-8 lg:grid-cols-2">
+            {/* 提出人记分卡（WP1） */}
+            <section>
+              <h3 className="mb-2 text-xs font-bold text-muted-foreground">
+                提出人记分卡（送达 = 签收口径）
+              </h3>
+              {stats && stats.requester.length > 0 ? (
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] text-muted-foreground">
+                      <th className="py-1 pr-4 font-semibold">提出人</th>
+                      <th className="py-1 pr-4 font-semibold">提出</th>
+                      <th className="py-1 pr-4 font-semibold">送达</th>
+                      <th className="py-1 pr-4 font-semibold">滞留</th>
+                      <th className="py-1 pr-4 font-semibold">UR+SSR</th>
+                      <th className="py-1 font-semibold">在车班数</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {stats.requester.map((r) => (
+                      <tr key={r.requester} className="border-t border-black/5">
+                        <td className="py-1.5 pr-4 font-medium">
+                          {r.requester}
+                        </td>
+                        <td className="py-1.5 pr-4">{r.total}</td>
+                        <td className="py-1.5 pr-4">{r.delivered}</td>
+                        <td className="py-1.5 pr-4">{r.stranded}</td>
+                        <td className="py-1.5 pr-4">
+                          {Math.round(r.urSsrRate * 100)}%
+                        </td>
+                        <td className="py-1.5">{r.avgVans}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                <p className="text-xs text-muted-foreground">本班暂无快件</p>
+              )}
+            </section>
+            {/* 稀有度通胀报表（WP1） */}
+            <section>
+              <h3 className="mb-2 text-xs font-bold text-muted-foreground">
+                稀有度通胀（done × 滞留交叉）
+              </h3>
+              {stats && stats.inflation.byRarity.length > 0 ? (
+                <>
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="text-left text-[11px] text-muted-foreground">
+                        <th className="py-1 pr-4 font-semibold">稀有度</th>
+                        <th className="py-1 pr-4 font-semibold">总数</th>
+                        <th className="py-1 pr-4 font-semibold">送达</th>
+                        <th className="py-1 font-semibold">滞留</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {stats.inflation.byRarity.map((r) => (
+                        <tr key={r.rarity} className="border-t border-black/5">
+                          <td
+                            className={`py-1.5 pr-4 font-medium ${RARITY_CLASS[r.rarity as Rarity]}`}
+                          >
+                            {r.rarity.toUpperCase()}
+                          </td>
+                          <td className="py-1.5 pr-4">{r.total}</td>
+                          <td className="py-1.5 pr-4">{r.done}</td>
+                          <td className="py-1.5">{r.stranded}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    UR 滞留率 {fmtRate(stats.inflation.urStrandRate)} vs N
+                    滞留率 {fmtRate(stats.inflation.nStrandRate)}
+                    （UR 显著更高 = 集体压级/定级通胀信号）
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">本班暂无快件</p>
+              )}
+            </section>
+            {/* 滞留原因瀑布（WP5） */}
+            <section className="lg:col-span-2">
+              <h3 className="mb-2 text-xs font-bold text-muted-foreground">
+                滞留原因瀑布（本班结转出去的件，无人名排序）
+              </h3>
+              {stats && stats.carryReasons.length > 0 ? (
+                <ul className="max-w-xl space-y-1.5">
+                  {stats.carryReasons.map((r) => {
+                    const max = Math.max(
+                      ...stats.carryReasons.map((x) => x.count),
+                    );
+                    return (
+                      <li
+                        key={r.reason ?? "unclassified"}
+                        className="flex items-center gap-3 text-sm"
+                      >
+                        <span className="w-20 shrink-0 text-xs">
+                          {r.reason
+                            ? CARRY_REASON_LABELS[r.reason as CarryReason]
+                            : "未分类"}
+                        </span>
+                        <span className="h-2 flex-1 overflow-hidden rounded-full bg-black/5">
+                          <span
+                            className="block h-full rounded-full bg-amber-500/60"
+                            style={{ width: `${(r.count / max) * 100}%` }}
+                          />
+                        </span>
+                        <span className="w-6 text-right text-xs text-muted-foreground">
+                          {r.count}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  本班暂无结转出去的滞留件
+                </p>
+              )}
+              <p className="mt-4 text-xs text-muted-foreground">
+                口径说明：三方占比与来源自 v2.0 起采集，历史快件统一记为客户件；
+                记分卡「送达」为签收口径，滞留率/完成率仍为 v1
+                口径（基线连续）。
+              </p>
+            </section>
+          </div>
+        </details>
+
+        {/* ── 结转确认弹层（WP5：原因下拉，默认未分类） ── */}
+        {carryAsk && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/20 px-4"
+            role="dialog"
+            aria-label="结转确认"
+          >
+            <div className="glass-card w-full max-w-sm p-5">
+              <h3 className="mb-1 text-sm font-bold">滞留件转下一班</h3>
+              <p className="mb-3 text-xs text-muted-foreground">
+                把 {carryAsk.fromVan} 的滞留件转到 {carryAsk.toVan}
+                ？结转后本班归档只读。
+              </p>
+              <label className="label-caps" htmlFor="carry-reason">
+                结转原因（可选，喂滞留瀑布与可控性分层）
+              </label>
+              <select
+                id="carry-reason"
+                className="select-liquid mt-1 w-full px-3 py-2 text-sm"
+                value={carryReason}
+                onChange={(e) => setCarryReason(e.target.value)}
+              >
+                <option value="">未分类</option>
+                {CARRY_REASONS.map((r) => (
+                  <option key={r} value={r}>
+                    {CARRY_REASON_LABELS[r]}
+                  </option>
+                ))}
+              </select>
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  className="btn btn-ghost px-3 py-1.5 text-sm"
+                  onClick={() => setCarryAsk(null)}
+                >
+                  取消
+                </button>
+                <button
+                  className="btn btn-primary px-4 py-1.5 text-sm"
+                  disabled={carryM.isPending}
+                  onClick={() => {
+                    carryM.mutate(
+                      {
+                        fromVan: carryAsk.fromVan,
+                        toVan: carryAsk.toVan,
+                        carryReason: (carryReason || undefined) as
+                          CarryReason | undefined,
+                        actor: actorArg,
+                      },
+                      { onSuccess: () => setCarryAsk(null) },
+                    );
+                  }}
+                >
+                  确认结转
+                </button>
+              </div>
+            </div>
+          </div>
         )}
       </div>
     </div>

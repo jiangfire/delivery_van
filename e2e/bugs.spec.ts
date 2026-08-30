@@ -8,7 +8,7 @@ import {
 
 /** 把第一行任务状态改为 done，刷新页面生效 */
 async function setFirstTaskDone(page: Page) {
-  const van = await page.locator("select").inputValue();
+  const van = await page.getByLabel("班次").inputValue();
   await page.evaluate(
     async ([v]) => {
       const res = await fetch(
@@ -145,18 +145,18 @@ test.describe("Bug 回归：快件编辑", () => {
 
     // 发第二班车并切回旧车（下拉里选旧班次）
     await dispatchVan(page);
-    await page.locator("select").selectOption({ index: 1 });
-    const fromVan = await page.locator("select").inputValue();
+    await page.getByLabel("班次").selectOption({ index: 1 });
+    const fromVan = await page.getByLabel("班次").inputValue();
 
     // 旧车有 1 个未完成任务，结转后滞留率应为 100%
-    await page.once("dialog", (d) => d.accept());
     await page.getByRole("button", { name: "滞留件转下一班" }).click();
+    await page.getByRole("button", { name: "确认结转" }).click();
 
     // 旧车：任务状态变为 🔁结转，统计条滞留率更新为 100%
     await expect(dataCell(page, "_status")).toHaveText("🔁 结转", {
       timeout: 5000,
     });
-    await expect(page.getByText("100%")).toBeVisible();
+    await expect(page.getByText("100%", { exact: true }).first()).toBeVisible();
 
     // 旧车归档只读：头部出现归档标识，新增/删除/再结转均禁用
     await expect(page.getByText("已结转 · 归档")).toBeVisible();
@@ -174,7 +174,7 @@ test.describe("Bug 回归：快件编辑", () => {
     await page.waitForTimeout(300);
 
     // 新车：任务以滞留件形式出现，结转记录标记来源班次
-    await page.locator("select").selectOption({ index: 0 });
+    await page.getByLabel("班次").selectOption({ index: 0 });
     await expect(
       page.locator('[role="gridcell"][col-id="_carry"]').first(),
     ).toContainText(fromVan, { timeout: 5000 });
