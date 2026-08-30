@@ -71,7 +71,7 @@ src/          React 前端
   providers/trpc.tsx   QueryClient + httpBatchLink(/api/trpc) + superjson
   components/   AG Grid 自定义单元格编辑器：MultiSelectCellEditor（负责人多选）、RarityCellEditor（稀有度）、RequesterCellEditor（提出人）、DateCellEditorComp（送达日期）——四者均由 popupCellEditor.tsx 的 createPopupCellEditor 工厂生成（Portal 弹层 + 类适配的通用逻辑），配套内层组件 MultiSelectEditor / RarityEditor / RequesterSelect / DateCellEditor；v2 统计组件：StatsBar（统计条）、StatsPanel（折叠面板）、CarryDialog（结转确认弹层）
   components/ui/       shadcn 组件（目前仅 sonner）
-e2e/          Playwright E2E：board.spec.ts（核心动线回归）、bugs.spec.ts（历史 bug 回归）、v2.spec.ts（v2.0 签收/原因/指纹/天气/徽章动线）、helpers.ts、global-setup.ts（每次跑前删测试库）；配置见 playwright.config.ts——独立测试库 e2e/test.db，先 npm run build 再起生产服务（4173 端口），串行执行（workers=1）零重试
+e2e/          Playwright E2E：board.spec.ts（核心动线回归）、bugs.spec.ts（历史 bug 回归）、v2.spec.ts（v2.0 签收/原因/指纹/天气/徽章动线）、helpers.ts、pre-test.mjs（test:e2e 前置：杀 4173 残留服务 + 删测试库——**必须在 playwright 启动前跑**，webServer 先启动会锁库，事后删必失败）；配置见 playwright.config.ts——独立测试库 e2e/test.db，先 npm run build 再起生产服务（4173 端口），串行执行（workers=1）零重试
 scripts/      start.mjs：跨平台生产启动（Windows 不支持 POSIX 的 VAR=x 语法）
 docs/         文档目录，按状态分类（规则见下文「文档组织」）：根目录放常驻核心文档（《周度发车机制设计方案.md》《会议纪要模板.md》）；doing/ 进行中（《博弈机制科研探索-PM与开发显性博弈设计.md》已定稿 + 《v2.0-博弈机制落地计划.md》Phase 1 已实施待发版）；archived/ 已归档（稀有度方案、测试覆盖率计划、评审决策存档、发版计划与评审报告、半天点数制改造方案）
 dist/         构建产物（前端 dist/public + 服务端 dist/boot.js），由 npm run build 生成，勿手改

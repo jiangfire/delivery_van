@@ -17,7 +17,7 @@
     "check": "tsc -b",
     "format": "prettier --write .",
     "test": "vitest run",
-    "test:e2e": "playwright test",
+    "test:e2e": "node e2e/pre-test.mjs && playwright test",
     "test:e2e:ui": "playwright test --ui",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",

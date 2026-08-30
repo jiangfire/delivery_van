@@ -22,7 +22,9 @@ export default defineConfig({
     timezone: "Asia/Shanghai",
   },
   /* 先构建生产产物再起服务：e2e 跑真实部署形态，也避开 dev 模式（StrictMode 双挂载/HMR）
-     在慢启动下放大 AG Grid 编辑会话的时序竞态 */
+     在慢启动下放大 AG Grid 编辑会话的时序竞态。
+     库清理在 playwright 之前做（package.json test:e2e 前置 e2e/pre-test.mjs）——
+     webServer 先于 globalSetup 启动并锁库，globalSetup 里删库必然失败 */
   webServer: {
     command: "npm run build && node scripts/start.mjs",
     port: PORT,
@@ -33,7 +35,5 @@ export default defineConfig({
       PORT: String(PORT),
     },
   },
-  /* 每次跑测试前删掉旧库 */
-  globalSetup: "./e2e/global-setup.ts",
   projects: [{ name: "chromium", use: { browserName: "chromium" } }],
 });
