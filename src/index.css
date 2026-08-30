@@ -498,7 +498,10 @@ body {
   --ag-font-family:
     "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC",
     "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  --ag-font-size: 13px;
+  /* 紧凑密度：字号 12px + 32px 行高/表头高（单元格内 badge 高 22~24px 仍放得下） */
+  --ag-font-size: 12px;
+  --ag-row-height: 32px;
+  --ag-header-height: 32px;
   --ag-header-background-color: rgba(255, 255, 255, 0.5);
   --ag-header-foreground-color: hsl(var(--muted-foreground));
   --ag-header-font-size: 10px;
