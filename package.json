@@ -22,7 +22,8 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:seed": "tsx db/seed.ts"
+    "db:seed": "tsx db/seed.ts",
+    "db:seed:demo": "tsx db/demo-seed.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.14.3",

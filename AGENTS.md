@@ -60,7 +60,7 @@ contracts/    前后端共享代码
   multi-select.test.ts      多选标签纯函数测试（函数直接定义在测试文件内）
 db/
   schema.ts     Drizzle 表定义：members（成员）、tasks（快件，含 rarity/requester/sort_order/source/carry_reason/confirmed_by/confirmed_at）、task_owners（任务·负责人关联）、vans（已发班次）、audit_log（链式审计日志）；pool_items 已废弃保留
-  seed.ts       种子脚本（仅示例成员），npm run db:seed 运行（会先自动建表，全新库可直接跑）
+  seed.ts       种子脚本（仅示例成员），npm run db:seed 运行（会先自动建表，全新库可直接跑）；demo-seed.ts 演示种子（全虚构数据走真实业务函数写入，含审计链/签收/结转/徽章素材，npm run db:seed:demo，默认写 data/demo.db 不碰开发库，已有班次则拒绝
 src/          React 前端
   main.tsx      入口：BrowserRouter + TRPCProvider
   App.tsx       路由（仅看板页，path="*" 通配是有意的 SPA 回退）
@@ -100,7 +100,7 @@ npm run lint       # eslint（flat config，typescript-eslint + react-hooks + re
 npm run format     # prettier --write .
 npm run build      # vite build → dist/public；esbuild 打包 api/boot.ts → dist/boot.js（better-sqlite3 为 external）
 npm start          # 生产模式：node scripts/start.mjs（跨平台，端口可用 PORT 覆盖，默认 3000）
-npm run db:seed    # 写入示例成员（tsx db/seed.ts，全新库可用，会先建表）
+npm run db:seed    # 写入示例成员（tsx db/seed.ts，全新库可用，会先建表）；db:seed:demo 生成全虚构演示库（data/demo.db，v2.0 统计块全有读数）
 ```
 
 提交改动前至少跑 `npm test`、`npm run check`、`npm run lint`、`npx prettier --check .`（格式不符先 `npm run format`）；涉及 UI 交互的改动建议补跑 `npm run test:e2e`。
