@@ -6,7 +6,7 @@
 
 delivery_van 是一个**周度发车管理工具**，机制设计见 `docs/周度发车机制设计方案.md`。核心隐喻：团队每周五发一班"厢式快递车"，任务是快件，周五验收只看"这班的件送没送到"；没送完的滞留件跟下一班车走。
 
-- 当前分支版本 **v2.0.0**，代号 `STEINS;GATE`（命运石之门，谱系见 `README.md`）——v2.0 Phase 1「博弈机制」（签收制、链式审计日志、统计三件套、昨日天气、结转原因、徽章，见 `docs/doing/v2.0-博弈机制落地计划.md`）已开发完毕待发版；最新已发布产物 v1.2.0（v1.x 代号 `niulai`）。
+- 当前分支版本 **v2.0.0**，代号 `STEINS;GATE`（命运石之门，谱系见 `README.md`）——v2.0 Phase 1「博弈机制」（签收制、链式审计日志、统计三件套、昨日天气、结转原因、徽章，见 `docs/doing/v2.0-博弈机制落地计划.md`）已开发完毕待发版；**Phase 2「议价台 + 预测投票纸面运行」已启动（2026-09-01）——零开发零发版，纯会议流程，手册见 `docs/doing/v2.1-Phase2-议价台与预测投票纸面运行手册.md`，跑 4 班后 Gate 2 复盘裁决是否工具化（v2.1.0）**；最新已发布产物 v1.2.0（v1.x 代号 `niulai`）。
 - 单页应用：一个看板页（`BoardPage`）承载全部功能——班次切换、快件表（AG Grid 行内编辑）、统计条、成员运力、折叠统计面板（v2 记分卡/通胀/瀑布）。
 - **快件即一切**：工作条目只有一种——**快件**（`tasks` 表），直接携带稀有度与提出人字段，在表格内新增/编辑/删除。早期的「任务大厅/委托」（`pool_items` 表）已合并进快件：表结构保留但**已废弃不再读写**（`db/schema.ts` 中标记 `@deprecated`），稀有度方案沿革见 `docs/archived/任务大厅与稀有度分级设计方案.md`。
 - 无账号体系、无鉴权：小团队内部工具，任务负责人用标签（多人），成员是**永久标签，不可删除**（没有删除入口与接口）。
@@ -23,7 +23,7 @@ delivery_van 是一个**周度发车管理工具**，机制设计见 `docs/周�
 - **行内拖拽排序**：快件表支持整行拖拽调整顺序，按班次持久化到 `sort_order` 列；拖拽后按传入 id 顺序全量重写该班序号（幂等，可重放），新建快件排在班末尾，结转快件追加到目标班末尾。规则与测试在 `api/queries/van.ts` 的 `reorderTasks`、`api/queries/van.reorder.test.ts`。
 - **签收制（v2.0 WP3）**：done 拆两拍——送达（承运人打勾）→ 签收（提出人一次点击，`tasks.confirm` 端点）。校验：任务必须 `done`、班次未归档、actor 必须是成员；**无提出人的自驱件不写库直接视同签收**（`isConfirmed` 推导，遵守「能推导不落库」）；重签幂等不覆盖首签；归档班次的 done 件不可签收。存量 done 由 `ensureSchema` 一次性回填 `'(历史)'`（`PRAGMA user_version` 1→2 门控，重启不误伤新 done）。
 - **快件来源（v2.0 WP1）**：`source` 三枚举 `customer/platform/exploration`（客户/平台/探索），NOT NULL 默认 customer，存量数据统一回填 customer（统计面板标注「v2.0 起才有此口径」）；仅供三方占比统计，不做任何拦截。
-- **结转原因（v2.0 WP5）**：结转确认弹层可选五枚举 `requirement-change/blocker/estimate/capacity/priority`（默认空=未分类），写入源班 carried 行与目标班副本；swap 让位原因 Phase 2 另加。滞留原因瀑布只统计**本班结转出去**（status=carried）的件，与滞留率口径一致。
+- **结转原因（v2.0 WP5）**：结转确认弹层可选五枚举 `requirement-change/blocker/estimate/capacity/priority`（默认空=未分类），写入源班 carried 行与目标班副本；swap 让位原因 Phase 2 另加。滞留原因瀑布只统计**本班结转出去**（status=carried）的件，与滞留率口径一致。**Phase 2 纸面约定（改代码/清理数据时不得破坏）**：议价台让位件结转时选 `priority` 且 note 以 `swap：` 开头（如 `swap：为急件「DV2609A/xxx」让位`）——这是 swap 的纸面标记，Gate 2 工具化引入 `carryReason='swap'` 枚举时凭此前缀一次性回溯补录；系统统计暂含让位件属已知噪声，复盘会人工剔除。
 - **链式审计日志（v2.0 WP2）**：`audit_log` 表以 SHA256 hash 链记录一切写操作（快件增/改/删、状态与送达日期、排序、结转、发车、成员新增、签收；读操作不记）。**业务写与审计追加在同一个 `db.transaction` 内**（任何一侧失败整体回滚，不留未记账的写），统一调 `api/queries/audit.ts` 的 `appendAudit(tx, actor, entries)`——同步函数，必须在事务回调内调用；**序列化格式锁定**（字段序 + 每值 JSON 编码 + U+001F 定界，见 `serializeAudit`），改格式=旧链全量失效，配套锁定单测防悄悄变更；`verifyAuditChain(rows)` 重算全链返回首个断点。note/acceptance 自由文本以 `'(text)'` 占位进链（留「变过」的事实不留内容）。actor 是软身份：前端页头「我是谁」单选（localStorage 记住），缺省 `'(unknown)'`。统计条「日志指纹」= 链头 hash 前 8 位，周五复盘会抄进会议纪要锚定（模板见 `docs/会议纪要模板.md`）。
 - **昨日天气（v2.0 WP4）**：建议装载上限 = 上一班（编码字典序紧邻）done 任务点数合计（`suggestedLoadOf`，**v1 done 口径**），无历史班返回 null；只提示不拦截，与运力「仅记录不校验」哲学一致。
 - **徽章 v1（v2.0 WP6）**：仅两枚、全自动、**实时推导不落库**——🚚 整班准点（本班有件且全部送达）、📦 送达连击（成员连续 2 个「实际负责过件的班次」零滞留，跳班不补给）。`badgesOf` 纯函数；状态变化 sonner 单次轻提示（首次加载静默）。
@@ -73,7 +73,7 @@ src/          React 前端
   components/ui/       shadcn 组件（目前仅 sonner）
 e2e/          Playwright E2E：board.spec.ts（核心动线回归）、bugs.spec.ts（历史 bug 回归）、v2.spec.ts（v2.0 签收/原因/指纹/天气/徽章动线）、helpers.ts、pre-test.mjs（test:e2e 前置：杀 4173 残留服务 + 删测试库——**必须在 playwright 启动前跑**，webServer 先启动会锁库，事后删必失败）；配置见 playwright.config.ts——独立测试库 e2e/test.db，先 npm run build 再起生产服务（4173 端口），串行执行（workers=1）零重试
 scripts/      start.mjs：跨平台生产启动（Windows 不支持 POSIX 的 VAR=x 语法）
-docs/         文档目录，按状态分类（规则见下文「文档组织」）：根目录放常驻核心文档（《周度发车机制设计方案.md》《会议纪要模板.md》）；doing/ 进行中（《博弈机制科研探索-PM与开发显性博弈设计.md》已定稿 + 《v2.0-博弈机制落地计划.md》Phase 1 已实施待发版）；archived/ 已归档（稀有度方案、测试覆盖率计划、评审决策存档、发版计划与评审报告、半天点数制改造方案）
+docs/         文档目录，按状态分类（规则见下文「文档组织」）：根目录放常驻核心文档（《周度发车机制设计方案.md》《会议纪要模板.md》）；doing/ 进行中（《博弈机制科研探索-PM与开发显性博弈设计.md》已定稿 + 《v2.0-博弈机制落地计划.md》Phase 1 已实施待发版 + 《v2.1-Phase2-议价台与预测投票纸面运行手册.md》纸面运行中）；archived/ 已归档（稀有度方案、测试覆盖率计划、评审决策存档、发版计划与评审报告、半天点数制改造方案）
 dist/         构建产物（前端 dist/public + 服务端 dist/boot.js），由 npm run build 生成，勿手改
 ```
 
