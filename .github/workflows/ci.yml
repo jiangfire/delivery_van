@@ -6,9 +6,36 @@ on:
   pull_request:
 
 jobs:
-  # 代码门禁：格式 + 静态检查 + 单测
+  # 代码门禁：格式 + 静态检查 + 单测（pg/mysql service 容器供方言变体测试，
+  # 本地无环境时对应变体自动 skip）
   check:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dv
+          POSTGRES_PASSWORD: dv
+          POSTGRES_DB: dv_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dv -d dv_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: dv
+          MYSQL_DATABASE: dv_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pdv"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -20,6 +47,9 @@ jobs:
       - run: npm run lint
       - run: npm run check
       - run: npm test
+        env:
+          TEST_PG_URL: postgres://dv:dv@localhost:5432/dv_test
+          TEST_MYSQL_URL: mysql://root:dv@localhost:3306/dv_test
 
   # E2E 冒烟：Playwright 跑回归用例
   e2e:

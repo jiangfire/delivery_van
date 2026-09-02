@@ -37,6 +37,8 @@
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.1",
     "hono": "^4.8.3",
+    "mysql2": "^3.24.3",
+    "postgres": "^3.4.9",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "react-router": "^7.6.1",

@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { desc } from "drizzle-orm";
 import { getDb } from "./connection";
-import { auditLog, type AuditLogRow } from "../../db/schema";
+import { getSchema, qAll, qRun } from "./dialect";
+import { type AuditLogRow } from "../../db/schema";
+
+// 当前方言的审计表对象（类型标为 sqlite schema，运行时为对应方言版本，见 dialect.ts）
+const { auditLog } = getSchema();
 
 /** 空链的创世哈希（全零 64 位十六进制），链上第一条记录的 prev_hash 由此起 */
 export const GENESIS_HASH = "0".repeat(64);
@@ -68,26 +72,28 @@ export function fingerprintOf(hash: string | null | undefined): string | null {
 export type AuditDb = Pick<ReturnType<typeof getDb>, "select" | "insert">;
 
 /**
- * 追加审计记录（同步）：读链尾 → 逐条算 hash 串成链 → 批量插入。
+ * 追加审计记录（async）：读链尾 → 逐条算 hash 串成链 → 批量插入。
  *
- * **必须在 db.transaction 回调内调用**——业务写与审计同生共死：任何一侧失败
- * 整体回滚，崩溃/异常都不留「未记账的写」；better-sqlite3 单连接同步驱动，
- * 事务内「读链尾→算 hash→插入」天然串行，无并发断链风险。actor 缺省
- * '(unknown)'（软身份，链上可对质即可）。
+ * **必须在 runTx 事务回调内调用并 await**——业务写与审计同生共死：任何一侧失败
+ * 整体回滚，崩溃/异常都不留「未记账的写」；sqlite 路径下内部操作全部同步返回
+ * （better-sqlite3 单连接 + 同步 crypto），await 仅经微任务队列，遵守 runTx 的
+ * 「事务内禁止真实 I/O await」铁律，无并发断链风险。actor 缺省 '(unknown)'
+ * （软身份，链上可对质即可）。
  */
-export function appendAudit(
+export async function appendAudit(
   db: AuditDb,
   actor: string | undefined,
   entries: AuditEntry[],
-): void {
+): Promise<void> {
   if (entries.length === 0) return;
   // 读链尾（最新一条的 hash）；空链为创世哈希
-  const [tail] = db
-    .select({ hash: auditLog.hash })
-    .from(auditLog)
-    .orderBy(desc(auditLog.id))
-    .limit(1)
-    .all();
+  const [tail] = await qAll(
+    db
+      .select({ hash: auditLog.hash })
+      .from(auditLog)
+      .orderBy(desc(auditLog.id))
+      .limit(1),
+  );
   let prev = tail?.hash ?? GENESIS_HASH;
   const ts = Math.floor(Date.now() / 1000);
   const who = actor?.trim() || "(unknown)";
@@ -105,5 +111,5 @@ export function appendAudit(
     prev = auditHash(base);
     return { ...base, hash: prev };
   });
-  db.insert(auditLog).values(values).run();
+  await qRun(db.insert(auditLog).values(values));
 }

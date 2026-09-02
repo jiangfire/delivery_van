@@ -1,15 +1,7 @@
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "./connection";
-import {
-  members,
-  tasks,
-  taskOwners,
-  vans,
-  RARITIES,
-  type Rarity,
-  type Task,
-} from "../../db/schema";
+import { RARITIES, type Rarity, type Task } from "../../db/schema";
 import {
   CARRY_REASONS,
   SOURCES,
@@ -28,7 +20,17 @@ import {
   type AuditDb,
   type AuditEntry,
 } from "./audit";
-import { auditLog } from "../../db/schema";
+import { runTx } from "./tx";
+import {
+  getSchema,
+  groupConcatSql,
+  insertReturningId,
+  qAll,
+  qRun,
+} from "./dialect";
+
+// 当前方言的表对象（类型标为 sqlite schema，运行时为对应方言版本，见 dialect.ts）
+const { members, tasks, taskOwners, vans, auditLog } = getSchema();
 
 /* ── 纯函数（无库可测） ── */
 
@@ -312,9 +314,9 @@ export async function dispatchVan(
     list.length === 0 ? firstVanCodeOf(today) : nextVanCodeFrom(list[0], today);
   try {
     // 发车与审计同事务
-    getDb().transaction((tx) => {
-      tx.insert(vans).values({ code }).run();
-      appendAudit(tx, actor, [
+    await runTx(getDb(), async (tx) => {
+      await qRun(tx.insert(vans).values({ code }));
+      await appendAudit(tx, actor, [
         {
           entity: "van",
           entityId: code,
@@ -356,9 +358,9 @@ export async function addMember(
   }
   try {
     // 成员新增与审计同事务
-    db.transaction((tx) => {
-      tx.insert(members).values({ name, capacity }).run();
-      appendAudit(tx, actor, [
+    await runTx(db, async (tx) => {
+      await qRun(tx.insert(members).values({ name, capacity }));
+      await appendAudit(tx, actor, [
         {
           entity: "member",
           entityId: name,
@@ -425,7 +427,7 @@ function taskRowsQuery(db: ReturnType<typeof getDb>) {
   const ownerAgg = db
     .select({
       taskId: taskOwners.taskId,
-      owners: sql<string>`group_concat(${taskOwners.ownerName})`.as("owners"),
+      owners: groupConcatSql(taskOwners.ownerName).as("owners"),
     })
     .from(taskOwners)
     .groupBy(taskOwners.taskId)
@@ -491,13 +493,15 @@ function taskAuditValue(t: {
 /** 事务对象的最小结构约束（业务写与审计同事务，回调内同步调用） */
 type TxDb = AuditDb & Pick<ReturnType<typeof getDb>, "update" | "delete">;
 
-/** 替换快件的负责人标签（先删后插；事务内同步调用） */
-function replaceOwners(tx: TxDb, taskId: number, owners: string[]) {
-  tx.delete(taskOwners).where(eq(taskOwners.taskId, taskId)).run();
+/** 替换快件的负责人标签（先删后插；事务内调用，执行统一走方言层） */
+async function replaceOwners(tx: TxDb, taskId: number, owners: string[]) {
+  await qRun(tx.delete(taskOwners).where(eq(taskOwners.taskId, taskId)));
   if (owners.length > 0) {
-    tx.insert(taskOwners)
-      .values(owners.map((name) => ({ taskId, ownerName: name })))
-      .run();
+    await qRun(
+      tx
+        .insert(taskOwners)
+        .values(owners.map((name) => ({ taskId, ownerName: name }))),
+    );
   }
 }
 
@@ -525,28 +529,25 @@ export async function addTask(input: {
     .from(tasks)
     .where(eq(tasks.vanCode, input.van));
   // 业务写与审计同事务：任何一侧失败整体回滚，不留未记账的写
-  db.transaction((tx) => {
-    const [inserted] = tx
-      .insert(tasks)
-      .values({
-        vanCode: input.van,
-        title: input.title,
-        rarity: input.rarity ?? "n",
-        requester: input.requester ?? null,
-        size: input.size ?? null,
-        acceptance: input.acceptance ?? null,
-        source: input.source ?? "customer",
-        sortOrder: (maxRow?.max ?? 0) + 1,
-      })
-      .returning({ id: tasks.id })
-      .all();
+  await runTx(db, async (tx) => {
+    // mysql 无 RETURNING，取自增 id 统一走方言层
+    const insertedId = await insertReturningId(tx, tasks, {
+      vanCode: input.van,
+      title: input.title,
+      rarity: input.rarity ?? "n",
+      requester: input.requester ?? null,
+      size: input.size ?? null,
+      acceptance: input.acceptance ?? null,
+      source: input.source ?? "customer",
+      sortOrder: (maxRow?.max ?? 0) + 1,
+    });
     if (input.owners && input.owners.length > 0) {
-      replaceOwners(tx, inserted.id, input.owners);
+      await replaceOwners(tx, insertedId, input.owners);
     }
-    appendAudit(tx, input.actor, [
+    await appendAudit(tx, input.actor, [
       {
         entity: "task",
-        entityId: inserted.id,
+        entityId: insertedId,
         field: "*",
         oldValue: null,
         newValue: taskAuditValue({
@@ -586,11 +587,13 @@ export async function reorderTasks(van: string, ids: number[], actor?: string) {
   }
   // 只记实际变化的行（单次拖拽通常只动 1~3 行）
   const oldById = new Map(rows.map((r) => [r.id, r.sortOrder]));
-  db.transaction((tx) => {
-    ids.forEach((id, idx) => {
-      tx.update(tasks).set({ sortOrder: idx }).where(eq(tasks.id, id)).run();
-    });
-    appendAudit(
+  await runTx(db, async (tx) => {
+    for (const [idx, id] of ids.entries()) {
+      await qRun(
+        tx.update(tasks).set({ sortOrder: idx }).where(eq(tasks.id, id)),
+      );
+    }
+    await appendAudit(
       tx,
       actor,
       ids.flatMap((id, idx) => {
@@ -724,15 +727,15 @@ export async function updateTask(
   }
 
   // 业务写与审计同事务：任何一侧失败整体回滚，不留未记账的写
-  db.transaction((tx) => {
+  await runTx(db, async (tx) => {
     if (Object.keys(taskPatch).length > 0) {
-      tx.update(tasks).set(taskPatch).where(eq(tasks.id, id)).run();
+      await qRun(tx.update(tasks).set(taskPatch).where(eq(tasks.id, id)));
     }
     // 更新负责人标签
     if (owners !== undefined) {
-      replaceOwners(tx, id, owners);
+      await replaceOwners(tx, id, owners);
     }
-    appendAudit(tx, actor, entries);
+    await appendAudit(tx, actor, entries);
   });
 
   return listTasksByVan(current.vanCode);
@@ -750,9 +753,9 @@ export async function removeTask(id: number, actor?: string) {
     });
   }
   // ON DELETE CASCADE 会自动清理 task_owners；删除留痕与删除同事务
-  db.transaction((tx) => {
-    tx.delete(tasks).where(eq(tasks.id, id)).run();
-    appendAudit(tx, actor, [
+  await runTx(db, async (tx) => {
+    await qRun(tx.delete(tasks).where(eq(tasks.id, id)));
+    await appendAudit(tx, actor, [
       {
         entity: "task",
         entityId: id,
@@ -786,13 +789,14 @@ export async function carryOver(
   const db = getDb();
   const { carryReason } = opts;
 
-  const carried = db.transaction((tx) => {
-    const already = tx
-      .select({ id: tasks.id })
-      .from(tasks)
-      .where(and(eq(tasks.vanCode, toVan), eq(tasks.carriedFrom, fromVan)))
-      .limit(1)
-      .all();
+  const carried = await runTx(db, async (tx) => {
+    const already = await qAll(
+      tx
+        .select({ id: tasks.id })
+        .from(tasks)
+        .where(and(eq(tasks.vanCode, toVan), eq(tasks.carriedFrom, fromVan)))
+        .limit(1),
+    );
     if (already.length > 0) {
       throw new TRPCError({
         code: "BAD_REQUEST",
@@ -800,74 +804,76 @@ export async function carryOver(
       });
     }
 
-    const vanExists = tx
-      .select({ code: vans.code })
-      .from(vans)
-      .where(eq(vans.code, toVan))
-      .limit(1)
-      .all();
+    const vanExists = await qAll(
+      tx
+        .select({ code: vans.code })
+        .from(vans)
+        .where(eq(vans.code, toVan))
+        .limit(1),
+    );
     if (vanExists.length === 0) {
-      tx.insert(vans).values({ code: toVan }).run();
+      await qRun(tx.insert(vans).values({ code: toVan }));
     }
 
-    const unfinished = tx
-      .select()
-      .from(tasks)
-      .where(and(eq(tasks.vanCode, fromVan), ne(tasks.status, "done")))
-      .all();
+    const unfinished = await qAll(
+      tx
+        .select()
+        .from(tasks)
+        .where(and(eq(tasks.vanCode, fromVan), ne(tasks.status, "done"))),
+    );
 
     // 结转快件追加到目标班末尾（拖拽排序列：从目标班现有 max(sort_order) 起递增）
-    const [maxRow] = tx
-      .select({ max: sql<number | null>`max(${tasks.sortOrder})` })
-      .from(tasks)
-      .where(eq(tasks.vanCode, toVan))
-      .all();
+    const [maxRow] = await qAll(
+      tx
+        .select({ max: sql<number | null>`max(${tasks.sortOrder})` })
+        .from(tasks)
+        .where(eq(tasks.vanCode, toVan)),
+    );
     let nextSort = (maxRow?.max ?? 0) + 1;
 
     const copies: { src: (typeof unfinished)[number]; newId: number }[] = [];
     for (const t of unfinished) {
       // 结转快件（本次结转原因覆写：结转原因描述的是「这次为什么没送完」）
-      const [inserted] = tx
-        .insert(tasks)
-        .values({
-          ...toStrandedTask(t, toVan),
-          carryReason: carryReason ?? null,
-          sortOrder: nextSort++,
-        })
-        .returning({ id: tasks.id })
-        .all();
-      copies.push({ src: t, newId: inserted.id });
+      const newId = await insertReturningId(tx, tasks, {
+        ...toStrandedTask(t, toVan),
+        carryReason: carryReason ?? null,
+        sortOrder: nextSort++,
+      });
+      copies.push({ src: t, newId });
       // 结转负责人标签
-      const owners = tx
-        .select({ ownerName: taskOwners.ownerName })
-        .from(taskOwners)
-        .where(eq(taskOwners.taskId, t.id))
-        .all();
+      const owners = await qAll(
+        tx
+          .select({ ownerName: taskOwners.ownerName })
+          .from(taskOwners)
+          .where(eq(taskOwners.taskId, t.id)),
+      );
       if (owners.length > 0) {
-        tx.insert(taskOwners)
-          .values(
+        await qRun(
+          tx.insert(taskOwners).values(
             owners.map((o) => ({
-              taskId: inserted.id,
+              taskId: newId,
               ownerName: o.ownerName,
             })),
-          )
-          .run();
+          ),
+        );
       }
     }
     // 源班次的快件标记为 🔁结转，旧车数据同步可见（四态：未开始/进行中/完成/结转）
     if (unfinished.length > 0) {
-      tx.update(tasks)
-        .set({
-          status: "carried",
-          ...(carryReason ? { carryReason } : {}),
-        })
-        .where(
-          inArray(
-            tasks.id,
-            unfinished.map((t) => t.id),
+      await qRun(
+        tx
+          .update(tasks)
+          .set({
+            status: "carried",
+            ...(carryReason ? { carryReason } : {}),
+          })
+          .where(
+            inArray(
+              tasks.id,
+              unfinished.map((t) => t.id),
+            ),
           ),
-        )
-        .run();
+      );
     }
     const result = {
       count: unfinished.length,
@@ -875,7 +881,7 @@ export async function carryOver(
       copies,
     };
     // 审计与结转同事务：half-way 崩溃不产生「转了件但没记账」
-    appendAudit(tx, opts.actor, [
+    await appendAudit(tx, opts.actor, [
       ...(result.vanCreated
         ? [
             {
@@ -967,12 +973,14 @@ export async function confirmTask(taskId: number, actor: string) {
     return listTasksByVan(task.vanCode);
   }
   // 签收留痕与签收同事务
-  db.transaction((tx) => {
-    tx.update(tasks)
-      .set({ confirmedBy: actor, confirmedAt: todayStr() })
-      .where(eq(tasks.id, taskId))
-      .run();
-    appendAudit(tx, actor, [
+  await runTx(db, async (tx) => {
+    await qRun(
+      tx
+        .update(tasks)
+        .set({ confirmedBy: actor, confirmedAt: todayStr() })
+        .where(eq(tasks.id, taskId)),
+    );
+    await appendAudit(tx, actor, [
       {
         entity: "task",
         entityId: taskId,

@@ -44,7 +44,7 @@ v2.0 起（Phase 1）叠加一层**轻博弈机制**，全部是 v1 行为的叠
 | ------ | ------------------------------------------------------------------------------- |
 | 前端   | React 19 + react-router 7 + Vite 7，Tailwind CSS v3 + shadcn，AG Grid Community |
 | 后端   | Hono + tRPC v11（superjson），zod v4 入参校验                                   |
-| 数据库 | SQLite（better-sqlite3 + Drizzle ORM，WAL 模式）                                |
+| 数据库 | SQLite（默认）/ PostgreSQL / MySQL，Drizzle ORM，`DB_DIALECT` 切换              |
 | 测试   | Vitest（单测）+ Playwright（E2E）                                               |
 
 无账号无权限，小团队内部工具，靠公开透明自治。
@@ -56,10 +56,15 @@ npm install
 npm run dev        # http://localhost:3000，首次启动自动建表
 ```
 
-数据库默认 `./data/delivery_van.db`，可用 `DATABASE_URL` 环境变量覆盖。
+数据库由 `DB_DIALECT`（`sqlite` 默认 / `postgres` / `mysql`）+ `DATABASE_URL` 决定：
+
+- **sqlite**：`DATABASE_URL` 是库文件路径，默认 `./data/delivery_van.db`（缺省即此，无需设置）；
+- **postgres / mysql**：`DATABASE_URL` 是连接串，如 `postgres://user:pass@host:5432/delivery_van`、`mysql://root:pass@host:3306/delivery_van`。
+
+三种方言都在启动时自动幂等建表，无需手动迁移。
 
 ```bash
-npm run db:seed    # 写入示例成员（可选）
+npm run db:seed    # 写入示例成员（可选，仅 sqlite 开发库）
 ```
 
 ## 验证与构建
@@ -85,7 +90,15 @@ docker pull ghcr.io/jiangfire/delivery_van:v1.2.0
 docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v1.2.0
 ```
 
-⚠️ 务必挂载数据卷（`-v ...:/app/data`），否则容器重建后数据全部丢失。库文件路径可用 `-e DATABASE_URL=...` 覆盖。容器自动建表与「重建容器数据不丢」由 CI 的 docker job 持续验证。
+⚠️ sqlite（默认方言）务必挂载数据卷（`-v ...:/app/data`），否则容器重建后数据全部丢失；库文件路径可用 `-e DATABASE_URL=...` 覆盖。用 PostgreSQL / MySQL 时无需挂卷，改为传连接串：
+
+```bash
+docker run -p 3000:3000 -e DB_DIALECT=postgres \
+  -e DATABASE_URL=postgres://user:pass@host:5432/delivery_van \
+  ghcr.io/jiangfire/delivery_van:v1.2.0
+```
+
+容器自动建表与「重建容器数据不丢」由 CI 的 docker job 持续验证（sqlite 路径）。
 
 **方式二 · zip 包**（无 Docker，需 Node >= 22）：从 [GitHub Release](https://github.com/jiangfire/delivery_van/releases) 下载 `delivery_van-vX.Y.Z.zip`（内含已构建的 `dist/`），解压后：
 

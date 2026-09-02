@@ -5,6 +5,8 @@ import {
   ModuleRegistry,
   themeQuartz,
   type ColDef,
+  type GridApi,
+  type GridReadyEvent,
   type ICellRendererParams,
   type CellValueChangedEvent,
   type RowDragEndEvent,
@@ -239,7 +241,11 @@ export default function BoardPage() {
       {
         field: "title",
         headerName: "标题",
-        flex: 2,
+        // 固定宽度（原为 flex）：三处长列固定化后总宽超过容器即出现横向滚动条
+        width: 260,
+        minWidth: 200,
+        wrapText: true,
+        autoHeight: true,
         editable: !vanReadonly,
         editField: "title",
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
@@ -369,6 +375,8 @@ export default function BoardPage() {
         colId: "_owners",
         headerName: "负责人",
         width: 200,
+        wrapText: true,
+        autoHeight: true,
         editable: !vanReadonly,
         editField: "owners",
         cellEditor: MultiSelectCellEditor,
@@ -387,7 +395,8 @@ export default function BoardPage() {
               </span>
             );
           return (
-            <span className="flex h-full flex-wrap items-center content-center gap-1">
+            // autoHeight 行高由内容撑开，容器不能用 h-full（自适应行高下高度未定）
+            <span className="flex flex-wrap items-center content-center gap-1 py-1">
               {owners.map((o) => (
                 <span
                   key={o}
@@ -512,7 +521,12 @@ export default function BoardPage() {
       {
         colId: "_acceptance",
         headerName: "验收标准",
-        flex: 1.4,
+        // 长文本列：固定宽（原为 flex）+ 默认隐藏，由表格上方开关命令式控制显隐
+        width: 300,
+        minWidth: 240,
+        hide: true,
+        wrapText: true,
+        autoHeight: true,
         editable: !vanReadonly,
         editField: "acceptance",
         valueGetter: (p) => p.data?.acceptance ?? "",
@@ -527,7 +541,12 @@ export default function BoardPage() {
       {
         colId: "_note",
         headerName: "备注",
-        flex: 1,
+        // 长文本列：固定宽（原为 flex）+ 默认隐藏，由表格上方开关命令式控制显隐
+        width: 260,
+        minWidth: 200,
+        hide: true,
+        wrapText: true,
+        autoHeight: true,
         editable: !vanReadonly,
         editField: "note",
         valueGetter: (p) => p.data?.note ?? "",
@@ -613,6 +632,30 @@ export default function BoardPage() {
       confirmM.isPending,
     ],
   );
+
+  /* ── 长文本列显隐开关（v2.2 任务 2）：默认隐藏，命令式调 GridApi，state 不进 columnDefs 依赖 ── */
+  const gridApiRef = useRef<GridApi<TaskRow> | null>(null);
+  const [showAcceptance, setShowAcceptance] = useState(false);
+  const [showNote, setShowNote] = useState(false);
+
+  const applyColumnVisibility = useCallback(
+    (api: GridApi<TaskRow>) => {
+      api.setColumnsVisible(["_acceptance"], showAcceptance);
+      api.setColumnsVisible(["_note"], showNote);
+    },
+    [showAcceptance, showNote],
+  );
+
+  // columnDefs 因 vanReadonly 等重建后，列回到 colDef 的默认隐藏，需按当前开关状态重新套用（幂等）
+  useEffect(() => {
+    const api = gridApiRef.current;
+    if (api && !api.isDestroyed()) applyColumnVisibility(api);
+  }, [applyColumnVisibility, columnDefs]);
+
+  const onGridReady = (e: GridReadyEvent<TaskRow>) => {
+    gridApiRef.current = e.api;
+    applyColumnVisibility(e.api);
+  };
 
   /* ── 单元格编辑回调 ── */
   const onCellValueChanged = (e: CellValueChangedEvent<TaskRow>) => {
@@ -804,6 +847,27 @@ export default function BoardPage() {
         />
 
         {/* ── 快件表格 ── */}
+        <div className="mb-2 flex items-center justify-end gap-1">
+          <span className="mr-1 text-xs text-muted-foreground">显示列</span>
+          <label className="glass-sm flex cursor-pointer items-center gap-1.5 px-2.5 py-1 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="accent-sky-500"
+              checked={showAcceptance}
+              onChange={(e) => setShowAcceptance(e.target.checked)}
+            />
+            验收标准
+          </label>
+          <label className="glass-sm flex cursor-pointer items-center gap-1.5 px-2.5 py-1 text-xs text-muted-foreground">
+            <input
+              type="checkbox"
+              className="accent-sky-500"
+              checked={showNote}
+              onChange={(e) => setShowNote(e.target.checked)}
+            />
+            备注
+          </label>
+        </div>
         <div className="glass-card mb-6 p-2" style={{ isolation: "isolate" }}>
           <div style={{ height: 520 }}>
             <AgGridReact<TaskRow>
@@ -814,6 +878,7 @@ export default function BoardPage() {
               loading={tasksQ.isLoading}
               rowDragManaged
               suppressRowDrag={vanReadonly}
+              onGridReady={onGridReady}
               onRowDragEnd={onRowDragEnd}
               onCellValueChanged={onCellValueChanged}
               getRowClass={(p) => {

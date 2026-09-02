@@ -516,6 +516,13 @@ body {
   --ag-row-hover-transition: background-color 0.2s ease;
 }
 
+/* autoHeight 行被同排其他列撑高时，单元格内容仍垂直居中（AG Grid 默认 autoHeight 单元格顶对齐）。
+   注意不能套 .ag-theme-quartz 作用域：Theming API 不再输出该类名，应选择器直接命中网格 DOM。 */
+.ag-cell-auto-height .ag-cell-wrapper {
+  height: 100%;
+  align-items: center;
+}
+
 /* ══════════════════════════════════════
    有机动效
    ══════════════════════════════════════ */

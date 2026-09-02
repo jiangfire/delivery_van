@@ -168,9 +168,11 @@ test.describe("Bug 回归：快件编辑", () => {
       page.getByRole("button", { name: "删除" }).first(),
     ).toBeDisabled();
 
-    // 双击标题不应进入编辑态
+    // 双击标题不应进入编辑态（断言限定在网格单元格内——表格上方的列显隐开关本身是合法 input）
     await dataCell(page, "title").dblclick();
-    await expect(page.locator("input, textarea").first()).toBeHidden();
+    await expect(
+      page.locator('[role="gridcell"] input, [role="gridcell"] textarea'),
+    ).toHaveCount(0);
     await page.waitForTimeout(300);
 
     // 新车：任务以滞留件形式出现，结转记录标记来源班次

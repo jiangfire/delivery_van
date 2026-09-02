@@ -1,12 +1,26 @@
 import { getDb } from "./queries/connection";
+import { getDialect } from "./queries/dialect";
+import { ensureSchemaPg } from "./ensureSchema.pg";
+import { ensureSchemaMysql } from "./ensureSchema.mysql";
 import { LEGACY_RARITY_TO } from "../db/schema";
 import { sql } from "drizzle-orm";
 
 /**
- * 启动时幂等确保表结构存在（CREATE TABLE IF NOT EXISTS）。
- * 与 db/schema.ts 保持一致；新增列/表时同步更新此处。
+ * 启动时幂等确保表结构存在（CREATE TABLE IF NOT EXISTS），按方言分发：
+ * - sqlite：本文件的完整实现（含历史补列链与 PRAGMA user_version 值域迁移）；
+ * - pg/mysql：见 ensureSchema.pg.ts / ensureSchema.mysql.ts（全新方言无历史库，
+ *   只建最终形态 + _dv_meta 版本表）。
+ * 与 db/schema.ts（+ schema.pg.ts / schema.mysql.ts）保持一致；新增列/表时同步更新。
  */
 export async function ensureSchema() {
+  const dialect = getDialect();
+  if (dialect === "postgres") return ensureSchemaPg();
+  if (dialect === "mysql") return ensureSchemaMysql();
+  return ensureSchemaSqlite();
+}
+
+/** sqlite 建表与历史迁移（原 ensureSchema 全部逻辑，逐字未动） */
+async function ensureSchemaSqlite() {
   const db = getDb();
   await db.run(sql`
     CREATE TABLE IF NOT EXISTS members (
