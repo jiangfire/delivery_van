@@ -1,0 +1,5 @@
+# 行尾统一为 LF：与 prettier（endOfLine: lf）及 CI（Linux checkout）一致，
+# 覆盖各机器的 core.autocrlf 设置——任何平台 clone 出的工作树都是 LF，
+# 本地 npx prettier --check 与 CI 行为完全相同，不再出现「真实格式问题被
+# CRLF 噪声淹没」。仓库内容本就全为 LF，此规则只影响 checkout 写盘行为。
+* text=auto eol=lf
