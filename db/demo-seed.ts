@@ -13,6 +13,7 @@ import {
   updateTask,
 } from "../api/queries/van";
 import { fingerprintOf, verifyAuditChain } from "../api/queries/audit";
+import { getDialect } from "../api/queries/dialect";
 import { auditLog } from "./schema";
 
 /**
@@ -22,6 +23,12 @@ import { auditLog } from "./schema";
  *
  * 默认写 data/demo.db（不碰开发库 delivery_van.db），DATABASE_URL 可覆盖；目标库已有班次则拒绝，防重复灌。
  */
+if (getDialect() !== "sqlite") {
+  console.error(
+    `演示种子只支持 sqlite（默认写 data/demo.db）；当前 DB_DIALECT=${getDialect()} 会把文件路径当连接串解析，请去掉 DB_DIALECT 后重跑。`,
+  );
+  process.exit(1);
+}
 process.env.DATABASE_URL ??= path.resolve(process.cwd(), "data", "demo.db");
 
 const ACTOR = "冈部"; // 软身份：演示库的操作记录统一记在 Lab 主人名下，链上可对质

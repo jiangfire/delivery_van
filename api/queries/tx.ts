@@ -33,7 +33,12 @@ export async function runTx<T>(
     db.run(sql`COMMIT`);
     return result;
   } catch (e) {
-    db.run(sql`ROLLBACK`);
+    // 回滚自身失败时不再抛出，避免掩盖 body 的业务原异常
+    try {
+      db.run(sql`ROLLBACK`);
+    } catch {
+      /* 保留原异常 */
+    }
     throw e;
   }
 }

@@ -491,31 +491,6 @@ body {
   box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
 }
 
-/* ══════════════════════════════════════
-   AG Grid Theme — Liquid Frame 微调
-   ══════════════════════════════════════ */
-.ag-theme-quartz {
-  --ag-font-family:
-    "Inter", -apple-system, BlinkMacSystemFont, "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
-  /* 紧凑密度：字号 12px + 32px 行高/表头高（单元格内 badge 高 22~24px 仍放得下） */
-  --ag-font-size: 12px;
-  --ag-row-height: 32px;
-  --ag-header-height: 32px;
-  --ag-header-background-color: rgba(255, 255, 255, 0.5);
-  --ag-header-foreground-color: hsl(var(--muted-foreground));
-  --ag-header-font-size: 10px;
-  --ag-header-font-weight: 600;
-  --ag-border-color: rgba(0, 0, 0, 0.05);
-  --ag-row-border-color: rgba(0, 0, 0, 0.04);
-  --ag-row-hover-color: rgba(14, 165, 233, 0.03);
-  --ag-selected-row-background-color: rgba(14, 165, 233, 0.06);
-  --ag-accent-color: var(--train-accent);
-  --ag-border-radius: 12px;
-  --ag-font-weight-normal: 400;
-  --ag-row-hover-transition: background-color 0.2s ease;
-}
-
 /* autoHeight 行被同排其他列撑高时，单元格内容仍垂直居中（AG Grid 默认 autoHeight 单元格顶对齐）。
    注意不能套 .ag-theme-quartz 作用域：Theming API 不再输出该类名，应选择器直接命中网格 DOM。 */
 .ag-cell-auto-height .ag-cell-wrapper {

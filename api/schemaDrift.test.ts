@@ -1,6 +1,8 @@
 /* 三方言 schema 防漂移（v2.2 任务 6）：dialect.ts 的受控 cast 以「三份 schema 字段
  * 形状一致」为前提，此处用 drizzle 表对象内省比对表名/列名/可空性/默认值有无。
- * 类型细节允许方言差异（如 mysql 的 varchar(191)、各方言自增列），不在比对范围。 */
+ * 类型细节允许方言差异（如 mysql 的 varchar(191)、各方言自增列），不在比对范围。
+ * 注意：本测试不覆盖 ensureSchema.pg/mysql.ts 的手写 DDL——DDL 列长/默认值与
+ * schema 的一致性靠 CI 真库冒烟兜底，改列时需人工同步两边。 */
 import { describe, expect, it } from "vitest";
 import { getTableColumns, getTableName } from "drizzle-orm";
 import * as sqliteSchema from "../db/schema";

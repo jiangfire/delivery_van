@@ -5,6 +5,7 @@ import { tasks } from "../../db/schema";
 import {
   getDialect,
   insertReturningId,
+  isUniqueViolation,
   parseDialect,
   type AppDb,
 } from "./dialect";
@@ -45,5 +46,29 @@ describe("insertReturningId（mysql 分支，无 RETURNING）", () => {
     await expect(
       insertReturningId(fakeTx, tasks, { vanCode: "DV2609A", title: "甲" }),
     ).resolves.toBe(42);
+  });
+});
+
+describe("isUniqueViolation（唯一约束冲突的方言归一）", () => {
+  it("识别 sqlite / pg / mysql 三方言的错误形状", () => {
+    // better-sqlite3：SqliteError.code
+    expect(
+      isUniqueViolation({ code: "SQLITE_CONSTRAINT_PRIMARYKEY" }),
+    ).toBe(true);
+    expect(isUniqueViolation({ code: "SQLITE_CONSTRAINT_UNIQUE" })).toBe(true);
+    // postgres.js：Postgres.Error.code = 23505（unique_violation）
+    expect(isUniqueViolation({ code: "23505" })).toBe(true);
+    // mysql2：code = ER_DUP_ENTRY（errno 1062）
+    expect(isUniqueViolation({ code: "ER_DUP_ENTRY" })).toBe(true);
+  });
+
+  it("非约束错误与异常形状返回 false", () => {
+    expect(isUniqueViolation({ code: "SQLITE_CONSTRAINT_FOREIGNKEY" })).toBe(
+      false,
+    );
+    expect(isUniqueViolation(new Error("普通错误"))).toBe(false);
+    expect(isUniqueViolation(undefined)).toBe(false);
+    expect(isUniqueViolation(null)).toBe(false);
+    expect(isUniqueViolation({ code: 23505 })).toBe(false); // 数字形状不认，防误报
   });
 });

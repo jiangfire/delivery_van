@@ -45,7 +45,8 @@ export function getSchema(): typeof sqliteSchema {
 /**
  * 统一查询执行入口：sqlite（better-sqlite3）是同步驱动，builder 用
  * .all()/.run() 收尾；pg/mysql 的 builder 直接 await（thenable）。
- * 事务内「sync 收尾」与事务外「await builder」两种写法统一经此出口。
+ * **事务内必须经此出口**（事务 body 直接收 db，收尾方式随方言）；事务外
+ * 也可直接 await builder（drizzle builder 三方言均为 thenable），两种写法等价。
  */
 export async function qAll<T>(query: { all(): T[] }): Promise<T[]> {
   if (getDialect() === "sqlite") return query.all();
@@ -75,6 +76,23 @@ export function groupConcatSql(expr: SQLWrapper) {
   return getDialect() === "postgres"
     ? sql<string>`string_agg(${expr}, ',')`
     : sql<string>`group_concat(${expr})`;
+}
+
+/**
+ * 唯一/主键约束冲突的方言归一判断（并发兜底用，如发新车撞班次主键、
+ * 成员重名撞唯一约束）：better-sqlite3 抛 error.code = SQLITE_CONSTRAINT_*、
+ * postgres.js 抛 error.code = 23505（unique_violation）、mysql2 抛
+ * error.code = ER_DUP_ENTRY（errno 1062）。识别不了返回 false，由上层按
+ * 未知错误处理。
+ */
+export function isUniqueViolation(e: unknown): boolean {
+  const code = (e as { code?: unknown } | null)?.code;
+  return (
+    code === "SQLITE_CONSTRAINT_PRIMARYKEY" ||
+    code === "SQLITE_CONSTRAINT_UNIQUE" ||
+    code === "23505" ||
+    code === "ER_DUP_ENTRY"
+  );
 }
 
 /**

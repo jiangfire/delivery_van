@@ -25,6 +25,7 @@ import {
   getSchema,
   groupConcatSql,
   insertReturningId,
+  isUniqueViolation,
   qAll,
   qRun,
 } from "./dialect";
@@ -327,8 +328,8 @@ export async function dispatchVan(
       ]);
     });
   } catch (e) {
-    // 并发双击等极端情况下编码已被抢先插入：视为对方已发车，幂等返回当前列表
-    if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_PRIMARYKEY") {
+    // 并发双击等极端情况下编码已被抢先插入（撞班次主键）：视为对方已发车，幂等返回当前列表
+    if (isUniqueViolation(e)) {
       return listVans();
     }
     throw e;
@@ -371,8 +372,8 @@ export async function addMember(
       ]);
     });
   } catch (e) {
-    // 并发窗口内被抢先插入（UNIQUE 唯一约束）：按重名处理，不给前端裸 500
-    if ((e as { code?: string }).code === "SQLITE_CONSTRAINT_UNIQUE") {
+    // 并发窗口内被抢先插入（撞 name 唯一约束，各方言错误码见 isUniqueViolation）：按重名处理，不给前端裸 500
+    if (isUniqueViolation(e)) {
       throw new TRPCError({
         code: "CONFLICT",
         message: `成员「${name}」已存在`,

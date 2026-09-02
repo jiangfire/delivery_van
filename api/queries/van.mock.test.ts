@@ -101,25 +101,34 @@ describe("班次管理", () => {
   });
 
   describe("dispatchVan", () => {
-    it("并发撞主键时幂等返回当前列表，不抛错", async () => {
-      mockDb = {
-        select: vi.fn().mockReturnValue(createQueryable([{ code: "DV2607A" }])),
-        // runTx 手写 BEGIN IMMEDIATE/COMMIT/ROLLBACK（sql`` 模板，mock 只记录调用）
-        run: vi.fn(),
-        // 事务内的 van 插入在 run() 时同步抛主键冲突（事务 body 直接收 db 本身）
-        insert: vi.fn().mockReturnValue({
-          values: vi.fn().mockReturnValue({
-            run: vi.fn().mockImplementation(() => {
-              throw { code: "SQLITE_CONSTRAINT_PRIMARYKEY" };
+    it.each([
+      ["sqlite", { code: "SQLITE_CONSTRAINT_PRIMARYKEY" }],
+      ["postgres", { code: "23505" }],
+      ["mysql", { code: "ER_DUP_ENTRY" }],
+    ])(
+      "并发撞主键时幂等返回当前列表，不抛错（%s 错误形状）",
+      async (_dialect, err) => {
+        mockDb = {
+          select: vi
+            .fn()
+            .mockReturnValue(createQueryable([{ code: "DV2607A" }])),
+          // runTx 手写 BEGIN IMMEDIATE/COMMIT/ROLLBACK（sql`` 模板，mock 只记录调用）
+          run: vi.fn(),
+          // 事务内的 van 插入在 run() 时同步抛主键冲突（事务 body 直接收 db 本身）
+          insert: vi.fn().mockReturnValue({
+            values: vi.fn().mockReturnValue({
+              run: vi.fn().mockImplementation(() => {
+                throw err;
+              }),
             }),
           }),
-        }),
-      };
+        };
 
-      const result = await dispatchVan(new Date(2026, 6, 20));
+        const result = await dispatchVan(new Date(2026, 6, 20));
 
-      expect(result).toEqual(["DV2607A"]);
-    });
+        expect(result).toEqual(["DV2607A"]);
+      },
+    );
   });
 });
 
@@ -145,7 +154,11 @@ describe("成员管理", () => {
   });
 
   describe("addMember", () => {
-    it("并发撞唯一约束时按重名处理，不裸抛 500", async () => {
+    it.each([
+      ["sqlite", { code: "SQLITE_CONSTRAINT_UNIQUE" }],
+      ["postgres", { code: "23505" }],
+      ["mysql", { code: "ER_DUP_ENTRY" }],
+    ])("并发撞唯一约束时按重名处理，不裸抛 500（%s 错误形状）", async (_dialect, err) => {
       mockDb = {
         select: vi.fn().mockReturnValue(createQueryable([])),
         run: vi.fn(),
@@ -153,7 +166,7 @@ describe("成员管理", () => {
         insert: vi.fn().mockReturnValue({
           values: vi.fn().mockReturnValue({
             run: vi.fn().mockImplementation(() => {
-              throw { code: "SQLITE_CONSTRAINT_UNIQUE" };
+              throw err;
             }),
           }),
         }),
