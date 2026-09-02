@@ -158,23 +158,26 @@ describe("成员管理", () => {
       ["sqlite", { code: "SQLITE_CONSTRAINT_UNIQUE" }],
       ["postgres", { code: "23505" }],
       ["mysql", { code: "ER_DUP_ENTRY" }],
-    ])("并发撞唯一约束时按重名处理，不裸抛 500（%s 错误形状）", async (_dialect, err) => {
-      mockDb = {
-        select: vi.fn().mockReturnValue(createQueryable([])),
-        run: vi.fn(),
-        // 事务内的成员插入在 run() 时同步抛唯一约束
-        insert: vi.fn().mockReturnValue({
-          values: vi.fn().mockReturnValue({
-            run: vi.fn().mockImplementation(() => {
-              throw err;
+    ])(
+      "并发撞唯一约束时按重名处理，不裸抛 500（%s 错误形状）",
+      async (_dialect, err) => {
+        mockDb = {
+          select: vi.fn().mockReturnValue(createQueryable([])),
+          run: vi.fn(),
+          // 事务内的成员插入在 run() 时同步抛唯一约束
+          insert: vi.fn().mockReturnValue({
+            values: vi.fn().mockReturnValue({
+              run: vi.fn().mockImplementation(() => {
+                throw err;
+              }),
             }),
           }),
-        }),
-      };
+        };
 
-      await expect(addMember("张三", 5)).rejects.toThrow(TRPCError);
-      await expect(addMember("张三", 5)).rejects.toThrow("已存在");
-    });
+        await expect(addMember("张三", 5)).rejects.toThrow(TRPCError);
+        await expect(addMember("张三", 5)).rejects.toThrow("已存在");
+      },
+    );
   });
 
   describe("updateMemberCapacity", () => {
