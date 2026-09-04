@@ -79,6 +79,27 @@ export function groupConcatSql(expr: SQLWrapper) {
 }
 
 /**
+ * 写事务的串行化锁（v2.2 评审修复：防 pg/mysql 并发写事务分叉审计链）。
+ * 所有写事务在 body 前执行同一条锁 SQL，拿到才继续——效果对齐 sqlite 的
+ * BEGIN IMMEDIATE 写串行化：
+ * - postgres：pg_advisory_xact_lock（事务级咨询锁，COMMIT/ROLLBACK 自动释放，
+ *   常量 9137 任意取值，全库只此一处使用即无冲突）；
+ * - mysql：对 _dv_meta 的 schema_version 行 SELECT ... FOR UPDATE（该行由
+ *   ensureSchema 保证存在，锁随事务结束释放；行不存在时静默无锁=优雅降级为现状）。
+ * 单一锁无锁序问题；写吞吐串行化与 sqlite 同语义，小团队单实例场景可接受。
+ */
+export function writeLockSql(): SQL | null {
+  if (getDialect() === "postgres") {
+    return sql`select pg_advisory_xact_lock(9137)`;
+  }
+  if (getDialect() === "mysql") {
+    // key 是保留字需反引号（与 ensureSchema.mysql.ts 的 _dv_meta DDL 同款写法）
+    return sql`select value from _dv_meta where \`key\` = 'schema_version' for update`;
+  }
+  return null;
+}
+
+/**
  * 唯一/主键约束冲突的方言归一判断（并发兜底用，如发新车撞班次主键、
  * 成员重名撞唯一约束）：better-sqlite3 抛 error.code = SQLITE_CONSTRAINT_*、
  * postgres.js 抛 error.code = 23505（unique_violation）、mysql2 抛

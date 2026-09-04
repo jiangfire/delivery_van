@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { getDialect, type AppDb } from "./dialect";
+import { execRaw, getDialect, writeLockSql, type AppDb } from "./dialect";
 
 /**
  * 事务执行器（v2.2 任务 4/8：数据层同步→异步化 + 方言分支的统一出口）。
@@ -16,16 +16,24 @@ import { getDialect, type AppDb } from "./dialect";
  *
  * pg/mysql：走驱动原生 db.transaction(body)（异步事务、独立连接，无此约束）；
  * body 收到的 tx 运行时是对应方言的事务对象，类型按方言层约定标为 AppDb。
+ * 事务开头先取 writeLockSql 的写锁——并发写事务串行化，对齐 sqlite 的
+ * BEGIN IMMEDIATE 语义：防「读审计链尾→插入」交错造成链分叉（v2.2 评审修复）。
+ * 注意：事务外的 precondition 读（如 addTask 的 max(sort_order)、isVanArchived）
+ * 不经此锁，TOCTOU 窗口仍是方言间已知差异（见 v2.2 计划文档「明确不做」）。
  */
 export async function runTx<T>(
   db: AppDb,
   body: (tx: AppDb) => Promise<T>,
 ): Promise<T> {
   if (getDialect() !== "sqlite") {
+    const lock = writeLockSql();
     const transactable = db as unknown as {
       transaction(fn: (tx: AppDb) => Promise<T>): Promise<T>;
     };
-    return transactable.transaction(body);
+    return transactable.transaction(async (tx) => {
+      if (lock) await execRaw(tx, lock);
+      return body(tx);
+    });
   }
   db.run(sql`BEGIN IMMEDIATE`);
   try {
