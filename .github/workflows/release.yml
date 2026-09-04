@@ -53,19 +53,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           NOTES=$(cat <<EOF
-          快递发车台 $GITHUB_REF_NAME「niulai」。
+          快递发车台 $GITHUB_REF_NAME「Robotics;Notes」（v2.0「STEINS;GATE」随本版合并首发——v2.0/v2.1 未独立发版）。
 
-          本版变化：快件表支持**行内拖拽排序**——行与行可拖拽调整顺序并持久化（sort_order 列，
-          旧库启动时幂等补列回填，升级前后顺序不变）；归档班次禁拖，新增/结转快件自动排到班次末尾。
+          v2.2 本版变化：**表格体验**——横向滚动、验收标准/备注长文本列默认隐藏 + 表格上方开关、
+          自动换行与行高自适应（修复切班后显隐丢失）；**多数据库**——DB_DIALECT 三方言
+          （sqlite 默认 / postgres / mysql，DATABASE_URL 连接串），pg/mysql 写事务取锁串行化
+          （防审计链并发分叉）。
+          v2.0 博弈机制（随本版首发）：签收二拍制、链式审计日志（SHA256 hash 链 + 周五指纹锚定）、
+          统计三件套（提出人记分卡/稀有度通胀/三方占比）、昨日天气建议装载、结转原因五枚举、
+          徽章 v1（整班准点/送达连击）。
+          其他：doneAt/requester 入参校验补强、mysql group_concat 截断加固。
 
           周度发车管理工具：DV 班次编码（每月从 A 重计）、快件半天点数制（1~10 点，1 点 = 半天）、
           行拖拽排序、送达二值化 + 日期补录、滞留结转（紧邻班次校验 + 归档只读 + ≥2 班强制复盘提示）、
           五级稀有度（N/R/SR/SSR/UR）与提出人标记、统计条与成员运力。
 
-          ## Docker（务必挂数据卷）
+          ## Docker（sqlite 务必挂数据卷；pg/mysql 传连接串无需挂卷）
 
               docker pull ghcr.io/${{ github.repository_owner }}/delivery_van:$GITHUB_REF_NAME
               docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/${{ github.repository_owner }}/delivery_van:$GITHUB_REF_NAME
+              # postgres：docker run -p 3000:3000 -e DB_DIALECT=postgres -e DATABASE_URL=postgres://user:pass@host:5432/delivery_van ...
 
           ## zip 包（无 Docker，需 Node >= 22）
 
@@ -75,10 +82,11 @@ jobs:
               npm start
 
           库文件默认 ./data/delivery_van.db，可用 DATABASE_URL 覆盖；端口默认 3000 可用 PORT 覆盖。
-          详细规则见仓库 README 与《周度发车机制设计方案》。
+          详细规则见仓库 README 与《周度发车机制设计方案》《博弈机制科研探索》。
 
-          质量：单测 100 / E2E 16 / CI 三 job 全绿；容器自动建表与数据卷持久化（重建容器数据不丢）由 CI 的 docker job 验证。
+          质量：单测 171（+ CI 容器 pg/mysql 方言变体各 31）/ E2E 22 / CI 三 job 全绿；容器自动建表
+          与数据卷持久化由 CI 的 docker job 验证。
           EOF
           )
           gh release create "$GITHUB_REF_NAME" "delivery_van-${GITHUB_REF_NAME}.zip" \
-            --title "$GITHUB_REF_NAME「niulai」" --notes "$NOTES"
+            --title "$GITHUB_REF_NAME「Robotics;Notes」" --notes "$NOTES"
