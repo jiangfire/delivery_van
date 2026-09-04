@@ -25,7 +25,7 @@ v2.0 起（Phase 1）叠加一层**轻博弈机制**，全部是 v1 行为的叠
 
 v2.2 起看板表格支持横向滚动、长文本列显隐开关与行高自适应；数据层支持 **SQLite（默认）/ PostgreSQL / MySQL** 三方言（`DB_DIALECT` + `DATABASE_URL` 切换）。
 
-设计细节见 [`docs/周度发车机制设计方案.md`](docs/周度发车机制设计方案.md) 与 [`docs/doing/v2.0-博弈机制落地计划.md`](docs/doing/v2.0-博弈机制落地计划.md)。
+设计细节见 [`docs/周度发车机制设计方案.md`](docs/周度发车机制设计方案.md)、[`docs/博弈机制科研探索-PM与开发显性博弈设计.md`](docs/博弈机制科研探索-PM与开发显性博弈设计.md)（v2.0 灵魂文档）与 [`docs/archived/v2.0-博弈机制落地计划.md`](docs/archived/v2.0-博弈机制落地计划.md)。
 
 ## 班次编码
 
