@@ -44,6 +44,20 @@ export const memberTag = z
   .max(64)
   .refine((v) => !v.includes(","), "名称不能包含半角逗号「,」");
 
+/**
+ * 提出人标签：非空 1~64 字符。空串会让「requester IS NULL = 自驱件视同签收」
+ * 的推导失效——件永久计入未签收统计且 UI 无签收入口，故服务端拒绝（v2.2 评审补强）。
+ */
+export const requesterField = z.string().min(1).max(64);
+
+/**
+ * 送达日期：YYYY-MM-DD（前端日期编辑器产出；mysql 列为 varchar(16)，超长/错格式
+ * 会裸报数据库错误，故服务端统一强制格式——v2.2 评审补强）。
+ */
+export const doneAtField = z
+  .string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "送达日期格式应为 YYYY-MM-DD");
+
 export const vanRouter = createRouter({
   /* ── 班次（手动发新车） ── */
   vans: createRouter({
@@ -85,7 +99,7 @@ export const vanRouter = createRouter({
           van: vanCode,
           title: z.string().min(1).max(255),
           rarity: rarity.default("n"),
-          requester: z.string().max(64).optional(),
+          requester: requesterField.optional(),
           owners: z.array(memberTag).optional(),
           size: sizePoints.nullable().optional(),
           acceptance: z.string().max(255).nullable().optional(),
@@ -100,12 +114,12 @@ export const vanRouter = createRouter({
           id: idField,
           title: z.string().min(1).max(255).optional(),
           rarity: rarity.optional(),
-          requester: z.string().max(64).nullable().optional(),
+          requester: requesterField.nullable().optional(),
           owners: z.array(memberTag).optional(),
           size: sizePoints.nullable().optional(),
           acceptance: z.string().max(255).nullable().optional(),
           status: z.enum(["todo", "doing", "done"]).optional(),
-          doneAt: z.string().nullable().optional(),
+          doneAt: doneAtField.nullable().optional(),
           note: z.string().max(255).nullable().optional(),
           source: sourceField.optional(),
           actor: actorField,

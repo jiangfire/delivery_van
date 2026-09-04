@@ -4,6 +4,8 @@ import {
   sizePoints,
   sourceField,
   carryReasonField,
+  requesterField,
+  doneAtField,
 } from "./vanRouter";
 
 describe("memberTag（成员/负责人标签约束）", () => {
@@ -69,5 +71,30 @@ describe("carryReasonField（结转原因枚举）", () => {
   it("拒绝枚举外的值（swap 让位原因 Phase 2 才引入）", () => {
     expect(carryReasonField.safeParse("swap").success).toBe(false);
     expect(carryReasonField.safeParse("").success).toBe(false);
+  });
+});
+
+describe("requesterField（提出人标签，v2.2 评审补强）", () => {
+  it("接受 1~64 字符", () => {
+    expect(requesterField.safeParse("天王寺").success).toBe(true);
+    expect(requesterField.safeParse("名".repeat(64)).success).toBe(true);
+  });
+
+  it("拒绝空串（空串会让自驱件推导失效，件永久卡未签收统计）与超长", () => {
+    expect(requesterField.safeParse("").success).toBe(false);
+    expect(requesterField.safeParse("名".repeat(65)).success).toBe(false);
+  });
+});
+
+describe("doneAtField（送达日期格式，v2.2 评审补强）", () => {
+  it("接受 YYYY-MM-DD", () => {
+    expect(doneAtField.safeParse("2026-09-04").success).toBe(true);
+  });
+
+  it("拒绝超长、非日期格式与空串（mysql 列为 varchar(16)，超长会裸报数据库错误）", () => {
+    expect(doneAtField.safeParse("2026/09/04").success).toBe(false);
+    expect(doneAtField.safeParse("2026-9-4").success).toBe(false);
+    expect(doneAtField.safeParse("").success).toBe(false);
+    expect(doneAtField.safeParse("2026-09-04T12:00:00Z").success).toBe(false);
   });
 });
