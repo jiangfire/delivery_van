@@ -493,10 +493,21 @@ body {
   box-shadow: 0 0 0 3px rgba(14, 165, 233, 0.1);
 }
 
-/* autoHeight 行被同排其他列撑高时，单元格内容仍垂直居中（AG Grid 默认 autoHeight 单元格顶对齐）。
-   注意不能套 .ag-theme-quartz 作用域：Theming API 不再输出该类名，应选择器直接命中网格 DOM。 */
-.ag-cell-auto-height .ag-cell-wrapper {
-  height: 100%;
+/* 单元格内容垂直居中（含 autoHeight 撑高行里的短内容列——AG Grid 默认顶对齐）。
+   注意不能套 .ag-theme-quartz 作用域：Theming API 不再输出该类名，应选择器直接命中网格 DOM。
+   两类单元格分别处理：
+   - wrapText 单元格（title/_owners/_acceptance/_note/_carry）有 .ag-cell-wrapper——
+     wrapper 用 min-height 撑满居中。必须用 min-height 而不是 height：height:100% 会把
+     wrapper 钉在当前行高，AG Grid 量到钉死的高度便认为「放得下」，autoHeight 行高
+     永不撑开；min-height 允许内容顶高 wrapper，测量才能拿到真实内容高度。
+   - 无 wrapText 的单元格（状态/档位等，v36 Cell Composition 下无 wrapper、渲染器输出
+     直挂 .ag-cell）——cell 级 flex 居中。 */
+.ag-cell-wrapper {
+  min-height: 100%;
+  align-items: center;
+}
+.ag-cell:not(.ag-cell-wrap-text) {
+  display: flex;
   align-items: center;
 }
 
