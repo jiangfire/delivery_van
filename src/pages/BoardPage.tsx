@@ -561,7 +561,10 @@ export default function BoardPage() {
       {
         colId: "_carry",
         headerName: "结转记录",
-        width: 150,
+        // 来源班次 + 原因徽标 + ⚠️ 最坏 ~180px：加宽到 200 并允许换行自适应（与 _owners 同款），窄屏不裁切
+        width: 200,
+        wrapText: true,
+        autoHeight: true,
         editable: false,
         valueGetter: (p) => {
           const t = p.data;
@@ -572,7 +575,8 @@ export default function BoardPage() {
           const d = p.data;
           if (!d || !d.carriedFrom) return null;
           return (
-            <span className="flex h-full items-center gap-1 text-xs">
+            // autoHeight 行高由内容撑开，容器不能用 h-full（自适应行高下高度未定），与 _owners 同款
+            <span className="flex flex-wrap items-center content-center gap-1 py-1 text-xs">
               <span className="carry-badge" title={`滞留自 ${d.carriedFrom}`}>
                 📦 {d.carriedFrom}
               </span>

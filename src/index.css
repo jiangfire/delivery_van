@@ -336,6 +336,8 @@ body {
   color: var(--train-amber);
   font-weight: 600;
   border: 1px solid rgba(217, 119, 6, 0.15);
+  /* 徽标整体换行可以、内部断行不行（CJK 默认任意断，会把「优先级被挤」拆进两行） */
+  white-space: nowrap;
 }
 
 /* ── 徽章角标（v2.0：实时推导不落库） ── */
