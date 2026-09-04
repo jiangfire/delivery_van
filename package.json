@@ -2,7 +2,7 @@
   "name": "delivery_van",
   "private": true,
   "license": "MIT",
-  "version": "2.0.0",
+  "version": "2.2.0",
   "codename": "STEINS;GATE",
   "type": "module",
   "engines": {
