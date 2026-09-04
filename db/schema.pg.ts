@@ -19,7 +19,7 @@ const unixTs = customType<{ data: Date; driverData: number }>({
 export const members = pgTable("members", {
   id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
   name: text("name").notNull().unique(),
-  /** 每周可用容量（天），默认 5，请假/支持时扣减 */
+  /** 每周可用运力（点数）：接口层默认 10，列默认 5 仅建表兜底 */
   capacity: integer("capacity").notNull().default(5),
   createdAt: unixTs("created_at")
     .notNull()

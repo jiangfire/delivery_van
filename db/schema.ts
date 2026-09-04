@@ -6,7 +6,7 @@ import { CARRY_REASONS, SOURCES } from "../contracts/enums";
 export const members = sqliteTable("members", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull().unique(),
-  /** 每周可用容量（天），默认 5，请假/支持时扣减 */
+  /** 每周可用运力（点数）：接口层默认 10，列默认 5 仅建表兜底 */
   capacity: integer("capacity").notNull().default(5),
   createdAt: integer("created_at", { mode: "timestamp" })
     .notNull()

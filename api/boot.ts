@@ -21,7 +21,7 @@ app.all("/api/*", (c) => c.json({ error: "Not Found" }, 404));
 
 export default app;
 
-// SQLite 本地文件，任何环境下都先幂等建表
+// 启动时按 DB_DIALECT（sqlite/pg/mysql）幂等建表——失败说明数据库不可用，退出非零
 const { ensureSchema } = await import("./ensureSchema");
 try {
   await ensureSchema();

@@ -61,6 +61,11 @@ export function getDb(): AppDb {
   }
   if (dialect === "mysql") {
     const pool = mysql.createPool(databaseUrl(dialect));
+    // mysql 默认 group_concat_max_len=1024：负责人聚合（owners）超限会被静默截断，
+    // 每个新建连接统一会话级调大（PromisePool 不转发事件，挂在原生 pool 上）
+    pool.pool.on("connection", (conn) => {
+      conn.query("SET SESSION group_concat_max_len = 65535");
+    });
     db = drizzleMysql(pool, {
       schema: mysqlSchema,
       mode: "default",
