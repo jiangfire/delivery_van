@@ -521,10 +521,10 @@ export default function BoardPage() {
       {
         colId: "_acceptance",
         headerName: "验收标准",
-        // 长文本列：固定宽（原为 flex）+ 默认隐藏，由表格上方开关命令式控制显隐
+        // 长文本列：固定宽（原为 flex）+ 默认隐藏。colDef 不写 hide——columnDefs 重建时
+        // colDef 的 hide 会覆盖命令式显隐（切班丢显隐的根因）；初始隐藏由 onGridReady 统一设置
         width: 300,
         minWidth: 240,
-        hide: true,
         wrapText: true,
         autoHeight: true,
         editable: !vanReadonly,
@@ -541,10 +541,9 @@ export default function BoardPage() {
       {
         colId: "_note",
         headerName: "备注",
-        // 长文本列：固定宽（原为 flex）+ 默认隐藏，由表格上方开关命令式控制显隐
+        // 长文本列：固定宽（原为 flex）+ 默认隐藏（同 _acceptance，colDef 不写 hide）
         width: 260,
         minWidth: 200,
-        hide: true,
         wrapText: true,
         autoHeight: true,
         editable: !vanReadonly,

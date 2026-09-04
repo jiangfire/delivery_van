@@ -263,6 +263,33 @@ test.describe("行拖拽排序", () => {
   });
 });
 
+test.describe("长文本列显隐开关（v2.2）", () => {
+  test("默认隐藏 → 开关显示 → 切班后保持", async ({ page }) => {
+    await waitForBoard(page);
+    // 独立两班 + 最新班一件快件（用例从「发新车」拿班次，不依赖其他用例）
+    await dispatchVan(page);
+    await dispatchVan(page);
+    await addTaskAndWait(page);
+
+    const accHeader = page.getByRole("columnheader", { name: "验收标准" });
+    const noteHeader = page.getByRole("columnheader", { name: "备注" });
+    await expect(accHeader).toBeHidden();
+    await expect(noteHeader).toBeHidden();
+
+    // 开关命令式显隐
+    await page.getByLabel("验收标准").check();
+    await expect(accHeader).toBeVisible();
+    await expect(noteHeader).toBeHidden();
+
+    // 切到未访问过的班次再切回（columnDefs 因加载窗口重建）：显隐须按开关状态保持
+    await page.getByRole("button", { name: "‹" }).click();
+    await expect(page.getByRole("button", { name: "›" })).toBeEnabled();
+    await page.getByRole("button", { name: "›" }).click();
+    await expect(accHeader).toBeVisible();
+    await expect(noteHeader).toBeHidden();
+  });
+});
+
 test.describe("滞留件结转与归档", () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoard(page);
