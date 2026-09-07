@@ -53,7 +53,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           NOTES=$(cat <<EOF
-          快递发车台 $GITHUB_REF_NAME「Robotics;Notes」（v2.0「STEINS;GATE」随本版合并首发——v2.0/v2.1 未独立发版）。
+          快递发车台 $GITHUB_REF_NAME「STEINS;GATE」（v2.x 主版本线代号；v2.0/v2.1 未独立发版，v2.0 随 v2.2.0 合并首发）。
 
           v2.2 本版变化：**表格体验**——横向滚动、验收标准/备注长文本列默认隐藏 + 表格上方开关、
           自动换行与行高自适应（修复切班后显隐丢失）；**多数据库**——DB_DIALECT 三方言
@@ -89,4 +89,4 @@ jobs:
           EOF
           )
           gh release create "$GITHUB_REF_NAME" "delivery_van-${GITHUB_REF_NAME}.zip" \
-            --title "$GITHUB_REF_NAME「Robotics;Notes」" --notes "$NOTES"
+            --title "$GITHUB_REF_NAME「STEINS;GATE」" --notes "$NOTES"

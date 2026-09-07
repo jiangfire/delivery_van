@@ -11,7 +11,7 @@ import type { VanStats } from "@/lib/trpc";
  * 负责人（默认，日常看运力）/ 提出人记分卡 / 稀有度通胀 / 滞留原因瀑布 / 三方来源明细。
  * 行式统一骨架：维度值 + 主条形 + 数字组；复盘维度收进页签，默认不主动展示
  * （v2.0 隐形预算：统计不占主界面、不制造日常 KPI 压力）。各视图标题常驻、
- * 空态放标题下（空班也知道这一页在看什么）。设计见 docs/doing/统计面板统一设计方案.md ── */
+ * 空态放标题下（空班也知道这一页在看什么）。设计见 docs/archived/统计面板统一设计方案.md ── */
 
 type Dimension = "owner" | "requester" | "rarity" | "carryReason" | "source";
 

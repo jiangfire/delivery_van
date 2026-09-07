@@ -19,7 +19,7 @@ v2.0 起（Phase 1）叠加一层**轻博弈机制**，全部是 v1 行为的叠
 
 - **签收二拍**：送达（承运人打勾）→ 签收（提出人一次点击）；无提出人的自驱件视同签收
 - **链式审计日志**：一切写操作进 SHA256 hash 链，页头「我是谁」记操作人，周五把日志指纹抄进会议纪要锚定
-- **统计三件套**：提出人记分卡、稀有度通胀报表、三方占比（客户/平台/探索）——全部自动推导，默认折叠不占主界面
+- **统计三件套**：提出人记分卡、稀有度通胀报表、三方占比（客户/平台/探索）——全部自动推导，收进统计面板非默认页签（默认页签是负责人运力），不占主界面
 - **昨日天气**：建议装载上限 = 上一班实际送达点数，只提示不拦截
 - **徽章 v1**：🚚 整班准点、📦 送达连击，实时推导不落库
 
@@ -35,13 +35,12 @@ v2.2 起看板表格支持横向滚动、长文本列显隐开关与行高自适
 
 ## 版本谱系
 
-| 版本 | 代号                           | 主题                                                                        |
-| ---- | ------------------------------ | --------------------------------------------------------------------------- |
-| v1.x | `niulai`                       | 看板基座：快件表 / 半天点数制（v1.1）/ 行内拖拽排序（v1.2）                 |
-| v2.0 | `STEINS;GATE`（命运石之门）    | 博弈机制：签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章   |
-| v2.2 | `Robotics;Notes`（机器人笔记） | 表格体验：横向滚动 / 长文本列开关 / 自动换行；多数据库：三方言 + 写锁串行化 |
+| 版本 | 代号                        | 主题                                                                                                                                                                    |
+| ---- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.x | `niulai`                    | 看板基座：快件表 / 半天点数制（v1.1）/ 行内拖拽排序（v1.2）                                                                                                             |
+| v2.x | `STEINS;GATE`（命运石之门） | 博弈机制（v2.0）：签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章；表格体验与多数据库（v2.2）：横向滚动 / 长文本列开关 / 自动换行 / 三方言 + 写锁串行化 |
 
-> v2.0（STEINS;GATE）与 v2.1（Phase 2 纸面运行，零发版）未独立发版——v2.0 随 v2.2.0 合并首发（2026-09 裁定）。
+> v2.0 与 v2.1（Phase 2 纸面运行，零发版）未独立发版——v2.0 随 v2.2.0 合并首发（2026-09 裁定）。代号是主版本线代号：v1.x.y 全系 `niulai`，v2.x.y 全系 `STEINS;GATE`。
 
 ## 技术栈
 
@@ -91,8 +90,8 @@ CI（GitHub Actions）覆盖以上门禁、Playwright E2E 与 Docker 构建冒�
 **方式一 · Docker**（镜像在 GitHub Container Registry，也可自行 `docker build`）：
 
 ```bash
-docker pull ghcr.io/jiangfire/delivery_van:v1.2.0
-docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v1.2.0
+docker pull ghcr.io/jiangfire/delivery_van:v2.2.0
+docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v2.2.0
 ```
 
 ⚠️ sqlite（默认方言）务必挂载数据卷（`-v ...:/app/data`），否则容器重建后数据全部丢失；库文件路径可用 `-e DATABASE_URL=...` 覆盖。用 PostgreSQL / MySQL 时无需挂卷，改为传连接串：
@@ -100,7 +99,7 @@ docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/deliver
 ```bash
 docker run -p 3000:3000 -e DB_DIALECT=postgres \
   -e DATABASE_URL=postgres://user:pass@host:5432/delivery_van \
-  ghcr.io/jiangfire/delivery_van:v1.2.0
+  ghcr.io/jiangfire/delivery_van:v2.2.0
 ```
 
 容器自动建表与「重建容器数据不丢」由 CI 的 docker job 持续验证（sqlite 路径）。

@@ -1,155 +1,113 @@
 # AGENTS.md · delivery_van（快递发车台）
 
-> 面向 AI 编码代理的项目说明。读者对本项目一无所知，请先读完本文件再动手。
+> 面向 AI 编码代理的项目说明。读者对本项目一无所知，请先读完本文件再动手。本文件按最小可披露原则只收录代码推不出来的约束与惯例，其余细节见 `README.md` 与 `docs/`。
 
 ## 项目概览
 
-delivery_van 是一个**周度发车管理工具**，机制设计见 `docs/周度发车机制设计方案.md`。核心隐喻：团队每周五发一班"厢式快递车"，任务是快件，周五验收只看"这班的件送没送到"；没送完的滞留件跟下一班车走。
+delivery_van 是一个**周度发车管理工具**：团队每周五发一班"厢式快递车"，任务是快件，周五验收只看"这班的件送没送到"；没送完的滞留件跟下一班车走。机制设计见 `docs/周度发车机制设计方案.md`。
 
-- 当前分支版本 **v2.2.0**，代号 `Robotics;Notes`（机器人笔记，谱系见 `README.md`）——v2.2「表格体验与多数据库支持」（长文本列显隐开关、三方言 + 写锁串行化）与 v2.0 Phase 1「博弈机制」（签收制、链式审计日志、统计三件套、昨日天气、结转原因、徽章，设计见 `docs/博弈机制科研探索-PM与开发显性博弈设计.md`、落地计划见 `docs/archived/v2.0-博弈机制落地计划.md`）随 v2.2.0 **合并首发**（v2.0/v2.1 未独立发版，2026-09-04 裁定）；**Phase 2「议价台 + 预测投票纸面运行」纸面运行中（2026-09-01 启动）——零开发零发版，纯会议流程，手册见 `docs/doing/v2.1-Phase2-议价台与预测投票纸面运行手册.md`，跑 4 班后 Gate 2 复盘裁决是否工具化（v2.1.0）**；v1.x 代号 `niulai`。
-- 单页应用：一个看板页（`BoardPage`）承载全部功能——班次切换、快件表（AG Grid 行内编辑）、统计条、统一统计面板（维度页签：负责人运力 / 提出人记分卡 / 稀有度通胀 / 滞留原因瀑布 / 三方占比明细，负责人默认，设计见 `docs/doing/统计面板统一设计方案.md`）。
-- **快件即一切**：工作条目只有一种——**快件**（`tasks` 表），直接携带稀有度与提出人字段，在表格内新增/编辑/删除。早期的「任务大厅/委托」（`pool_items` 表）已合并进快件：表结构保留但**已废弃不再读写**（`db/schema.ts` 中标记 `@deprecated`），稀有度方案沿革见 `docs/archived/任务大厅与稀有度分级设计方案.md`。
-- 无账号体系、无鉴权：小团队内部工具，任务负责人用标签（多人）。成员删除是**有守卫的硬删**（2026-09-07 决策，方案见 `docs/doing/成员删除功能设计方案.md`）：零历史成员可删（删除与审计同事务），名字出现在任何快件上（`task_owners.owner_name` / `tasks.requester` / `tasks.confirmed_by`，全是无外键的纯文本引用）即拒绝——悬空标签会弄脏统计，且签收要求操作人是成员。
-- 代码与文档注释主要使用**中文**，新代码请沿用中文注释风格。
+- 当前版本 **v2.2.0**，主版本线代号 `STEINS;GATE`（v2.x.y 全系通用，谱系见 `README.md`）：v2.2 表格体验与多数据库、v2.0 博弈机制（签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章）随本版合并首发。**Phase 2「议价台 + 预测投票」纸面运行中（2026-09-01 启动，零开发零发版，手册见 `docs/doing/v2.1-Phase2-议价台与预测投票纸面运行手册.md`）**。
+- 单页应用：`src/pages/BoardPage.tsx` 承载全部功能——班次切换、AG Grid 快件表（行内编辑）、统计条、统一统计面板（负责人 / 提出人 / 稀有度 / 结转原因 / 来源五维度页签，负责人默认，设计见 `docs/archived/统计面板统一设计方案.md`）。
+- **快件即一切**：工作条目只有 `tasks` 表一种，直接携带稀有度与提出人。旧「任务大厅」（`pool_items` 表）已废弃：表结构保留但不读写。
+- 无账号无鉴权，成员用名字标签。成员删除是**有守卫的硬删**：零历史成员可删（删除与审计同事务），名字出现在任何快件上（负责人 / 提出人 / 签收人，均无外键的纯文本引用）即拒绝（方案见 `docs/archived/成员删除功能设计方案.md`）。
+- 注释与业务文案使用中文，代码标识符用英文。
 
 ### 核心业务规则（改动代码时不得破坏）
 
-- **班次编码**：仿期货合约风格 `DV` + 2 位年 + 2 位月 + 字母序号（如 `DV2607A`）。班次由「发新车」**手动创建**，不绑定周五；编码锚定创建时所在的日历月份，**每个自然月从 A 重新计数**（跨月发新车不沿用旧月份字母），同月内 A–Z 递增（单月最多 26 班），当月到 Z 之后再发车跨月回 A。已发班次存 `vans` 表。规则与测试在 `contracts/vans.ts`、`contracts/vans.test.ts`。
-- **半天点数制**：任务体量以「点」计，1 点 = 半天，只允许 1~10 整数（10 点 = 5 天），接口层用 zod 强制（拒绝 0、11、非整数）；成员运力同口径（默认 10 点/周、上限 14 点）。旧三档 1/3/5 天存量由 `ensureSchema` 按 `PRAGMA user_version` 门控幂等迁移（×2）。
-- **多人负责**：一个任务可由多人共同负责（勾选式多选编辑器，可在编辑器内即时新增成员标签），运力仅做记录不做校验（超载只显示提示）。
-- **送达二值化**：没有"完成 80%"。打勾 `done` 自动记送达日期（今天），取消完成自动清空日期；送达日期可手工补录/改填。
-- **滞留结转**：未完成任务一键转下一班（只能转**紧邻的下一班**，服务端用 `carryTargetCode` 校验：已存在则必须转去已存在的最近一班，否则按当前日期推导下一班——跨月时为新月份 A 班，目标班不存在时自动创建），记录 `carriedFrom` 来源班次；同一事务内把源班任务标记为 `carried`（🔁结转，任务四态 todo/doing/done/carried，仅由结转动作写入）；统计的滞留率 = 结转出去的任务数 / 总数（设计方案「结转率」指标）。`carryCount >= 2` 触发强制复盘**提示**（仅提示不拦截）；同一对班次幂等 + 事务包裹，防重复转运与半截数据。**结转归档只读**：只要班次存在 carried 任务，整班不可增/改/删（服务端 `isVanArchived` 强制校验，前端同步禁用编辑与操作按钮）。
-- **稀有度**：快件带五级稀有度（`n/r/sr/ssr/ur`，显示大写 N/R/SR/SSR/UR，抽卡风格英文缩写），是价值/优先度/工作量的综合标签，凭直觉定级。**稀有度只是标记（标题与稀有度列文字着色：绿/蓝/紫，ur 彩虹动画），系统不做任何校验或上车拦截**。快件另有**提出人**（`requester`）字段，记录谁提的需求，同样仅作记录。旧六级（common~mythic）已废弃，`ensureSchema` 启动时按 `LEGACY_RARITY_TO` 幂等迁移存量数据（顶级两档归并 ur）。
-- **行内拖拽排序**：快件表支持整行拖拽调整顺序，按班次持久化到 `sort_order` 列；拖拽后按传入 id 顺序全量重写该班序号（幂等，可重放），新建快件排在班末尾，结转快件追加到目标班末尾。规则与测试在 `api/queries/van.ts` 的 `reorderTasks`、`api/queries/van.reorder.test.ts`。
-- **签收制（v2.0 WP3）**：done 拆两拍——送达（承运人打勾）→ 签收（提出人一次点击，`tasks.confirm` 端点）。校验：任务必须 `done`、班次未归档、actor 必须是成员；**无提出人的自驱件不写库直接视同签收**（`isConfirmed` 推导，遵守「能推导不落库」）；重签幂等不覆盖首签；归档班次的 done 件不可签收。存量 done 由 `ensureSchema` 一次性回填 `'(历史)'`（`PRAGMA user_version` 1→2 门控，重启不误伤新 done）。
-- **快件来源（v2.0 WP1）**：`source` 三枚举 `customer/platform/exploration`（客户/平台/探索），NOT NULL 默认 customer，存量数据统一回填 customer（统计面板标注「v2.0 起才有此口径」）；仅供三方占比统计，不做任何拦截。
-- **结转原因（v2.0 WP5）**：结转确认弹层可选五枚举 `requirement-change/blocker/estimate/capacity/priority`（默认空=未分类），写入源班 carried 行与目标班副本；swap 让位原因 Phase 2 另加。滞留原因瀑布只统计**本班结转出去**（status=carried）的件，与滞留率口径一致。**Phase 2 纸面约定（改代码/清理数据时不得破坏）**：议价台让位件结转时选 `priority` 且 note 以 `swap：` 开头（如 `swap：为急件「DV2609A/xxx」让位`）——这是 swap 的纸面标记，Gate 2 工具化引入 `carryReason='swap'` 枚举时凭此前缀一次性回溯补录；系统统计暂含让位件属已知噪声，复盘会人工剔除。
-- **链式审计日志（v2.0 WP2）**：`audit_log` 表以 SHA256 hash 链记录一切写操作（快件增/改/删、状态与送达日期、排序、结转、发车、成员新增、签收；读操作不记）。**业务写与审计追加在同一个事务内**（任何一侧失败整体回滚，不留未记账的写），事务统一走 `api/queries/tx.ts` 的 `runTx(db, async (tx) => ...)`（sqlite 下手写 BEGIN IMMEDIATE/COMMIT/ROLLBACK 包裹 async body——better-sqlite3 驱动事务回调必须同步，传 async 会在首个 await 提前 COMMIT；**铁律：事务 body 内禁止任何真实 I/O 的 await**，只允许 await 数据层调用与纯计算，并发安全依赖「await 仅经微任务队列、Node 微任务排空前不处理新请求」），统一调 `api/queries/audit.ts` 的 `appendAudit(tx, actor, entries)`——async 函数，必须在事务回调内 await 调用；**序列化格式锁定**（字段序 + 每值 JSON 编码 + U+001F 定界，见 `serializeAudit`），改格式=旧链全量失效，配套锁定单测防悄悄变更；`verifyAuditChain(rows)` 重算全链返回首个断点。note/acceptance 自由文本以 `'(text)'` 占位进链（留「变过」的事实不留内容）。actor 是软身份：前端页头「我是谁」单选（localStorage 记住），缺省 `'(unknown)'`。统计条「日志指纹」= 链头 hash 前 8 位，周五复盘会抄进会议纪要锚定（模板见 `docs/会议纪要模板.md`）。
-- **昨日天气（v2.0 WP4）**：建议装载上限 = 上一班（编码字典序紧邻）done 任务点数合计（`suggestedLoadOf`，**v1 done 口径**），无历史班返回 null；只提示不拦截，与运力「仅记录不校验」哲学一致。
-- **徽章 v1（v2.0 WP6）**：仅两枚、全自动、**实时推导不落库**——🚚 整班准点（本班有件且全部送达）、📦 送达连击（成员连续 2 个「实际负责过件的班次」零滞留，跳班不补给）。`badgesOf` 纯函数；状态变化 sonner 单次轻提示（首次加载静默）。
-- **口径连续性（v2.0 评审决议，防基线断裂）**：滞留率/完成率/三方占比/通胀沿用 v1 的 done/carried 定义；记分卡「送达」用**签收口径**（`isConfirmed`）；昨日天气与徽章统一 **done 口径**——一处函数一个口径，禁止混用。
+- **班次编码**：`DV` + 2 位年 + 2 位月 + 字母序号（如 `DV2607A`）；「发新车」手动创建，不绑定周五；锚定创建时所在日历月，**每个自然月从 A 重新计数**，同月 A–Z，到 Z 后跨月回 A。规则在 `contracts/vans.ts`。
+- **半天点数制**：任务体量 1~10 整数点（1 点 = 半天），接口层 zod 强制；成员运力同口径（默认 10 点/周、上限 14 点），仅记录不校验。
+- **多人负责**：一个任务多人负责（勾选式多选编辑器，可即时新增成员标签）。
+- **送达二值化**：没有"完成 80%"；打勾自动记送达日期，取消自动清空，日期可手工补录。
+- **滞留结转**：只能转**紧邻的下一班**（服务端 `carryTargetCode` 校验：已存在则必须转已存在的最近一班，否则按当前日期推导，目标班不存在自动创建）；同一事务把源班任务标 `carried`（四态 todo/doing/done/carried 仅由结转写入）；同一对班次幂等；`carryCount >= 2` 仅提示不拦截；**结转归档只读**——班次存在 carried 任务则整班不可增/改/删（`isVanArchived`）。
+- **稀有度/提出人**：五级 `n/r/sr/ssr/ur`（显示 N/R/SR/SSR/UR）与提出人只是标记，系统不做任何校验或上车拦截。
+- **行内拖拽排序**：按班次持久化到 `sort_order`；拖后按传入 id 顺序全量重写该班序号（幂等）；新建与结转快件排班末尾。
+- **签收制**：done 拆两拍——送达（打勾）→ 签收（提出人一次点击）；任务必须 done、班次未归档、actor 必须是成员；**无提出人的自驱件不写库直接视同签收**（能推导不落库）；重签幂等不覆盖首签。
+- **快件来源**：三枚举 `customer/platform/exploration`，默认 customer，仅供统计不拦截。
+- **结转原因**：五枚举，默认空=未分类；滞留原因瀑布只统计本班 status=carried 的件（与滞留率同口径）。**Phase 2 纸面约定（改代码/清理数据不得破坏）**：让位件结转选 `priority` 且 note 以 `swap：` 开头——Gate 2 工具化时凭此前缀回溯补录。
+- **链式审计日志**：`audit_log` 以 SHA256 hash 链记录一切写操作（读不记）。**业务写与审计追加同一事务**，统一走 `api/queries/tx.ts` 的 `runTx` + `api/queries/audit.ts` 的 `appendAudit`（事务回调内 await 调用）；**铁律：事务 body 内禁止任何真实 I/O 的 await**（sqlite 手写 BEGIN IMMEDIATE 包裹 async body，better-sqlite3 驱动事务回调必须同步，传 async 会在首个 await 提前 COMMIT）；**序列化格式锁定**（`serializeAudit`），改格式 = 旧链全量失效，必须同步改锁定单测；自由文本以 `'(text)'` 占位进链。actor 是软身份（页头「我是谁」单选），缺省 `'(unknown)'`。
+- **昨日天气**：建议装载上限 = 上一班 done 点数合计，无历史班返回 null，只提示不拦截。
+- **徽章**：🚚 整班准点、📦 送达连击，实时推导不落库（`badgesOf` 纯函数）。
+- **口径连续性**：滞留率/完成率/三方占比/通胀沿用 done/carried 定义；记分卡「送达」用签收口径（`isConfirmed`）；昨日天气与徽章用 done 口径——一处函数一个口径，禁止混用。
 
 ## 技术栈
 
-| 层     | 技术                                                                                                                                                                                                                                                                |
-| ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 前端   | React 19 + react-router 7 + Vite 7，Tailwind CSS v3 + shadcn（new-york 风格，配置见 `components.json`），AG Grid Community（看板表格），sonner（toast）                                                                                                             |
-| 后端   | Hono + tRPC v11（`@trpc/server` fetch adapter，superjson 序列化），zod v4 做入参校验                                                                                                                                                                                |
-| 数据库 | 多方言（v2.2）：`DB_DIALECT=sqlite\|postgres\|mysql`（默认 sqlite）。SQLite（better-sqlite3 + Drizzle ORM，WAL 模式，外键开启）本地文件库，默认 `./data/delivery_van.db`；pg/mysql 用 `DATABASE_URL` 连接串（驱动 postgres.js / mysql2，均 bundle 进 dist/boot.js） |
-| 运行时 | Node.js 22（`engines` 已锁定 >= 22，better-sqlite3 v13 需要）；开发时 `@hono/vite-dev-server` 把 Hono 挂进 Vite dev server（端口 3000）                                                                                                                             |
-| 测试   | Vitest（node 环境，单测）+ Playwright（E2E，Chromium）                                                                                                                                                                                                              |
-| 部署   | 多阶段 Dockerfile：`node:22-slim`，构建产物为 `dist/`，运行阶段只保留 better-sqlite3 原生模块，容器内 `node dist/boot.js`                                                                                                                                           |
+| 层     | 技术                                                                                                                                           |
+| ------ | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| 前端   | React 19 + react-router 7 + Vite 7，Tailwind CSS v3 + shadcn（new-york 风格），AG Grid Community（看板表格），sonner（toast）                  |
+| 后端   | Hono + tRPC v11（fetch adapter，superjson 序列化），zod v4 入参校验                                                                            |
+| 数据库 | `DB_DIALECT=sqlite\|postgres\|mysql`（默认 sqlite）+ Drizzle ORM；sqlite 走 better-sqlite3（WAL、外键开启），pg/mysql 走 `DATABASE_URL` 连接串 |
+| 运行时 | Node.js >= 22（engines 锁定）；开发 `@hono/vite-dev-server` 前后端同端口 3000                                                                  |
+| 测试   | Vitest（单测）+ Playwright（E2E，Chromium）                                                                                                    |
 
 ## 目录结构
 
 ```
-api/        Hono + tRPC 薄后端
-  boot.ts       入口：tRPC 挂 /api/trpc/*，启动时幂等建表（失败进程退出非零），生产模式托管静态文件
-  router.ts     根路由（ping + van），导出 AppRouter 类型供前端使用
-  vanRouter.ts  van 子路由（班次/成员/快件/签收/结转/统计），全部 zod 入参校验，写操作带可选 actor 软身份
-  middleware.ts initTRPC（superjson transformer），导出 createRouter / publicQuery
-  context.ts    tRPC context（req / resHeaders）
-  ensureSchema.ts 启动时 CREATE TABLE IF NOT EXISTS，按方言分发：sqlite 路径含历史补列链（try ALTER + catch 幂等）与 PRAGMA user_version 值域迁移（当前版本 2）；pg/mysql 为 ensureSchema.pg.ts / ensureSchema.mysql.ts（全新方言只建最终形态 + _dv_meta 版本表）。必须与 db/schema.ts（+ schema.pg.ts / schema.mysql.ts）保持同步
-  lib/env.ts    环境变量（仅 NODE_ENV；DATABASE_URL / DB_DIALECT 由 queries/connection.ts、dialect.ts 直接读取）
-  lib/vite.ts   生产模式静态文件托管 + SPA 回退（静态根按模块路径定位，不依赖 cwd）
-  queries/      数据访问与业务逻辑（dialect.ts 方言层：DB_DIALECT 解析/getSchema/统一执行入口 qAll·qRun·execRaw/insertReturningId/groupConcatSql，受控 cast 集中于此；connection.ts 按方言惰性连接 + closeDb；tx.ts 事务执行器 runTx：sqlite 手写 BEGIN IMMEDIATE，pg/mysql 走驱动原生异步事务；van.ts 全部查询/校验/结转/统计/v2 纯函数；audit.ts 链式审计日志；测试基建：dialectHarness.ts 清表隔离 + testEnv.pg/mysql.ts 变体环境 + van.*.suite.ts 三方共享行为套件）
-contracts/    前后端共享代码
-  vans.ts       班次编码工具（isVanCode / nextVanCode / nextVanCodeFrom 跨月从 A 重计 / carryTargetCode 结转目标 / firstVanCodeOf / todayStr 上海时区等）
-  enums.ts      v2.0 共享枚举：SOURCES（三方来源）/ CARRY_REASONS（结转原因）+ 中文标签
-  vans.test.ts              班次编码规则测试
-  multi-select.test.ts      多选标签纯函数测试（函数直接定义在测试文件内）
-db/
-  schema.ts     Drizzle 表定义（sqlite 主版本）：members（成员）、tasks（快件，含 rarity/requester/sort_order/source/carry_reason/confirmed_by/confirmed_at）、task_owners（任务·负责人关联）、vans（已发班次）、audit_log（链式审计日志）；pool_items 已废弃保留
-  schema.pg.ts / schema.mysql.ts  pg/mysql 方言版表定义，字段形状与 sqlite 版一一对应（防漂移单测 api/schemaDrift.test.ts 比对表名/列名/可空性/默认值）；created_at 各方言用 customType 存 Unix 秒整数、JS 侧读出 Date；mysql 带默认值/唯一约束的字符串列用 varchar（members.name 为 varchar(191)）
-  seed.ts       种子脚本（仅示例成员），npm run db:seed 运行（会先自动建表，全新库可直接跑）；demo-seed.ts 演示种子（全虚构数据走真实业务函数写入，含审计链/签收/结转/徽章素材，npm run db:seed:demo，默认写 data/demo.db 不碰开发库，已有班次则拒绝
-src/          React 前端
-  main.tsx      入口：BrowserRouter + TRPCProvider
-  App.tsx       路由（仅看板页，path="*" 通配是有意的 SPA 回退）
-  pages/BoardPage.tsx  看板主页面（AG Grid 快件表 + 统计条 + 班次切换 + 统一统计面板 + 结转确认弹层 + 我是谁）
-  lib/trpc.ts   createTRPCReact<AppRouter>()，导出 RouterOutputs / VanStats 共享类型
-  lib/actor.ts  「我是谁」软身份存取（localStorage）
-  lib/display.ts 看板展示层共享工具（稀有度着色/状态与来源标签映射/档位分桶/比率格式化）
-  providers/trpc.tsx   QueryClient + httpBatchLink(/api/trpc) + superjson
-  components/   AG Grid 自定义单元格编辑器：MultiSelectCellEditor（负责人多选）、RarityCellEditor（稀有度）、RequesterCellEditor（提出人）、DateCellEditorComp（送达日期）——四者均由 popupCellEditor.tsx 的 createPopupCellEditor 工厂生成（Portal 弹层 + 类适配的通用逻辑），配套内层组件 MultiSelectEditor / RarityEditor / RequesterSelect / DateCellEditor；v2 统计组件：StatsBar（统计条，含三方占比速览迷你条）、StatsPanel（统一统计面板：负责人/提出人/稀有度/结转原因/来源五维度页签，负责人=成员运力为默认页签，含成员删除入口）、CarryDialog（结转确认弹层）
-  components/ui/       shadcn 组件（目前仅 sonner）
-e2e/          Playwright E2E：board.spec.ts（核心动线回归）、bugs.spec.ts（历史 bug 回归）、v2.spec.ts（v2.0 签收/原因/指纹/天气/徽章动线）、helpers.ts、pre-test.mjs（test:e2e 前置：杀 4173 残留服务 + 删测试库——**必须在 playwright 启动前跑**，webServer 先启动会锁库，事后删必失败）；配置见 playwright.config.ts——独立测试库 e2e/test.db，先 npm run build 再起生产服务（4173 端口），串行执行（workers=1）零重试
-scripts/      start.mjs：跨平台生产启动（Windows 不支持 POSIX 的 VAR=x 语法）
-docs/         文档目录，按状态分类（规则见下文「文档组织」）：根目录放常驻核心文档（《周度发车机制设计方案.md》《会议纪要模板.md》《博弈机制科研探索-PM与开发显性博弈设计.md》v2.0 灵魂文档）；doing/ 进行中（《v2.1-Phase2-议价台与预测投票纸面运行手册.md》纸面运行中）；archived/ 已归档（v2.0-博弈机制落地计划、v2.2-表格体验与多数据库支持计划、稀有度方案、测试覆盖率计划、评审决策存档、发版计划与评审报告、半天点数制改造方案）
-dist/         构建产物（前端 dist/public + 服务端 dist/boot.js），由 npm run build 生成，勿手改
+api/          Hono + tRPC 薄后端：boot.ts（入口）/ vanRouter.ts（zod 校验与转发）/ ensureSchema*.ts（幂等建表）/ queries/（业务与 SQL：van.ts、audit.ts、tx.ts、dialect.ts 方言层）
+contracts/    前后端共享：vans.ts（班次编码）、enums.ts（枚举）——会被前端打包，勿 import 服务端依赖
+db/           三方言 Drizzle 表定义 schema.ts / schema.pg.ts / schema.mysql.ts + 种子脚本
+src/          React 前端：pages/BoardPage.tsx（看板页）、components/（单元格编辑器 + 统计组件）、lib/、providers/
+e2e/          Playwright E2E（board / bugs / v2 三套 + helpers.ts + pre-test.mjs）
+scripts/      start.mjs：跨平台生产启动
+docs/         文档目录（生命周期见下文「文档组织」）
+dist/         构建产物，勿手改
 ```
 
 ## 文档组织（docs/ 生命周期）
 
 文档按状态分目录，状态流转 = 物理移动：
 
-- `docs/` 根目录：**常驻文档**——长期有效的核心设计与规范（如《周度发车机制设计方案.md》），不随版本归档；
-- `docs/doing/`：**进行中**——已立项、正在实施或等待实施的本版本文档（如发版计划），事项完成后移入 archived/；
-- `docs/archived/`：**已归档**——已定稿实施或评审结束的文档，只作历史查阅，不再更新（如确需修订，在文档内追加注记而非改写结论）。
-
-新增文档时先想清它属于哪一类；发版完成等节点主动把 doing/ 里已完成的文档移入 archived/。
+- `docs/` 根目录：**常驻文档**——长期有效的核心设计与规范（如《周度发车机制设计方案.md》《会议纪要模板.md》《博弈机制科研探索-PM与开发显性博弈设计.md》），不随版本归档；
+- `docs/doing/`：**进行中**——已立项、正在实施的文档，事项完成后移入 archived/；
+- `docs/archived/`：**已归档**——只作历史查阅，不再更新（如确需修订，在文档内追加注记而非改写结论）。
 
 ## 构建与测试命令
 
 ```bash
 npm install        # 安装依赖
 npm run dev        # 开发模式 http://localhost:3000（前后端同端口，首次启动自动建表）
-npm test           # vitest run：班次编码、多选纯函数、稀有度/统计纯函数、mock DB 与内存 SQLite 的业务逻辑（结转/归档/拖拽排序）；TEST_PG_URL/TEST_MYSQL_URL 存在时加跑 pg/mysql 方言变体（CI 容器注入，本地缺省 skip）
+npm test           # vitest run（TEST_PG_URL/TEST_MYSQL_URL 存在时加跑 pg/mysql 方言变体，本地缺省 skip）
 npm run test:e2e   # Playwright E2E（先 build 再起生产服务，独立测试库 e2e/test.db，串行零重试）
-npm run test:e2e:ui # Playwright UI 模式（本地调试用例用）
-npm run check      # tsc -b 类型检查（app / node / server 三个 tsconfig project reference）
-npm run lint       # eslint（flat config，typescript-eslint + react-hooks + react-refresh）
+npm run check      # tsc -b 类型检查
+npm run lint       # eslint
 npm run format     # prettier --write .
-npm run build      # vite build → dist/public；esbuild 打包 api/boot.ts → dist/boot.js（better-sqlite3 为 external）
-npm start          # 生产模式：node scripts/start.mjs（跨平台，端口可用 PORT 覆盖，默认 3000）
-npm run db:seed    # 写入示例成员（tsx db/seed.ts，全新库可用，会先建表）；db:seed:demo 生成全虚构演示库（data/demo.db，v2.0 统计块全有读数）
+npm run build      # vite build → dist/public；esbuild 打包 api/boot.ts → dist/boot.js
+npm start          # 生产模式：node scripts/start.mjs（跨平台，端口可用 PORT 覆盖）
+npm run db:seed    # 写入示例成员（会先自动建表）；db:seed:demo 生成全虚构演示库（data/demo.db）
 ```
 
-提交改动前至少跑 `npm test`、`npm run check`、`npm run lint`、`npx prettier --check .`（格式不符先 `npm run format`）；涉及 UI 交互的改动建议补跑 `npm run test:e2e`。
+提交改动前至少跑 `npm test`、`npm run check`、`npm run lint`、`npx prettier --check .`；涉及 UI 交互的改动建议补跑 `npm run test:e2e`。
 
 ## CI（GitHub Actions）
 
-`.github/workflows/ci.yml`，push 与 PR 触发，三个 job：
-
-- `check`：prettier --check → eslint → tsc → vitest（与本地门禁一致）；附带 postgres:16 / mysql:8 service 容器并注入 `TEST_PG_URL` / `TEST_MYSQL_URL`——方言变体测试（`dialect.pg/mysql.test.ts`）在 CI 上真实跑 pg/mysql，本地无环境时自动 skip
-- `e2e`：安装 Chromium 后跑 `npm run test:e2e`，失败上传 playwright-report 产物
-- `docker`：`docker build` + 容器冒烟（首页 200、`/api/trpc/ping` 返回 ok）——Docker 构建正确性由 CI 保证，本机无需装 Docker
-
-另有 `.github/workflows/release.yml`：推送 `v*` tag 时触发，构建镜像推 GHCR 并创建带 zip 附件的 GitHub Release（发版流程见 README「部署」一节）。
+`.github/workflows/ci.yml`（push 与 PR 触发）三个 job：`check`（prettier → eslint → tsc → vitest，附 pg/mysql service 容器真实跑方言变体）、`e2e`、`docker`（构建 + 容器冒烟，本机无需装 Docker）。另有 `release.yml`：推 `v*` tag 构建镜像推 GHCR 并创建带 zip 附件的 Release（流程见 README「部署」）。
 
 ## 代码风格与约定
 
-- 语言：TypeScript strict 模式，ESM（`"type": "module"`），前后端均 ESM。
-- 注释与业务文案使用中文；代码标识符用英文。
-- 路径别名：`@/*` → `src/*`，`@contracts/*` → `contracts/*`，`@db/*` → `db/*`（vite、vitest、tsconfig 三处都有配置，改动需同步）。
-- 服务端入参一律用 zod 校验（见 `api/vanRouter.ts`），业务错误抛 `TRPCError`。
+- TypeScript strict + ESM；路径别名 `@/*` → `src/*`、`@contracts/*` → `contracts/*`、`@db/*` → `db/*`（vite / vitest / tsconfig 三处都有配置，改动需同步）。
+- 服务端入参一律 zod 校验（`api/vanRouter.ts`），业务错误抛 `TRPCError`；分层约定：router 只做校验与转发，业务逻辑与 SQL 写在 `api/queries/`，可纯函数化的逻辑与 DB 访问分离。
 - **写操作（mutation）一律带可选 `actor` 软身份参数**并传给数据层（审计日志用）；前端从 `src/lib/actor.ts` 读「我是谁」附带；`tasks.confirm` 的 actor 必填且必须是成员。
-- `contracts/` 会被前端打包，**不要在 contracts 里 import 服务端依赖**（如 @trpc/server），错误抛带中文说明的 `Error` 即可。
-- 分层约定：router 只做 zod 校验与转发，业务逻辑与 SQL 写在 `api/queries/`；可纯函数化的逻辑（如 `toStrandedTask`、`taskStatsOf`）与 DB 访问分离，便于无库单测。
+- `contracts/` 会被前端打包，**不要 import 服务端依赖**（如 @trpc/server），错误抛带中文说明的 `Error` 即可。
 - tRPC 端到端类型共享：前端通过 `import type { AppRouter } from "../../api/router"` 获得类型，改路由签名后前端调用点会自动报错。
 - 前端变更后统一 `utils.invalidate()` 刷新，错误统一 `toast.error`；校验失败时同时 invalidate 让网格回滚到服务端数据。
 
 ## 测试策略
 
-- 单测框架 Vitest，`vitest.config.ts` 只收集 `api/**/*.test.ts`、`api/**/*.spec.ts`、`contracts/**/*.test.ts`（E2E 由 Playwright 单独跑，见 `playwright.config.ts`）。
-- 现有单测：`contracts/vans.test.ts`（班次编码规则，含跨月从 A 重计与结转目标推导）、`contracts/multi-select.test.ts`（多选标签纯函数）、`api/queries/van.test.ts` 与 `van.unit.test.ts`（`toStrandedTask` / `taskStatsOf` 等纯函数）、`van.v2.test.ts`（v2.0 六件套纯函数：`isConfirmed` / `requesterStatsOf` / `rarityInflationOf` / `sourceStatsOf` / `suggestedLoadOf` / `carryReasonStatsOf` / `badgesOf`）、`van.write.test.ts`（发新车/成员/快件增改删写路径 + **审计同事务原子性**，套件 sqlite 入口）、`van.mock.test.ts`（仅并发异常注入——撞主键/唯一约束的窗口期行为——与写路径前置校验早退；行为回归一律走套件/内存库）、`van.reorder.test.ts`（行内拖拽排序，套件 sqlite 入口）、`van.confirm.test.ts`（签收制 / 结转原因 / 审计接线 / weeklyStats 扩展，套件 sqlite 入口）、`audit.test.ts`（序列化格式锁定、hash 链、篡改断链检测、appendAudit 落库）、`api/vanRouter.test.ts`（`memberTag` 标签校验 + `source`/`carryReason` 枚举校验）、`api/ensureSchema.test.ts`（`LEGACY_RARITY_TO` 完整性、半天点数迁移、v2.0 签收一次性回填与 source 回填）、`api/schemaDrift.test.ts`（三方言 schema 表名/列名/可空性/默认值防漂移）、`api/queries/dialect.test.ts`（DB_DIALECT 解析、insertReturningId 的 mysql insertId 分支 mock）。
-- E2E（`e2e/`）：Playwright 跑真实部署形态（先 build 再起服务），`board.spec.ts` 覆盖核心动线（发新车 → 录快件 → 编辑 → 送达 → 行拖拽排序 → 结转 → 归档只读），`bugs.spec.ts` 回归历史 bug，`v2.spec.ts` 覆盖 v2.0 动线（签收 → 未签收提示 → 结转选原因 → 归档拒签 → 指纹复制 → 昨日天气 → 三方占比 → 折叠面板 → 送达连击/整班准点徽章）；共享一个测试库、班次跨用例累积，必须串行（workers=1）、零重试（失败即真实回归）。
-- 数据层行为回归抽成三方共享套件（`van.write.suite.ts` / `van.confirm.suite.ts` / `van.reorder.suite.ts`）：sqlite 变体由 `van.write/confirm/reorder.test.ts` 用内存库 + mock connection 跑；pg/mysql 变体由 `dialect.pg.test.ts` / `dialect.mysql.test.ts` 用真实连接跑（`TEST_PG_URL` / `TEST_MYSQL_URL` 存在时启用，缺省 `describe.skipIf` 跳过）。变体文件第一个 import 必须是 `testEnv.pg/mysql.ts`（ESM 按序求值，业务模块的 `getSchema()` 在加载时固化方言）；隔离靠每用例前 ensureSchema + `cleanAllTables` 清表（`dialectHarness.ts`），自增 id 不复位，用例不得假设 id 从 1 起。
-- 偏好为纯函数写无库单测；涉及 DB 的逻辑尽量拆出纯函数再测；数据层行为优先用**内存 SQLite 跑真实 `ensureSchema`**（`van.reorder.test.ts` / `van.confirm.test.ts` 模式），mock DB 只用于历史遗留用例与并发异常注入。
-- 新增业务规则（尤其是 `contracts/` 与 `api/queries/` 中的校验逻辑）应配套测试；改审计序列化格式必须同步改锁定单测。
+- Vitest 只收集 `api/**` 与 `contracts/**` 的测试文件（`vitest.config.ts`）；E2E 由 Playwright 单独跑。
+- 偏好：业务逻辑拆纯函数写无库单测；数据层行为优先用**内存 SQLite 跑真实 `ensureSchema`**；mock DB 只用于并发异常注入。
+- 数据层行为回归抽成三方共享套件（`api/queries/van.*.suite.ts`）：sqlite 变体内存库跑，pg/mysql 变体由 `dialect.pg/mysql.test.ts` 在 `TEST_PG_URL` / `TEST_MYSQL_URL` 存在时跑；变体文件第一个 import 必须是 `testEnv.pg/mysql.ts`（ESM 加载序固化方言）；隔离靠每用例前 ensureSchema + `cleanAllTables`，自增 id 不复位，用例不得假设 id 从 1 起。
+- E2E 共享一个测试库、班次跨用例累积：必须串行（workers=1）、零重试；`pre-test.mjs` 必须在 playwright 启动前跑。
+- 新增业务规则（尤其 `contracts/` 与 `api/queries/` 的校验逻辑）应配套测试；改审计序列化格式必须同步改锁定单测。
 
 ## 数据库与迁移
 
-- **多方言（v2.2）**：`DB_DIALECT=sqlite|postgres|mysql`（默认 sqlite，非法值启动报错退出非零）；`DATABASE_URL` 复用——sqlite 为文件路径，pg/mysql 为连接串。业务代码一份无方言 if：方言差异全部收敛在 `api/queries/dialect.ts`（受控 cast，运行时 db/schema 可为任一方言实例，类型统一标为 sqlite 形状）。
-- **启动时自动幂等建表**（`api/ensureSchema.ts` 按方言分发），开发与生产都无需手动迁移。
-- 新增列/表时必须**同步改三份 schema + ensureSchema**：`db/schema.ts` / `db/schema.pg.ts` / `db/schema.mysql.ts`（Drizzle 定义，防漂移单测 `api/schemaDrift.test.ts` 兜底）和 `api/ensureSchema.ts`（+ `ensureSchema.pg.ts` / `ensureSchema.mysql.ts` 建表 SQL）；sqlite 旧库补新列用 `try ALTER TABLE ... catch 忽略` 的幂等模式（参考 rarity / requester / source / confirmed_* 各列的写法）。
-- **无法幂等的值域迁移**（仅 sqlite 有历史库）用 `PRAGMA user_version` 门控只执行一次：0→1 半天点数 ×2，1→2 存量 done 视同已签收（v2.0）；pg/mysql 无历史库，`ensureSchema` 直接建最终形态并把当前版本 2 写入 `_dv_meta` 表（对应 sqlite 的 user_version）。
-- `npm run db:generate / db:migrate / db:push`（drizzle-kit）存在但不是主流程；`drizzle.config.ts` 只覆盖 sqlite 方言（pg/mysql 的 schema 与 DDL 手工维护，防漂移单测兜底），默认 url 与运行时一致（`data/delivery_van.db`）。
+- 三方言一份业务代码：方言差异全部收敛在 `api/queries/dialect.ts`；启动时自动幂等建表（`api/ensureSchema*.ts` 按方言分发），无需手动迁移。
+- **新增列/表必须同步改三份 schema + ensureSchema**：`db/schema.ts` / `schema.pg.ts` / `schema.mysql.ts` 与 `api/ensureSchema.ts`（+ `.pg/.mysql` 建表 SQL），防漂移单测 `api/schemaDrift.test.ts` 兜底；sqlite 旧库补列用 `try ALTER TABLE ... catch 忽略` 的幂等模式。
+- 无法幂等的值域迁移（仅 sqlite 有历史库）用 `PRAGMA user_version` 门控只执行一次；pg/mysql 对应 `_dv_meta` 版本表。
+- drizzle-kit 脚本（`db:generate/migrate/push`）存在但不是主流程，`drizzle.config.ts` 只覆盖 sqlite 方言。
 
 ## 部署
 
-- `Dockerfile` 多阶段构建（`node:22-slim`）：构建阶段 `npm ci && npm run build`；运行阶段只从构建阶段 COPY `better-sqlite3` 与 `node-addon-api` 两个包（dist/boot.js 已 bundle 其余全部依赖，含 postgres.js / mysql2），`node dist/boot.js`，暴露 3000 端口。
-- better-sqlite3 是原生模块，服务端打包时以 `--external:better-sqlite3` 排除，运行时二进制来自构建阶段在容器内 `npm ci` 安装的 linux 版本。即使 pg/mysql 部署也保留它：connection.ts 静态 import 会在启动时加载该模块。
-- 数据库通过 `DB_DIALECT`（默认 sqlite）+ `DATABASE_URL` 指定：sqlite 是文件路径，容器化部署必须挂载数据卷（`-v ...:/app/data`），否则容器重建丢数据；pg/mysql 是连接串，无需挂卷。示例见 `README.md`。
+多阶段 Dockerfile（`node:22-slim`）构建 `dist/`，容器内 `node dist/boot.js`；better-sqlite3 为 external 原生模块，**即使 pg/mysql 部署也保留它**（connection.ts 静态 import 启动即加载）。sqlite 容器部署必须挂载数据卷。详见 `README.md`「部署」。
 
 ## 安全注意事项
 
