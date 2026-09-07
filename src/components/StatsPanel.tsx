@@ -188,9 +188,11 @@ function RequesterView({ stats }: { stats: VanStats | undefined }) {
   );
 }
 
-/** 稀有度通胀（主条 = 滞留/总数：滞留越多条越高，直接暴露通胀） */
+/** 稀有度构成 + 通胀（主条 = 滞留/总数：滞留越多条越高，直接暴露通胀；
+ * 「占 N%」= 构成占比——v1 统计条的稀有度构成自 v2.0 起在此安家） */
 function RarityView({ stats }: { stats: VanStats | undefined }) {
   const rows = stats?.inflation.byRarity ?? [];
+  const allTotal = rows.reduce((s, r) => s + r.total, 0);
   return (
     <div>
       <h3 className="mb-2 text-xs font-bold text-muted-foreground">
@@ -213,7 +215,8 @@ function RarityView({ stats }: { stats: VanStats | undefined }) {
                   color="rgba(245, 158, 11, 0.6)"
                 />
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  共 {r.total} · 送达 {r.done} · 滞留 {r.stranded}
+                  共 {r.total} · 送达 {r.done} · 滞留 {r.stranded} · 占{" "}
+                  {allTotal > 0 ? Math.round((r.total / allTotal) * 100) : 0}%
                 </span>
               </li>
             ))}
