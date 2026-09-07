@@ -393,6 +393,60 @@ export async function updateMemberCapacity(id: number, capacity: number) {
   return listMembers();
 }
 
+/**
+ * 删除成员（有守卫的硬删）：名字在任何快件上留过痕迹即拒绝——
+ * 负责人/提出人/签收人全是纯文本名字引用（无外键），删了会留悬空标签弄脏统计，
+ * 且签收要求操作人是成员，有历史的成员必须保留。
+ * 入参用名字（members.name 唯一）：全领域身份本就是名字标签，统计区/我是谁都只持名字。
+ */
+export async function removeMember(name: string, actor?: string) {
+  const db = getDb();
+  const [member] = await db
+    .select({ id: members.id })
+    .from(members)
+    .where(eq(members.name, name))
+    .limit(1);
+  if (!member)
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: `成员「${name}」不存在`,
+    });
+
+  const owned = await db
+    .select({ taskId: taskOwners.taskId })
+    .from(taskOwners)
+    .where(eq(taskOwners.ownerName, name));
+  const requested = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(eq(tasks.requester, name));
+  const confirmed = await db
+    .select({ id: tasks.id })
+    .from(tasks)
+    .where(eq(tasks.confirmedBy, name));
+  if (owned.length + requested.length + confirmed.length > 0) {
+    throw new TRPCError({
+      code: "CONFLICT",
+      message: `成员「${name}」已有快件记录（负责 ${owned.length} 件 / 提出 ${requested.length} 件 / 签收 ${confirmed.length} 件），不可删除`,
+    });
+  }
+
+  // 删除与审计同事务（整行删除记 '*'，与 addMember 对称）
+  await runTx(db, async (tx) => {
+    await qRun(tx.delete(members).where(eq(members.id, member.id)));
+    await appendAudit(tx, actor, [
+      {
+        entity: "member",
+        entityId: name,
+        field: "*",
+        oldValue: name,
+        newValue: null,
+      },
+    ]);
+  });
+  return listMembers();
+}
+
 /* ── 快件 ── */
 
 /** 班次是否已结转归档：只要结转过（存在 carried 任务），整班只读不可改 */

@@ -103,6 +103,9 @@ export default function BoardPage() {
     onError,
   });
 
+  /* 有守卫的硬删：onSuccess 在调用点按名字关闭（清「我是谁」需要闭包住被删名字） */
+  const removeMemberM = trpc.van.members.remove.useMutation({ onError });
+
   /* ── mutations ── */
 
   const dispatchM = trpc.van.vans.dispatch.useMutation({
@@ -926,6 +929,33 @@ export default function BoardPage() {
                       滞留 {m.carriedIn}
                       {overloaded && "（超载！）"}
                     </span>
+                    <button
+                      className="btn btn-danger shrink-0 px-2 py-1 text-xs"
+                      title="删除成员（有快件记录的成员不可删除）"
+                      onClick={() => {
+                        if (
+                          !window.confirm(
+                            `删除成员「${m.name}」？（负责过/提出过/签收过快件的成员不可删除）`,
+                          )
+                        )
+                          return;
+                        removeMemberM.mutate(
+                          { name: m.name, actor: actorArg },
+                          {
+                            onSuccess: () => {
+                              toast.success(`成员「${m.name}」已删除`);
+                              if (actor === m.name) {
+                                setActor(null);
+                                saveActor(null);
+                              }
+                              refresh();
+                            },
+                          },
+                        );
+                      }}
+                    >
+                      删除
+                    </button>
                   </li>
                 );
               })}

@@ -12,6 +12,7 @@ import {
   listMembers,
   listTasksByVan,
   listVans,
+  removeMember,
   removeTask,
   reorderTasks,
   updateMemberCapacity,
@@ -86,6 +87,10 @@ export const vanRouter = createRouter({
         z.object({ id: idField, capacity: z.number().int().min(0).max(14) }),
       )
       .mutation(({ input }) => updateMemberCapacity(input.id, input.capacity)),
+    /** 有守卫的硬删：零历史成员可删，当过负责人/提出人/签收人的拒绝（详见 queries/van.ts removeMember） */
+    remove: publicQuery
+      .input(z.object({ name: memberTag, actor: actorField }))
+      .mutation(({ input }) => removeMember(input.name, input.actor)),
   }),
 
   /* ── 快件 ── */

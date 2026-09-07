@@ -380,4 +380,46 @@ test.describe("滞留件结转与归档", () => {
     await expect(page.getByRole("button", { name: "+ 快件" })).toBeEnabled();
     await expect(page.getByText("已结转 · 归档")).toBeHidden();
   });
+
+  test("成员删除：零历史可删，有快件记录的成员被拒", async ({ page }) => {
+    await waitForBoard(page);
+    await dispatchVan(page);
+    const van = await page.getByLabel("班次").inputValue();
+    await trpcCall(page, "van.members.add", { name: "手滑加错的" });
+    await trpcCall(page, "van.members.add", { name: "元老甲" });
+    await trpcCall(page, "van.tasks.add", {
+      van,
+      title: "元老甲的件",
+      owners: ["元老甲"],
+    });
+    await page.reload();
+    await expect(page.getByText("快递发车台")).toBeVisible();
+
+    // 成员运力行定位收窄到 section 内：sonner 的 toast 也渲染为 li，裸 locator("li") 会撞 strict mode
+    const memberSection = page
+      .locator("section")
+      .filter({ hasText: "成员运力" });
+
+    // 有快件记录：确认弹窗放行，服务端守卫拒绝，行保留并出错误提示
+    const veteranRow = memberSection
+      .locator("li")
+      .filter({ hasText: "元老甲" });
+    page.once("dialog", (d) => d.accept());
+    await veteranRow.getByRole("button", { name: "删除" }).click();
+    await expect(page.getByText("已有快件记录")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(veteranRow).toBeVisible();
+
+    // 零历史：删除成功，行消失
+    const typoRow = memberSection.locator("li").filter({
+      hasText: "手滑加错的",
+    });
+    page.once("dialog", (d) => d.accept());
+    await typoRow.getByRole("button", { name: "删除" }).click();
+    await expect(page.getByText("成员「手滑加错的」已删除")).toBeVisible({
+      timeout: 5000,
+    });
+    await expect(typoRow).toBeHidden({ timeout: 5000 });
+  });
 });

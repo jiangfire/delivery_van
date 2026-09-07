@@ -7,10 +7,12 @@ import { TRPCError } from "@trpc/server";
 import {
   addMember,
   addTask,
+  confirmTask,
   dispatchVan,
   listMembers,
   listTasksByVan,
   listVans,
+  removeMember,
   removeTask,
   updateTask,
 } from "./van";
@@ -63,6 +65,45 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
         await expect(addMember("张三", 5)).rejects.toThrow(TRPCError);
         await expect(addMember("张三", 5)).rejects.toThrow("已存在");
         expect(await listMembers()).toHaveLength(1);
+      });
+
+      it("零历史成员可删除，删除进审计链", async () => {
+        await addMember("临时工", 10);
+        const result = await removeMember("临时工", "管理员");
+        expect(result.map((x) => x.name)).not.toContain("临时工");
+        const del = (await ctx.db().select().from(S.auditLog)).find(
+          (a) => a.entity === "member" && a.oldValue === "临时工",
+        );
+        expect(del?.newValue).toBeNull();
+        expect(del?.actor).toBe("管理员");
+      });
+
+      it("当过负责人的成员不可删除", async () => {
+        await addMember("张三", 10);
+        await addTask({ van: "DV2607A", title: "甲", owners: ["张三"] });
+        await expect(removeMember("张三")).rejects.toThrow("不可删除");
+        expect((await listMembers()).map((x) => x.name)).toContain("张三");
+      });
+
+      it("当过提出人的成员不可删除（即使没当过负责人）", async () => {
+        await addMember("李四", 10);
+        await addTask({ van: "DV2607A", title: "甲", requester: "李四" });
+        await expect(removeMember("李四")).rejects.toThrow("不可删除");
+        expect((await listMembers()).map((x) => x.name)).toContain("李四");
+      });
+
+      it("签收过快件的成员不可删除", async () => {
+        await addMember("张三", 10); // 提出人
+        await addMember("李四", 10); // 签收人
+        await addTask({ van: "DV2607A", title: "甲", requester: "张三" });
+        const [t] = await listTasksByVan("DV2607A");
+        await updateTask(t.id, { status: "done" });
+        await confirmTask(t.id, "李四");
+        await expect(removeMember("李四")).rejects.toThrow("不可删除");
+      });
+
+      it("删除不存在的成员报 NOT_FOUND", async () => {
+        await expect(removeMember("查无此人")).rejects.toThrow("不存在");
       });
     });
 
