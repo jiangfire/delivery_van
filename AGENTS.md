@@ -7,7 +7,7 @@
 delivery_van 是一个**周度发车管理工具**，机制设计见 `docs/周度发车机制设计方案.md`。核心隐喻：团队每周五发一班"厢式快递车"，任务是快件，周五验收只看"这班的件送没送到"；没送完的滞留件跟下一班车走。
 
 - 当前分支版本 **v2.2.0**，代号 `Robotics;Notes`（机器人笔记，谱系见 `README.md`）——v2.2「表格体验与多数据库支持」（长文本列显隐开关、三方言 + 写锁串行化）与 v2.0 Phase 1「博弈机制」（签收制、链式审计日志、统计三件套、昨日天气、结转原因、徽章，设计见 `docs/博弈机制科研探索-PM与开发显性博弈设计.md`、落地计划见 `docs/archived/v2.0-博弈机制落地计划.md`）随 v2.2.0 **合并首发**（v2.0/v2.1 未独立发版，2026-09-04 裁定）；**Phase 2「议价台 + 预测投票纸面运行」纸面运行中（2026-09-01 启动）——零开发零发版，纯会议流程，手册见 `docs/doing/v2.1-Phase2-议价台与预测投票纸面运行手册.md`，跑 4 班后 Gate 2 复盘裁决是否工具化（v2.1.0）**；v1.x 代号 `niulai`。
-- 单页应用：一个看板页（`BoardPage`）承载全部功能——班次切换、快件表（AG Grid 行内编辑）、统计条、成员运力、折叠统计面板（v2 记分卡/通胀/瀑布）。
+- 单页应用：一个看板页（`BoardPage`）承载全部功能——班次切换、快件表（AG Grid 行内编辑）、统计条、统一统计面板（维度页签：负责人运力 / 提出人记分卡 / 稀有度通胀 / 滞留原因瀑布 / 三方占比明细，负责人默认，设计见 `docs/doing/统计面板统一设计方案.md`）。
 - **快件即一切**：工作条目只有一种——**快件**（`tasks` 表），直接携带稀有度与提出人字段，在表格内新增/编辑/删除。早期的「任务大厅/委托」（`pool_items` 表）已合并进快件：表结构保留但**已废弃不再读写**（`db/schema.ts` 中标记 `@deprecated`），稀有度方案沿革见 `docs/archived/任务大厅与稀有度分级设计方案.md`。
 - 无账号体系、无鉴权：小团队内部工具，任务负责人用标签（多人）。成员删除是**有守卫的硬删**（2026-09-07 决策，方案见 `docs/doing/成员删除功能设计方案.md`）：零历史成员可删（删除与审计同事务），名字出现在任何快件上（`task_owners.owner_name` / `tasks.requester` / `tasks.confirmed_by`，全是无外键的纯文本引用）即拒绝——悬空标签会弄脏统计，且签收要求操作人是成员。
 - 代码与文档注释主要使用**中文**，新代码请沿用中文注释风格。
@@ -65,12 +65,12 @@ db/
 src/          React 前端
   main.tsx      入口：BrowserRouter + TRPCProvider
   App.tsx       路由（仅看板页，path="*" 通配是有意的 SPA 回退）
-  pages/BoardPage.tsx  看板主页面（AG Grid 快件表 + 统计条 + 成员运力 + 班次切换 + 折叠统计面板 + 结转确认弹层 + 我是谁）
+  pages/BoardPage.tsx  看板主页面（AG Grid 快件表 + 统计条 + 班次切换 + 统一统计面板 + 结转确认弹层 + 我是谁）
   lib/trpc.ts   createTRPCReact<AppRouter>()，导出 RouterOutputs / VanStats 共享类型
   lib/actor.ts  「我是谁」软身份存取（localStorage）
   lib/display.ts 看板展示层共享工具（稀有度着色/状态与来源标签映射/档位分桶/比率格式化）
   providers/trpc.tsx   QueryClient + httpBatchLink(/api/trpc) + superjson
-  components/   AG Grid 自定义单元格编辑器：MultiSelectCellEditor（负责人多选）、RarityCellEditor（稀有度）、RequesterCellEditor（提出人）、DateCellEditorComp（送达日期）——四者均由 popupCellEditor.tsx 的 createPopupCellEditor 工厂生成（Portal 弹层 + 类适配的通用逻辑），配套内层组件 MultiSelectEditor / RarityEditor / RequesterSelect / DateCellEditor；v2 统计组件：StatsBar（统计条）、StatsPanel（折叠面板）、CarryDialog（结转确认弹层）
+  components/   AG Grid 自定义单元格编辑器：MultiSelectCellEditor（负责人多选）、RarityCellEditor（稀有度）、RequesterCellEditor（提出人）、DateCellEditorComp（送达日期）——四者均由 popupCellEditor.tsx 的 createPopupCellEditor 工厂生成（Portal 弹层 + 类适配的通用逻辑），配套内层组件 MultiSelectEditor / RarityEditor / RequesterSelect / DateCellEditor；v2 统计组件：StatsBar（统计条，含三方占比速览迷你条）、StatsPanel（统一统计面板：负责人/提出人/稀有度/结转原因/来源五维度页签，负责人=成员运力为默认页签，含成员删除入口）、CarryDialog（结转确认弹层）
   components/ui/       shadcn 组件（目前仅 sonner）
 e2e/          Playwright E2E：board.spec.ts（核心动线回归）、bugs.spec.ts（历史 bug 回归）、v2.spec.ts（v2.0 签收/原因/指纹/天气/徽章动线）、helpers.ts、pre-test.mjs（test:e2e 前置：杀 4173 残留服务 + 删测试库——**必须在 playwright 启动前跑**，webServer 先启动会锁库，事后删必失败）；配置见 playwright.config.ts——独立测试库 e2e/test.db，先 npm run build 再起生产服务（4173 端口），串行执行（workers=1）零重试
 scripts/      start.mjs：跨平台生产启动（Windows 不支持 POSIX 的 VAR=x 语法）

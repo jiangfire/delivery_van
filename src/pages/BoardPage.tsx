@@ -166,6 +166,7 @@ export default function BoardPage() {
   const { mutate: removeTask } = removeTaskM;
   const { mutate: addMember } = addMemberM;
   const { mutate: confirmTask } = confirmM;
+  const { mutate: removeMember } = removeMemberM;
 
   /* ── 签收：done 且有提出人且未签收 → 待签收徽标，一次点击 ── */
   const onConfirm = useCallback(
@@ -178,6 +179,29 @@ export default function BoardPage() {
     },
     [actor, confirmTask],
   );
+
+  /* ── 删除成员（有守卫硬删）：确认与「我是谁」联动清空收在调用点（onSuccess 需闭包被删名字） ── */
+  const onRemoveMember = (name: string) => {
+    if (
+      !window.confirm(
+        `删除成员「${name}」？（负责过/提出过/签收过快件的成员不可删除）`,
+      )
+    )
+      return;
+    removeMember(
+      { name, actor: actorArg },
+      {
+        onSuccess: () => {
+          toast.success(`成员「${name}」已删除`);
+          if (actor === name) {
+            setActor(null);
+            saveActor(null);
+          }
+          refresh();
+        },
+      },
+    );
+  };
 
   /* ── 徽章轻提示：状态变化时 sonner 单次提示（首次加载不提示） ── */
   const badges = stats?.badges;
@@ -899,72 +923,8 @@ export default function BoardPage() {
           </div>
         </div>
 
-        {/* ── 成员运力统计 ── */}
-        {stats && stats.members.length > 0 && (
-          <section className="glass-card p-5">
-            <h2 className="mb-4 text-sm font-bold">
-              成员运力{" "}
-              <span className="text-xs font-normal text-muted-foreground">
-                （按标签自动统计）
-              </span>
-            </h2>
-            <ul className="space-y-3">
-              {stats.members.map((m) => {
-                const overloaded = m.assigned > m.capacity;
-                return (
-                  <li
-                    key={m.name}
-                    className="glass-sm flex items-center gap-4 px-4 py-3 text-sm"
-                  >
-                    <span className="w-20 truncate font-semibold">
-                      {m.name}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      运力 {m.capacity} 点
-                    </span>
-                    <span
-                      className={`flex-1 text-xs ${overloaded ? "font-bold text-red-500" : "text-muted-foreground"}`}
-                    >
-                      已装 {m.assigned} 点 · {m.taskCount} 件 · 送达 {m.done} ·
-                      滞留 {m.carriedIn}
-                      {overloaded && "（超载！）"}
-                    </span>
-                    <button
-                      className="btn btn-danger shrink-0 px-2 py-1 text-xs"
-                      title="删除成员（有快件记录的成员不可删除）"
-                      onClick={() => {
-                        if (
-                          !window.confirm(
-                            `删除成员「${m.name}」？（负责过/提出过/签收过快件的成员不可删除）`,
-                          )
-                        )
-                          return;
-                        removeMemberM.mutate(
-                          { name: m.name, actor: actorArg },
-                          {
-                            onSuccess: () => {
-                              toast.success(`成员「${m.name}」已删除`);
-                              if (actor === m.name) {
-                                setActor(null);
-                                saveActor(null);
-                              }
-                              refresh();
-                            },
-                          },
-                        );
-                      }}
-                    >
-                      删除
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </section>
-        )}
-
-        {/* ── 统计面板（默认折叠） ── */}
-        <StatsPanel stats={stats} />
+        {/* ── 统一面板（成员运力默认页签 + 复盘维度页签） ── */}
+        <StatsPanel stats={stats} onRemoveMember={onRemoveMember} />
 
         {/* ── 结转确认弹层 ── */}
         {carryAsk && (

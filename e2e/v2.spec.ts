@@ -166,17 +166,26 @@ test.describe("v2 签收与博弈机制", () => {
     });
     await expect(page.getByText("探索 100%")).toBeVisible({ timeout: 5000 });
 
-    // 折叠统计面板（默认收起，点开可见记分卡 / 通胀 / 瀑布三块）
-    await page.getByText("统计面板（v2）").click();
+    // 统一面板：负责人（成员运力）为默认页签常驻，复盘维度点页签切换
+    await expect(page.getByText("成员运力（按标签自动统计）")).toBeVisible();
+    await page.getByRole("button", { name: "提出人", exact: true }).click();
     await expect(
       page.getByText("提出人记分卡（送达 = 签收口径）"),
     ).toBeVisible();
+    await page.getByRole("button", { name: "稀有度", exact: true }).click();
     await expect(page.getByText("稀有度通胀（done × 滞留交叉）")).toBeVisible();
+    await page.getByRole("button", { name: "结转原因", exact: true }).click();
     await expect(
       page.getByText("滞留原因瀑布（本班结转出去的件，无人名排序）"),
     ).toBeVisible();
     // 本班无结转出去的件 → 瀑布空态
     await expect(page.getByText("本班暂无结转出去的滞留件")).toBeVisible();
+    // 来源页签：统计条迷你条的同口径明细（本班 1 件探索件 = 100%）
+    await page.getByRole("button", { name: "来源", exact: true }).click();
+    await expect(
+      page.getByText("三方占比（统计条迷你条的同口径明细）"),
+    ).toBeVisible();
+    await expect(page.getByText("1 件 · 100%")).toBeVisible();
   });
 
   test("送达连击徽章：成员连续两班负责快件零滞留点亮", async ({ page }) => {
