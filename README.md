@@ -23,7 +23,7 @@ v2.0 起（Phase 1）叠加一层**轻博弈机制**，全部是 v1 行为的叠
 - **昨日天气**：建议装载上限 = 上一班实际送达点数，只提示不拦截
 - **徽章 v1**：🚚 整班准点、📦 送达连击，实时推导不落库
 
-v2.2 起看板表格支持横向滚动、长文本列显隐开关与行高自适应；数据层支持 **SQLite（默认）/ PostgreSQL / MySQL** 三方言（`DB_DIALECT` + `DATABASE_URL` 切换）。
+v2.2 起看板表格支持横向滚动、长文本列显隐开关与行高自适应；数据层支持 **SQLite（默认）/ PostgreSQL / MySQL** 三方言（`DB_DIALECT` + `DATABASE_URL` 切换）。v2.3 起统计面板统一为五维度页签（负责人运力为默认页签），成员支持有守卫删除。
 
 设计细节见 [`docs/周度发车机制设计方案.md`](docs/周度发车机制设计方案.md)、[`docs/博弈机制科研探索-PM与开发显性博弈设计.md`](docs/博弈机制科研探索-PM与开发显性博弈设计.md)（v2.0 灵魂文档）与 [`docs/archived/v2.0-博弈机制落地计划.md`](docs/archived/v2.0-博弈机制落地计划.md)。
 
@@ -35,10 +35,10 @@ v2.2 起看板表格支持横向滚动、长文本列显隐开关与行高自适
 
 ## 版本谱系
 
-| 版本 | 代号                        | 主题                                                                                                                                                                    |
-| ---- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v1.x | `niulai`                    | 看板基座：快件表 / 半天点数制（v1.1）/ 行内拖拽排序（v1.2）                                                                                                             |
-| v2.x | `STEINS;GATE`（命运石之门） | 博弈机制（v2.0）：签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章；表格体验与多数据库（v2.2）：横向滚动 / 长文本列开关 / 自动换行 / 三方言 + 写锁串行化 |
+| 版本 | 代号                        | 主题                                                                                                                                                                                                                             |
+| ---- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.x | `niulai`                    | 看板基座：快件表 / 半天点数制（v1.1）/ 行内拖拽排序（v1.2）                                                                                                                                                                      |
+| v2.x | `STEINS;GATE`（命运石之门） | 博弈机制（v2.0）：签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章；表格体验与多数据库（v2.2）：横向滚动 / 长文本列开关 / 自动换行 / 三方言 + 写锁串行化；统计面板与成员管理（v2.3）：五维度页签 / 成员有守卫删除 |
 
 > v2.0 与 v2.1（Phase 2 纸面运行，零发版）未独立发版——v2.0 随 v2.2.0 合并首发（2026-09 裁定）。代号是主版本线代号：v1.x.y 全系 `niulai`，v2.x.y 全系 `STEINS;GATE`。
 
@@ -90,8 +90,8 @@ CI（GitHub Actions）覆盖以上门禁、Playwright E2E 与 Docker 构建冒�
 **方式一 · Docker**（镜像在 GitHub Container Registry，也可自行 `docker build`）：
 
 ```bash
-docker pull ghcr.io/jiangfire/delivery_van:v2.2.0
-docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v2.2.0
+docker pull ghcr.io/jiangfire/delivery_van:v2.3.0
+docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v2.3.0
 ```
 
 ⚠️ sqlite（默认方言）务必挂载数据卷（`-v ...:/app/data`），否则容器重建后数据全部丢失；库文件路径可用 `-e DATABASE_URL=...` 覆盖。用 PostgreSQL / MySQL 时无需挂卷，改为传连接串：
@@ -99,7 +99,7 @@ docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/deliver
 ```bash
 docker run -p 3000:3000 -e DB_DIALECT=postgres \
   -e DATABASE_URL=postgres://user:pass@host:5432/delivery_van \
-  ghcr.io/jiangfire/delivery_van:v2.2.0
+  ghcr.io/jiangfire/delivery_van:v2.3.0
 ```
 
 容器自动建表与「重建容器数据不丢」由 CI 的 docker job 持续验证（sqlite 路径）。
