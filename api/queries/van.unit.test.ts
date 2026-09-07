@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { rarityStatsOf, toStrandedTask } from "./van";
+import { toStrandedTask } from "./van";
 import type { Task } from "../../db/schema";
 
 // ── toStrandedTask ──
@@ -63,49 +63,5 @@ describe("toStrandedTask", () => {
     const carried = toStrandedTask(base, "DV2607B");
     expect(carried).not.toHaveProperty("id");
     expect(carried).not.toHaveProperty("createdAt");
-  });
-});
-
-// ── rarityStatsOf ──
-
-describe("rarityStatsOf", () => {
-  const task = (
-    rarity: Task["rarity"],
-    status: Task["status"],
-  ): Pick<Task, "rarity" | "status"> => ({ rarity, status });
-
-  it("按稀有度分桶，统计 total 与 done", () => {
-    const stats = rarityStatsOf([
-      task("ssr", "done"),
-      task("ssr", "todo"),
-      task("sr", "done"),
-    ]);
-    expect(stats).toEqual([
-      { rarity: "sr", total: 1, done: 1 },
-      { rarity: "ssr", total: 2, done: 1 },
-    ]);
-  });
-
-  it("空任务列表返回空数组", () => {
-    expect(rarityStatsOf([])).toEqual([]);
-  });
-
-  it("只返回有任务的桶", () => {
-    const stats = rarityStatsOf([task("n", "todo")]);
-    expect(stats).toEqual([{ rarity: "n", total: 1, done: 0 }]);
-  });
-
-  it("全部 done 的稀有度桶", () => {
-    const stats = rarityStatsOf([task("ssr", "done"), task("ssr", "done")]);
-    expect(stats).toEqual([{ rarity: "ssr", total: 2, done: 2 }]);
-  });
-
-  it("按 RARITIES 定义顺序返回", () => {
-    const stats = rarityStatsOf([
-      task("n", "todo"),
-      task("sr", "done"),
-      task("ssr", "doing"),
-    ]);
-    expect(stats.map((s) => s.rarity)).toEqual(["n", "sr", "ssr"]);
   });
 });

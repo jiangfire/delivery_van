@@ -62,26 +62,6 @@ export function toStrandedTask(
 }
 
 /**
- * 稀有度分桶：把任务按稀有度聚合为 { rarity, total, done } 列表。
- * 只返回有任务的桶，顺序按 RARITIES 定义。
- */
-export function rarityStatsOf(
-  rows: Pick<Task, "rarity" | "status">[],
-): { rarity: Rarity; total: number; done: number }[] {
-  const buckets = new Map<Rarity, { total: number; done: number }>();
-  for (const t of rows) {
-    const b = buckets.get(t.rarity) ?? { total: 0, done: 0 };
-    b.total += 1;
-    if (t.status === "done") b.done += 1;
-    buckets.set(t.rarity, b);
-  }
-  return RARITIES.filter((r) => buckets.has(r)).map((r) => ({
-    rarity: r,
-    ...buckets.get(r)!,
-  }));
-}
-
-/**
  * 班次任务统计（纯函数）：结转率 = 结转出去的任务数 / 总数（见设计方案「结转率」指标），
  * carriedIn 则记录本班承接的上一班滞留件数。
  */
@@ -1079,7 +1059,6 @@ export async function weeklyStats(van: string) {
   return {
     van,
     ...taskStats,
-    rarity: rarityStatsOf(rows),
     members: byMember,
     /* ── v2.0（Phase 1）统计扩展 ── */
     // 未签收：done 且不满足签收口径（自驱件视同签收，不计入）

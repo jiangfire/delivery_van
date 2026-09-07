@@ -1,5 +1,5 @@
 /* v2.0 Phase 1 统计纯函数（WP1 三件套 / WP4 昨日天气 / WP5 原因瀑布 / WP6 徽章 / WP3 签收口径）
- * 全部无库可测，与 van.test.ts 的 rarityStatsOf / taskStatsOf 同层。 */
+ * 全部无库可测，与 van.test.ts 的 taskStatsOf 同层。 */
 import { describe, expect, it } from "vitest";
 import {
   badgesOf,
