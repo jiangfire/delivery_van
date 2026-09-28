@@ -1,6 +1,6 @@
 # MCP 接入 todo（v1：只读先行，写工具开关控制）——✅ 已完成（2026-09-28）
 
-> 计划全文见 `tasks/plan.md`，一页纸提案见 `docs/doing/v2.4-MCP接入一页纸实施提案.md`。
+> 计划全文见 `tasks/archive/plan-v2.4-MCP接入规划.md`，一页纸提案见 `docs/archived/v2.4-MCP接入一页纸实施提案.md`。
 > 状态：**六个任务全部实施完毕，四件套 + e2e 全绿**。
 
 ## 阶段 1：地基（只读通路）
@@ -37,12 +37,12 @@
 - [x] 工具 description 用英文（仅 description 例外于「注释与业务文案使用中文」；参数名/错误文案/代码注释仍中文）
 - [x] 写工具默认**不注册**（`MCP_WRITES` 未设即 `tools/list` 无写工具）
 - [x] 不补 stdio 薄代理
-- [x] `docs/doing/` 一页纸实施提案 ✅ 已建
+- [x] `docs/archived/v2.4-MCP接入一页纸实施提案.md` 一页纸实施提案 ✅ 已建（随 v2.4.0 发布归档）
 
 ## 实施中发现并修正的问题（计划外的真 bug）
 
 - [x] **`vite.config.ts` 的 devServer `exclude` 吞掉 `/mcp`（dev 404 / prod 正常）**：原式 `/^\/(?!api\/).*$/` 把所有非 `/api/` 路径推给 Vite。已改为 `/^\/(?!(api|mcp)(\/|$)).*$/`，并补 `api/mcp/viteExclude.test.ts` 做回归守卫。**单测打 Hono 的 `app.fetch` 绕过 Vite 中间件，只有真跑 dev 模式才暴露。**
-- [x] **计划文档里的正则写错了**：规划时把 `/^\/(?!api\/).*$/` 误读为 `...\/$/`，还拿臆造的版本去 node 里"验证"，导致最初的风险判断完全错误。已修正 `tasks/plan.md`、一页纸、`api/boot.ts` 与 `vite.config.ts` 注释。
+- [x] **计划文档里的正则写错了**：规划时把 `/^\/(?!api\/).*$/` 误读为 `...\/$/`，还拿臆造的版本去 node 里"验证"，导致最初的风险判断完全错误。已修正 `tasks/archive/plan-v2.4-MCP接入规划.md`、一页纸、`api/boot.ts` 与 `vite.config.ts` 注释。
 
 ## 代码审查与修复（2026-09-28 第二轮）
 
@@ -53,7 +53,7 @@
 - [x] **P0-3** `boot.ts` 注释称 MCP 初始化「推迟到建表之后」但实际在 `ensureSchema` 之前。**已把注册真正挪到 `ensureSchema()` 之后**，注释为真且建表失败时不会留下指向未建表的端点；dev/prod 双模式复验通过
 - [x] **P0-4** `stats_by_van` description 让模型找 `definition` 字段（全仓无此字段）。已改为点名真实字段并写清 done 口径 vs 签收口径的差异
 - [x] **P1-5** `members_set_capacity` 是唯一无 actor 的写工具，而 `write.ts:12` 宣称「actor 必填」、测试名也宣称但实际只断言「空对象被拒」。**已让不变量为真**：`memberSetCapacityInput` 补 actor、tRPC 透传、`updateMemberCapacity` 补审计记账（`capacity` 字段，带 actor 与新旧值），并在内存 SQLite 套件加两条真实验证；测试改为直接断言「schema 形状里有 actor」且「actor 非 optional」
-- [x] **P2-6** `@modelcontextprotocol/hono` 是死依赖（全仓零 import），已卸载并修正 `tasks/plan.md` 措辞
+- [x] **P2-6** `@modelcontextprotocol/hono` 是死依赖（全仓零 import），已卸载并修正 `tasks/archive/plan-v2.4-MCP接入规划.md` 措辞
 - [x] **P2-7** `tasks_all` 无上限（与 `tasks_by_van` 口径矛盾），已补 `limit` + `truncated`
 - [x] **P2-8** `read.ts` 同模块混用静态与动态 import，已并为静态
 - [x] **P2-9** vite exclude 缺回归守卫，已补 `api/mcp/viteExclude.test.ts`（同时断言三处关于 `/mcp/` 的说法一致）
