@@ -12,6 +12,7 @@
     "noEmit": true,
     "strict": true,
     "esModuleInterop": true,
+    "resolveJsonModule": true,
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {

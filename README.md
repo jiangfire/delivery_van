@@ -35,10 +35,10 @@ v2.2 起看板表格支持横向滚动、长文本列显隐开关与行高自适
 
 ## 版本谱系
 
-| 版本 | 代号                        | 主题                                                                                                                                                                                                                             |
-| ---- | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| v1.x | `niulai`                    | 看板基座：快件表 / 半天点数制（v1.1）/ 行内拖拽排序（v1.2）                                                                                                                                                                      |
-| v2.x | `STEINS;GATE`（命运石之门） | 博弈机制（v2.0）：签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章；表格体验与多数据库（v2.2）：横向滚动 / 长文本列开关 / 自动换行 / 三方言 + 写锁串行化；统计面板与成员管理（v2.3）：五维度页签 / 成员有守卫删除 |
+| 版本 | 代号                        | 主题                                                                                                                                                                                                                                                                                          |
+| ---- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| v1.x | `niulai`                    | 看板基座：快件表 / 半天点数制（v1.1）/ 行内拖拽排序（v1.2）                                                                                                                                                                                                                                   |
+| v2.x | `STEINS;GATE`（命运石之门） | 博弈机制（v2.0）：签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章；表格体验与多数据库（v2.2）：横向滚动 / 长文本列开关 / 自动换行 / 三方言 + 写锁串行化；统计面板与成员管理（v2.3）：五维度页签 / 成员有守卫删除；MCP 接入（v2.4）：`/mcp` 端点 / 6 只读工具 / 写工具开关控制 |
 
 > v2.0 与 v2.1（Phase 2 纸面运行，零发版）未独立发版——v2.0 随 v2.2.0 合并首发（2026-09 裁定）。代号是主版本线代号：v1.x.y 全系 `niulai`，v2.x.y 全系 `STEINS;GATE`。
 
@@ -90,8 +90,8 @@ CI（GitHub Actions）覆盖以上门禁、Playwright E2E 与 Docker 构建冒�
 **方式一 · Docker**（镜像在 GitHub Container Registry，也可自行 `docker build`）：
 
 ```bash
-docker pull ghcr.io/jiangfire/delivery_van:v2.3.0
-docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v2.3.0
+docker pull ghcr.io/jiangfire/delivery_van:v2.4.0
+docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/delivery_van:v2.4.0
 ```
 
 ⚠️ sqlite（默认方言）务必挂载数据卷（`-v ...:/app/data`），否则容器重建后数据全部丢失；库文件路径可用 `-e DATABASE_URL=...` 覆盖。用 PostgreSQL / MySQL 时无需挂卷，改为传连接串：
@@ -99,7 +99,7 @@ docker run -p 3000:3000 -v delivery_van_data:/app/data ghcr.io/jiangfire/deliver
 ```bash
 docker run -p 3000:3000 -e DB_DIALECT=postgres \
   -e DATABASE_URL=postgres://user:pass@host:5432/delivery_van \
-  ghcr.io/jiangfire/delivery_van:v2.3.0
+  ghcr.io/jiangfire/delivery_van:v2.4.0
 ```
 
 容器自动建表与「重建容器数据不丢」由 CI 的 docker job 持续验证（sqlite 路径）。
@@ -112,6 +112,30 @@ npm start        # 生产模式，端口可用 PORT 覆盖
 ```
 
 发版流程：CI 全绿后打 `v*` tag 推送，`.github/workflows/release.yml` 自动构建镜像推 GHCR 并创建带 zip 附件的 Release。
+
+## MCP（v2.4，已上线）
+
+看板以 [MCP](https://modelcontextprotocol.io) 端点挂在同一个服务的 `/mcp` 路径上，让 AI 编码代理（Claude Code / Cursor / Mavis 等 MCP host）直接查询与操作发车台——不必手点 AG Grid。**与 `/api/trpc` 同端口同进程，不新增暴露面。**
+
+- **默认只读**：6 个只读工具 `van_list` / `tasks_by_van` / `tasks_all` / `members_list` / `stats_by_van` / `audit_verify`（列表类都带 `limit` + `truncated`，不静默截断）
+- **写工具默认不注册**：`tools/list` 里根本看不到它们。需显式开启 `MCP_WRITES=on`，开启后 10 个写工具出现，全部强制要求 `actor`（落审计链），`carry_run` / `tasks_remove` / `members_remove` 标注为不可逆
+- **`/mcp` 不要带尾斜杠**：带斜杠会落到 Hono 的 404（`/mcp` 才是有效路径）
+
+启用写工具（默认关闭）：
+
+```bash
+MCP_WRITES=on npm start          # 生产
+MCP_WRITES=on npm run dev        # 开发
+```
+
+用官方 Inspector 调试（注意客户端须同时 accept json 与 event-stream）：
+
+```bash
+npx @modelcontextprotocol/inspector
+# 连接 http://localhost:3000/mcp
+```
+
+⚠️ **安全**：本工具**无鉴权**（沿用既有设计），`/mcp` 同受「**不要暴露公网**」约束，只在本机或可信内网使用。写工具尤其需要谨慎——`carry_run` 会让源班**永久归档只读**且无撤销工具。设计见 [`docs/doing/v2.4-MCP接入一页纸实施提案.md`](docs/doing/v2.4-MCP接入一页纸实施提案.md)。
 
 ## 业务规则速查
 

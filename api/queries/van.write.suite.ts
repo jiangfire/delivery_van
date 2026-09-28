@@ -14,6 +14,7 @@ import {
   listVans,
   removeMember,
   removeTask,
+  updateMemberCapacity,
   updateTask,
 } from "./van";
 import { execRaw } from "./dialect";
@@ -104,6 +105,36 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
 
       it("删除不存在的成员报 NOT_FOUND", async () => {
         await expect(removeMember("查无此人")).rejects.toThrow("不存在");
+      });
+
+      it("改运力进审计链，记账带操作人与新旧值（v2.4 补齐）", async () => {
+        await addMember("张三", 10);
+        await updateMemberCapacity(
+          (await listMembers()).find((m) => m.name === "张三")!.id,
+          7,
+          "管理员",
+        );
+        const rec = (await ctx.db().select().from(S.auditLog)).find(
+          (a) => a.entity === "member" && a.field === "capacity",
+        );
+        expect(rec?.actor).toBe("管理员");
+        expect(rec?.oldValue).toBe("10");
+        expect(rec?.newValue).toBe("7");
+        expect(
+          (await listMembers()).find((m) => m.name === "张三")?.capacity,
+        ).toBe(7);
+      });
+
+      it("改运力的记账缺 actor 时落 '(unknown)' 软身份", async () => {
+        await addMember("李四", 10);
+        await updateMemberCapacity(
+          (await listMembers()).find((m) => m.name === "李四")!.id,
+          12,
+        );
+        const rec = (await ctx.db().select().from(S.auditLog)).find(
+          (a) => a.entity === "member" && a.field === "capacity",
+        );
+        expect(rec?.actor).toBe("(unknown)");
       });
     });
 

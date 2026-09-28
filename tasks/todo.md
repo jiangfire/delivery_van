@@ -1,31 +1,86 @@
-# 修复 todo（v2：含 doing/ 全文档差距）——已完成（2026-09-04）
+# MCP 接入 todo（v1：只读先行，写工具开关控制）——✅ 已完成（2026-09-28）
 
-## 阶段 1：必做代码修复 ✅
+> 计划全文见 `tasks/plan.md`，一页纸提案见 `docs/doing/v2.4-MCP接入一页纸实施提案.md`。
+> 状态：**六个任务全部实施完毕，四件套 + e2e 全绿**。
 
-- [x] 任务 1：e2e 加「显隐开关切班保持」回归（先红）→ BoardPage 删两处 `hide: true`（转绿）→ e2e 全绿（commit 179821c）
-- [x] 任务 2：dialect.ts 加 `writeLockSql()` → tx.ts pg/mysql 取锁 → dialect.test 补用例 → 注释补写串行化口径（commit de05bea）
+## 阶段 1：地基（只读通路）
 
-## 检查点：代码修复 ✅
+- [x] 任务 1（S）：zod schema 抽出到 `api/schemas.ts`（纯搬迁、零行为变化；`vanRouter.test.ts` 14/14 **一行不改**通过，并保留 6 个 re-export 兼容既有导入面）
+- [x] 任务 2（S~M）：MCP server 骨架 + `/mcp` 挂载 + 工具注册机制（`createMcpHandler` stateless；dev + prod **双模式实测连通**）
 
-- [x] 本地四件套 + e2e 22/22 全绿；CI 三 job 绿（run 33886894358，pg/mysql 变体真实连库）
+### 检查点：地基可用 ✅
 
-## 阶段 2：可选代码加固 ✅（已纳入）
+- [x] 经 `/mcp` 真实 JSON-RPC 往返：initialize / tools/list / tools/call 均通（单测 + 生产进程实测双证）
+- [x] tRPC 与前端零回归（`npm test` 190 passed；`npm run test:e2e` 23/23）
 
-- [x] 任务 3：doneAt 日期正则 + requester `.min(1)` + router 拒绝用例（commit 56b0c77）
-- [x] 任务 4：mysql group_concat_max_len 会话调大 + boot/schema 过时注释（commit a4d3bb7）
+- [x] 任务 3（M）：只读工具集 6 个（经 caller；**description 英文**；`limit` + `truncated` 不静默截断；非法入参证明 zod 生效）
+- [x] 任务 4（S）：审计链校验工具（补 `listAuditRows()` + `audit_verify`，空链 `ok:true` + `fingerprint:null`）
 
-## 阶段 3：文档收口 ✅
+### 检查点：只读能力完成 ✅
 
-- [x] 任务 5：灵魂文档 git mv 至 docs/ 根 + 决议 7 豁免注记 + 附 2 残留修订（措辞收敛/法务注记/数据最小化/M9 小节）+ 状态行更新 + carriedReason 命名注记 + 引用路径全量更新（commit df20be5）
-- [x] 任务 6：v2.2 计划小结与「明确不做」更新；v2.0 计划状态头（分支/发版/Gate 0）+ WP2 DDL 注记；v2.1 手册补部署前置与备注列开关提醒；删远程 feat/v2.0-phase1（commit 2b43c57）
+- [x] `tsc -b` / `eslint` / `prettier --check .` / `npm test` 全绿
 
-## 阶段 4：发版与部署 ✅（代码侧完成；部署为线下动作）
+## 阶段 2：写工具（开关控制）
 
-- [x] 任务 7：版本策略拍板（v2.2.0 直发）→ README 谱系 + package.json（commit 8300f0b）→ CI 绿 → tag v2.2.0 推送 → release workflow 绿 → GHCR 镜像 + Release 附件发布；发现并修正 release.yml 模板遗留的 v1.2.0「niulai」硬编码（已就地修正 Release 标题/正文，commit dfb3533）
-- [x] 任务 8（文档部分）：v2.2/v2.0 计划归档 + 引用路径更新 + AGENTS/README/设计方案同步（commit 9b571f9）
+- [x] 任务 5（M）：写工具 10 个 + `MCP_WRITES=on` 开关（**默认不注册**）+ `actor` 必填 + `destructiveHint` + description 明写不可逆后果
 
-## 待线下执行（无法代办）
+### 检查点：全量完成 ✅
 
-- [ ] 部署 v2.2.0（docker pull ghcr.io/jiangfire/delivery_van:v2.2.0，按 README 部署节）
-- [ ] 部署后启动 Gate 0 基线采集；首个周五复盘会跑通锚定仪式（指纹进纪要，补 v2.0 DoD 5）
-- [ ] Phase 2 系统侧仪式（周五落账/开奖）自部署后生效，4 班计时从首个完整走完议价台流程的班次起算
+- [x] 四件套全绿 + e2e 23/23；**未合并、未提交（按约定待人工评审）**
+
+## 阶段 3：文档
+
+- [x] 任务 6（S）：README「MCP」节（启用/开关/Inspector/安全边界）；AGENTS.md 加 `api/mcp/` 目录说明与「MCP 工具硬约束」六条（含 vite exclude 陷阱告警）
+
+## 拍板记录（2026-09-28，四项已决并实施）
+
+- [x] 工具 description 用英文（仅 description 例外于「注释与业务文案使用中文」；参数名/错误文案/代码注释仍中文）
+- [x] 写工具默认**不注册**（`MCP_WRITES` 未设即 `tools/list` 无写工具）
+- [x] 不补 stdio 薄代理
+- [x] `docs/doing/` 一页纸实施提案 ✅ 已建
+
+## 实施中发现并修正的问题（计划外的真 bug）
+
+- [x] **`vite.config.ts` 的 devServer `exclude` 吞掉 `/mcp`（dev 404 / prod 正常）**：原式 `/^\/(?!api\/).*$/` 把所有非 `/api/` 路径推给 Vite。已改为 `/^\/(?!(api|mcp)(\/|$)).*$/`，并补 `api/mcp/viteExclude.test.ts` 做回归守卫。**单测打 Hono 的 `app.fetch` 绕过 Vite 中间件，只有真跑 dev 模式才暴露。**
+- [x] **计划文档里的正则写错了**：规划时把 `/^\/(?!api\/).*$/` 误读为 `...\/$/`，还拿臆造的版本去 node 里"验证"，导致最初的风险判断完全错误。已修正 `tasks/plan.md`、一页纸、`api/boot.ts` 与 `vite.config.ts` 注释。
+
+## 代码审查与修复（2026-09-28 第二轮）
+
+只读审查发现 9 个缺陷 + 1 条既有缺口，**已全部修复**（基线 = HEAD 未提交改动）：
+
+- [x] **P0-1** `vite.config.ts:14` 注释称 `/mcp/` 会被推给 Vite —— 与实测相反（实测落到 Hono，404 len=13；Vite 是 len=0），且与 `boot.ts`/`README` 自相矛盾。已改正
+- [x] **P0-2** `server.ts` 硬编码 `version: "2.3.0"` 违背计划。改为构建期从 `package.json` 内联（新增 `resolveJsonModule`），已实测 `serverInfo.version` = 2.3.0
+- [x] **P0-3** `boot.ts` 注释称 MCP 初始化「推迟到建表之后」但实际在 `ensureSchema` 之前。**已把注册真正挪到 `ensureSchema()` 之后**，注释为真且建表失败时不会留下指向未建表的端点；dev/prod 双模式复验通过
+- [x] **P0-4** `stats_by_van` description 让模型找 `definition` 字段（全仓无此字段）。已改为点名真实字段并写清 done 口径 vs 签收口径的差异
+- [x] **P1-5** `members_set_capacity` 是唯一无 actor 的写工具，而 `write.ts:12` 宣称「actor 必填」、测试名也宣称但实际只断言「空对象被拒」。**已让不变量为真**：`memberSetCapacityInput` 补 actor、tRPC 透传、`updateMemberCapacity` 补审计记账（`capacity` 字段，带 actor 与新旧值），并在内存 SQLite 套件加两条真实验证；测试改为直接断言「schema 形状里有 actor」且「actor 非 optional」
+- [x] **P2-6** `@modelcontextprotocol/hono` 是死依赖（全仓零 import），已卸载并修正 `tasks/plan.md` 措辞
+- [x] **P2-7** `tasks_all` 无上限（与 `tasks_by_van` 口径矛盾），已补 `limit` + `truncated`
+- [x] **P2-8** `read.ts` 同模块混用静态与动态 import，已并为静态
+- [x] **P2-9** vite exclude 缺回归守卫，已补 `api/mcp/viteExclude.test.ts`（同时断言三处关于 `/mcp/` 的说法一致）
+
+修复后质量门：`tsc` / `eslint` / `prettier --check .` 全绿，`npm test` **201 passed**（新增 3 条），`npm run test:e2e` **23/23**，真机 prod + dev 双模式复验通过。
+
+**遗留（非本次引入，已单列）**：~~`updateMemberCapacity` 不写审计链~~ —— **已随 P1-5 一并补齐**，不再是缺口。
+
+## 发版准备 v2.4.0（2026-09-28）
+
+- [x] 版本号 bump：`package.json` 2.3.0 → **2.4.0**（MCP 是新功能 = minor；代号沿 v2.x.y 全系 `STEINS;GATE`）
+- [x] README 谱系补 v2.4 行 + Docker 示例镜像标签 v2.3.0 → v2.4.0
+- [x] AGENTS.md 当前版本段更新（并把「v2.4 已立项未开工」改为已发布状态）
+- [x] `release.yml` 发版说明重写为 v2.4 内容（原为 v2.3 的文字 + 「单测 168」陈旧计数，已核为 **201（+76 方言变体）**）
+- [x] `release.yml` 容器冒烟**新增 `/mcp` 握手检查**（本版主打功能此前完全不在冒烟范围内；曾栽过 dev 正常/prod 挂的坑，冒烟必查）
+- [x] **发版说明 heredoc 反引号转义**：NOTES 用的是不带引号的 `<<EOF`，其中反引号会被 shell 当**命令替换**执行——实测未转义时 bash 报 `/mcp: No such file or directory` 并**静默把文字从说明里抹空**。已全部转义为 ``\` `` 并用 Git Bash 复现验证渲染正确
+- [x] 发版前全量复验：`tsc` / `eslint` / `prettier --check .` / `npm test` 201 / `npm run build` / 真机 prod（MCP `serverInfo.version` = **2.4.0**，证明版本取自 package.json 的修复生效）
+- [ ] **提交 + 打 tag `v2.4.0` + 推送**（触发 `release.yml`：GHCR 镜像 + Release zip）——待用户确认后执行
+
+### 发版命令（确认后执行）
+
+```bash
+git add -A && git commit -m "..."
+git tag v2.4.0 && git push origin main --tags
+```
+
+## 遗留待拍板
+
+- [ ] 版本号与代号（提议 v2.4.0，沿 `STEINS;GATE`）——待发版拍板时与 README 谱系一并确认；本轮**未改** `package.json` 版本与 README 谱系
+- [ ] Phase 2 工具化范围——待 Gate 2 复盘会（扩展位已在 `api/mcp/tools/` 按域预留）

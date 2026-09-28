@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { desc } from "drizzle-orm";
+import { asc, desc } from "drizzle-orm";
 import { getDb } from "./connection";
 import { getSchema, qAll, qRun } from "./dialect";
 import { type AuditLogRow } from "../../db/schema";
@@ -66,6 +66,14 @@ export function verifyAuditChain(rows: AuditLogRow[]): number | null {
 /** 日志指纹：链头（最新一条）hash 前 8 位，供周五锚定仪式抄进会议纪要 */
 export function fingerprintOf(hash: string | null | undefined): string | null {
   return typeof hash === "string" && hash.length > 0 ? hash.slice(0, 8) : null;
+}
+
+/**
+ * 读取全链（按 id 升序，verifyAuditChain 要求该顺序）：供周五对账、
+ * 单测与 MCP `audit_verify` 工具做链完整性自查。读操作，不记账。
+ */
+export async function listAuditRows(): Promise<AuditLogRow[]> {
+  return qAll(getDb().select().from(auditLog).orderBy(asc(auditLog.id)));
 }
 
 /** 事务对象的最小结构约束（db 与 tx 均满足） */

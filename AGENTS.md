@@ -6,7 +6,7 @@
 
 delivery_van 是一个**周度发车管理工具**：团队每周五发一班"厢式快递车"，任务是快件，周五验收只看"这班的件送没送到"；没送完的滞留件跟下一班车走。机制设计见 `docs/周度发车机制设计方案.md`。
 
-- 当前版本 **v2.3.0**，主版本线代号 `STEINS;GATE`（v2.x.y 全系通用，谱系见 `README.md`）：v2.3 统计面板统一与成员删除、v2.2 表格体验与多数据库、v2.0 博弈机制（签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章，随 v2.2.0 合并首发）。**Phase 2「议价台 + 预测投票」纸面运行中（2026-09-01 启动，零开发零发版，手册见 `docs/doing/v2.1-Phase2-议价台与预测投票纸面运行手册.md`）**。
+- 当前版本 **v2.4.0**，主版本线代号 `STEINS;GATE`（v2.x.y 全系通用，谱系见 `README.md`）：v2.4 MCP 接入（`/mcp` 端点，只读工具默认开放、写工具须 `MCP_WRITES=on`）、v2.3 统计面板统一与成员删除、v2.2 表格体验与多数据库、v2.0 博弈机制（签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章，随 v2.2.0 合并首发）。**Phase 2「议价台 + 预测投票」纸面运行中（2026-09-01 启动，零开发零发版，手册见 `docs/doing/v2.1-Phase2-议价台与预测投票纸面运行手册.md`）**。
 - 单页应用：`src/pages/BoardPage.tsx` 承载全部功能——班次切换、AG Grid 快件表（行内编辑）、统计条、统一统计面板（负责人 / 提出人 / 稀有度 / 结转原因 / 来源五维度页签，负责人默认，设计见 `docs/archived/统计面板统一设计方案.md`）。
 - **快件即一切**：工作条目只有 `tasks` 表一种，直接携带稀有度与提出人。旧「任务大厅」（`pool_items` 表）已废弃：表结构保留但不读写。
 - 无账号无鉴权，成员用名字标签。成员删除是**有守卫的硬删**：零历史成员可删（删除与审计同事务），名字出现在任何快件上（负责人 / 提出人 / 签收人，均无外键的纯文本引用）即拒绝（方案见 `docs/archived/成员删除功能设计方案.md`）。
@@ -42,7 +42,7 @@ delivery_van 是一个**周度发车管理工具**：团队每周五发一班"�
 ## 目录结构
 
 ```
-api/          Hono + tRPC 薄后端：boot.ts（入口）/ vanRouter.ts（zod 校验与转发）/ ensureSchema*.ts（幂等建表）/ queries/（业务与 SQL：van.ts、audit.ts、tx.ts、dialect.ts 方言层）
+api/          Hono + tRPC 薄后端：boot.ts（入口，含 /mcp 挂载）/ schemas.ts（入参 zod，tRPC 与 MCP 共享）/ vanRouter.ts（转发）/ ensureSchema*.ts（幂等建表）/ queries/（业务与 SQL：van.ts、audit.ts、tx.ts、dialect.ts 方言层）/ mcp/（MCP 适配层：server.ts + caller.ts + tools/）
 contracts/    前后端共享：vans.ts（班次编码）、enums.ts（枚举）——会被前端打包，勿 import 服务端依赖
 db/           三方言 Drizzle 表定义 schema.ts / schema.pg.ts / schema.mysql.ts + 种子脚本
 src/          React 前端：pages/BoardPage.tsx（看板页）、components/（单元格编辑器 + 统计组件）、lib/、providers/
@@ -84,8 +84,15 @@ npm run db:seed    # 写入示例成员（会先自动建表）；db:seed:demo �
 ## 代码风格与约定
 
 - TypeScript strict + ESM；路径别名 `@/*` → `src/*`、`@contracts/*` → `contracts/*`、`@db/*` → `db/*`（vite / vitest / tsconfig 三处都有配置，改动需同步）。
-- 服务端入参一律 zod 校验（`api/vanRouter.ts`），业务错误抛 `TRPCError`；分层约定：router 只做校验与转发，业务逻辑与 SQL 写在 `api/queries/`，可纯函数化的逻辑与 DB 访问分离。
-- **写操作（mutation）一律带可选 `actor` 软身份参数**并传给数据层（审计日志用）；前端从 `src/lib/actor.ts` 读「我是谁」附带；`tasks.confirm` 的 actor 必填且必须是成员。
+- 服务端入参一律 zod 校验（schema 在 `api/schemas.ts`，tRPC 与 MCP 共享同一份），业务错误抛 `TRPCError`；分层约定：router 只做校验与转发，业务逻辑与 SQL 写在 `api/queries/`，可纯函数化的逻辑与 DB 访问分离。
+- **写操作（mutation）一律带可选 `actor` 软身份参数**并传给数据层（审计日志用）；前端从 `src/lib/actor.ts` 读「我是谁」附带；`tasks.confirm` 与 `members.setCapacity` 的 actor 必填（`members.setCapacity` 于 v2.4 补齐——此前漏记账，运力变更不在链上无法对质）。
+- **MCP 工具（`api/mcp/`）的硬约束**（v2.4，改动前先读 `api/mcp/tools/types.ts`）：
+  - **写工具一律经 `api/mcp/caller.ts` 的 tRPC caller 执行，禁止直连 `api/queries/`**——直连会绕过 zod 校验与全部业务规则（归档锁/结转幂等/签收守卫）。读工具仅在「无对应 tRPC 过程」时可直调读函数（无入参即无校验可绕；且为 MCP 专设 public 过程会扩大无鉴权暴露面）。
+  - **入参 schema 必须复用 `api/schemas.ts`**，不得在 MCP 侧另写一份。
+  - **description 用英文**（喂给模型的语料，是对「注释与业务文案使用中文」的显式例外）；工具名、参数名、错误文案、代码注释仍用中文。
+  - **不可逆工具必须在 description 里明写后果**——模型读 description，不读 `annotations`。
+  - **写工具仅在 `MCP_WRITES=on` 时注册**（默认不注册），见 `api/mcp/server.ts`。
+  - `vite.config.ts` 的 devServer `exclude` 语义是「不交给 Hono」，新增服务端路径必须同步放行，否则 **dev 404 而 prod 正常**（单测打 Hono 的 `app.fetch` 绕过该中间件，抓不到）；`api/mcp/viteExclude.test.ts` 是这条的回归守卫。`/mcp` 不带尾斜杠；`/mcp/` 会交给 Hono 但无路由 → Hono 的 404。
 - `contracts/` 会被前端打包，**不要 import 服务端依赖**（如 @trpc/server），错误抛带中文说明的 `Error` 即可。
 - tRPC 端到端类型共享：前端通过 `import type { AppRouter } from "../../api/router"` 获得类型，改路由签名后前端调用点会自动报错。
 - 前端变更后统一 `utils.invalidate()` 刷新，错误统一 `toast.error`；校验失败时同时 invalidate 让网格回滚到服务端数据。

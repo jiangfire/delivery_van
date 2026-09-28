@@ -364,12 +364,32 @@ export async function addMember(
   return listMembers();
 }
 
-export async function updateMemberCapacity(id: number, capacity: number) {
+/**
+ * 改成员运力：业务写与审计同事务（`actor` 为软身份，缺省 '(unknown)'）。
+ * 此前该 mutation 漏记账——运力变更不在链上，无法对质；v2.4 随 MCP 暴露
+ * 该操作后补齐，与其余写操作同口径。
+ */
+export async function updateMemberCapacity(
+  id: number,
+  capacity: number,
+  actor?: string,
+) {
   const db = getDb();
   const [member] = await db.select().from(members).where(eq(members.id, id));
   if (!member)
     throw new TRPCError({ code: "NOT_FOUND", message: `成员 ${id} 不存在` });
-  await db.update(members).set({ capacity }).where(eq(members.id, id));
+  await runTx(db, async (tx) => {
+    await qRun(tx.update(members).set({ capacity }).where(eq(members.id, id)));
+    await appendAudit(tx, actor, [
+      {
+        entity: "member",
+        entityId: member.name,
+        field: "capacity",
+        oldValue: String(member.capacity),
+        newValue: String(capacity),
+      },
+    ]);
+  });
   return listMembers();
 }
 

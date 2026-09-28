@@ -1,105 +1,165 @@
-# v2.2 评审 + doing/ 全文档差距修复计划（v2）
+# MCP 接入规划（v1：只读先行，写工具开关控制）
 
-> 2026-09-04 立项；同日扩展为 doing/ 四文档全量差距评审的合并修复计划。
-> 来源：v2.2 二轮代码评审（代码级缺陷）+ doing/ 全文档对照代码与运行状态的差距评审。
-> 结论总览：唯一影响功能的差距是切班显隐丢失（Critical）；其余为并发风险加固、入参加固、文档时效/承诺未兑现项；最大的流程差距是「未部署」卡住了 Gate 0 / Phase 2 系统侧仪式 / 锚定仪式整条管线。
+> 2026-09-28 立项并拍板并**全部实施完毕**。四项决策（工具描述语言 / 写工具默认策略 / stdio 取舍 / 文档落位）见文末「拍板记录」。
+> 一页纸实施提案见 `docs/doing/v2.4-MCP接入一页纸实施提案.md`（本文为详细工作产出）。
+> 前置计划（v2.2 评审与文档修复）已完成，归档于 `tasks/archive/`。
 
 ## Overview
 
-五个阶段：① 必做代码修复（显隐丢失 + 审计链分叉）；② 可选代码加固（入参校验 + mysql group_concat）；③ 文档收口（灵魂文档决议 7 执行与附 2 残留修订、三份计划文档状态行、v2.1 手册补注、过时注释）；④ 发版与部署（版本策略拍板 → tag → GHCR → 部署）；⑤ 流程启动与归档（Gate 0 基线、锚定仪式、文档归档动作）。阶段 1/2 即前版计划的任务 1~4，不变。
+给 delivery_van 增加 MCP（Model Context Protocol）能力，**挂在现有 Hono 服务的 `/mcp` 路径上**，让 AI 编码代理（Claude Code / Mavis / Cursor）能直接查询看板数据，后续按需扩展为业务工具与 Phase 2 机制工具。
+
+三步走：**① 开发向只读工具**（本计划主体）→ **② 写工具（环境变量开关）** → **③ 业务向 / Phase 2 工具（Gate 2 拍板后）**。本次交付 ① 与 ② 的骨架，③ 留扩展位不预建。
+
+**核心设计立场：MCP 是纯适配层，不是第二套业务逻辑。** 所有工具经 tRPC caller 执行，复用同一份 zod 校验与同一套业务规则，审计链路径完全不变。
+
+## 现状勘察结论（约束设计的硬事实）
+
+1. **唯一执行路径已存在**：tRPC `appRouter` → `api/vanRouter.ts`（zod 校验）→ `api/queries/van.ts`（业务 + SQL + 审计）。tRPC v11 提供 `appRouter.createCaller(ctx)`，可在进程内直接调用，**绕过 HTTP 但保留全部校验与业务规则**。
+2. **zod 校验是铁律**（AGENTS.md「服务端入参一律 zod 校验」）。若 MCP 直接 import `queries/van.ts` 就绕过了 zod——**必须走 caller 或复用同一份 schema**。
+3. **审计链只认「业务写 + 审计同事务」**（`runTx` + `appendAudit`，序列化格式锁定）。MCP 走 caller 即自动继承，无需改动 `tx.ts` / `audit.ts`。
+4. **写串行化已有三方言实现**：`BEGIN IMMEDIATE`（sqlite）/ `pg_advisory_xact_lock(9137)`（pg）/ `_dv_meta` 行 FOR UPDATE（mysql）。**这三把锁都是库级/数据库级，跨进程同样生效**——所以「另起进程连同一个 sqlite 文件」不会导致审计链分叉，残余风险只有 SQLITE_BUSY 争用与事务外前置读的既有 TOCTOU。**结论：单进程 vs 多进程不是安全问题，HTTP 挂载的理由是「贴合现有部署形态 + 单一连接模型」，不是「防链分叉」。**
+5. **项目零鉴权**（AGENTS.md 明确「不要暴露到公网」）。`/mcp` 与 `/api/trpc` 同端口同进程，**不新增暴露面**；但写工具开关必须默认关。
+6. **技术栈契合**：项目已用 Hono 4 + zod ^4.3.5。官方 SDK v2（`@modelcontextprotocol/server`，实现 2026-07-28 spec）基于 Standard Schema + zod v4，零适配直接可用。
+7. **Phase 2 时点**：`docs/doing/v2.1-Phase2-...手册.md` 记录纸面运行自 2026-09-01 起，按每周五节奏 4 班，**Gate 2 复盘会已临近**。其「工具化范围」尚未拍板——本计划**不预建 Phase 2 工具**，避免既成事实干扰复盘会决策。
 
 ## Architecture Decisions
 
-- **任务 1 选「colDef 去 `hide`」而非「effect 延迟一帧重套」**：后者依赖与 AG Grid 内部属性应用时序的赛跑，脆弱且难测；前者让显隐成为纯列状态（AG Grid 文档化行为：colDef 不含 `hide` 时，columnDefs 更新按 colId 匹配保留列状态），从根上消除冲突。初始隐藏由已有 `onGridReady → applyColumnVisibility` 承担（首帧无闪烁）。净变化 = 删 2 行。
-- **任务 2 选「写锁串行化」而非「仅文档化」**：runTx 的 pg/mysql 分支 body 前取事务级写锁（pg `pg_advisory_xact_lock`、mysql 对 `_dv_meta.schema_version` 行 FOR UPDATE），所有写事务先取同一把锁 → 与 sqlite `BEGIN IMMEDIATE` 等价的写串行化，审计链分叉与事务内前置检查竞态一并消除。锁 SQL 收敛 `dialect.ts`（`writeLockSql()`，与 `groupConcatSql` 同模式）。事务外读的 TOCTOU 维持「明确不做」口径。
-- **发版策略（推荐，待拍板）**：直接发 **v2.2.0**，不回溯打 v2.0.0 tag——回溯 tag 的镜像不含 v2.2 修复与多方言支持，无运维价值；Phase 2 约定零发版。README 谱系补 v2.2 行，v2.0 行标注「未独立发版，随 v2.2.0 首发」。
-- **灵魂文档处置（执行决议 7 + 一处注记豁免）**：移至 `docs/` 根目录作常驻核心文档（决议 7 原文，v2.0 已立项，逾期未执行）；「doing/ 只放一页纸实施提案」以注记豁免——v2.0 落地计划与 AGENTS.md 已承担该职能，在决议 7 处追加注记说明，不改写决议。
-- **文档修订纪律**：所有对已定稿文档的修订以「追加注记」为主（符合仓库文档规范），状态行（文档头部）可直接更新。
+- **MCP 经 `appRouter.createCaller(ctx)` 执行，不直连 `queries/van.ts`**：单一执行路径，零业务逻辑重复，zod 校验与业务规则（`isVanArchived` 归档锁、`carryOver` 幂等、`confirmTask` 守卫）自动继承。这是本计划最关键的一条。
+- **zod schema 抽到 `api/schemas.ts` 共享**：`vanRouter.ts` 现内联定义全部入参 schema，拆出后 tRPC 与 MCP 引用**同一个 zod 对象**——校验单点、JSON Schema 自动同源。拆分必须是**纯搬迁，零行为变化**，用现有 `vanRouter.test.ts` 兜底。
+- **工具命名用 snake_case，不照搬 tRPC 点号路径**（`van_list` 而非 `van.list`）：点号在部分 MCP 客户端的工具名校验中不通用。映射表在 `api/mcp/tools/README` 注释中固化。
+- **工具描述（description）用英文，业务注释与 UI 文案仍用中文**：这是对 AGENTS.md「注释与业务文案使用中文」的**显式例外**，理由是 description 是喂给模型的英文语料、且未来可能对接英文语境的 MCP host。**仅 description 例外，工具名、参数名、错误文案、代码注释一律照旧中文。**
+- **挂 `/mcp` 且不带尾斜杠**：`vite.config.ts` 的 devServer `exclude` 语义是「这些路径**不**交给 Hono」。原式 `^\/(?!api\/).*$` 会把所有非 `/api/` 路径（含 `/mcp`）推给 Vite——**dev 下 /mcp 404 而 prod 正常**，纯本地调试盲区。已改为 `^\/(?!(api|mcp)(\/|$)).*$`。**实现时必须 dev + prod 双模式实测**（单测直接打 Hono 的 `app.fetch`，绕过 Vite 中间件，发现不了这个问题）。
+- **SDK 选 v2（`@modelcontextprotocol/server`）**：v2 是 2026-07-28 spec 的稳定线，v1 只收 bug/安全修复。**实际未采用 `@modelcontextprotocol/hono`**——它的 `createMcpHonoApp` 返回一个独立 Hono app 而非可挂载 handler，挂不到既有 `boot.ts` 上；改用同包的 `createMcpHandler`，其 `McpHttpHandler.fetch(request)` 直接吃 web 标准 `Request`，Hono 侧 `app.all("/mcp", (c) => h.fetch(c.req.raw))` 即可。该包已从依赖中移除。
+- **version 取自 `package.json`**（构建期由 esbuild 内联进 boot.js，不依赖运行时文件），不写死字面量。
+- **懒加载 MCP 模块**：`boot.ts` 已用 `await import()` 懒加载 `@hono/node-server`，MCP 同样条件导入——未启用时不给生产 bundle 增加体积。
+- **只读先行 + `MCP_WRITES` 开关**：`MCP_WRITES=off`（默认）时**不注册任何写工具**（未注册优于注册后拒绝）；`on` 时写工具强制要求 `actor` 参数，承接软身份与审计链约定。
+- **永不静默截断**：`tasks.byVan` 加 `limit`，超限时返回 `truncated: true` + 实际条数，与项目「口径清晰、不撒谎」一致。
+- **Phase 2 工具留扩展位不预建**：目录与注册机制按域分片（`tools/read.ts` / `tools/write.ts` / 未来 `tools/phase2.ts`），Gate 2 拍板后按域新增文件即可，传输层与注册机制不动。
 
 ## Task List
 
-### 阶段 1：必做代码修复
+### 阶段 1：地基（只读通路）
 
-- [ ] **任务 1（P0 / S 级）：修复切班后长文本列显隐丢失**
-  - **Description**：`src/pages/BoardPage.tsx` 删除 `_acceptance` 与 `_note` 两个 colDef 的 `hide: true`（2 行）。先在 `e2e/board.spec.ts` 加回归用例（红）→ 删 2 行（绿）。
+- [ ] **任务 1（S）：zod schema 抽出到 `api/schemas.ts`（零行为变化）**
+  - **Description**：把 `vanRouter.ts` 内联的 `vanCode` / `idField` / `rarity` / `sourceField` / `carryReasonField` / `actorField` / `memberTag` / `requesterField` / `doneAtField` / `sizePoints` 及各处 `.input(z.object({...}))` 移到新文件，router 改为 import。**纯搬迁，不改任何校验规则。**
   - **Acceptance criteria**：
-    - [ ] 新 e2e 用例：默认两列隐藏 → 勾选「验收标准」→ 列头出现 → 切班再切回 → 列头仍在、「备注」仍隐藏（修复前确定性失败）
-    - [ ] 全量 e2e 绿；人工 dev 验证开关/切班/编辑/invalidate 后显隐保持、首帧无闪烁
-  - **Verification**：`npm run test:e2e`；dev 人工过一遍
-  - **Dependencies**：无 ｜ **Files**：`src/pages/BoardPage.tsx`、`e2e/board.spec.ts` ｜ **Scope**：S
-  - **Commit**：`fix: 切班后长文本列显隐丢失——colDef 去 hide 让显隐成为纯列状态，附 e2e 回归`
+    - [ ] `npm test` 全绿，`api/vanRouter.test.ts` 的拒绝用例**无需修改**即通过（证明行为等价）
+    - [ ] `vanRouter.ts` 中不再出现 zod 字面量定义
+  - **Verification**：`npm test -- api/vanRouter.test.ts`；`npm run check`
+  - **Dependencies**：无 ｜ **Files**：`api/vanRouter.ts`（新）、`api/schemas.ts` ｜ **Scope**：S
+  - **Commit**：`refactor: 入参 zod schema 抽出到 api/schemas.ts 供 tRPC 与 MCP 共享（零行为变化）`
 
-- [ ] **任务 2（P1 / S~M 级）：pg/mysql 写事务串行化，堵审计链分叉**
-  - **Description**：`dialect.ts` 新增 `writeLockSql()`（pg advisory xact lock 常量；mysql `_dv_meta` 版本行 FOR UPDATE；sqlite null）；`tx.ts` pg/mysql 分支 body 前 await 锁。
+- [ ] **任务 2（S~M）：MCP server 骨架 + `/mcp` 挂载 + 工具注册机制**
+  - **Description**：`api/mcp/server.ts` 组装 `McpServer`（name/version 取 package.json），`api/mcp/tools/index.ts` 提供「工具定义数组 → 批量 registerTool」的注册入口。先只注册 `ping` 一个工具打通链路。
   - **Acceptance criteria**：
-    - [ ] `dialect.test.ts` 补 writeLockSql 三方言分支用例；本地四件套绿（sqlite 零行为变化）
-    - [ ] CI 三方言矩阵绿；`tx.ts` 注释写明写串行化语义与事务外 TOCTOU 口径
-  - **Verification**：四件套 + CI ｜ **Dependencies**：无（与任务 1 可并行）｜ **Files**：`dialect.ts`、`tx.ts`、`dialect.test.ts` ｜ **Scope**：S~M
-  - **Commit**：`fix: pg/mysql 写事务取锁串行化——堵审计链并发分叉（advisory lock / _dv_meta 行锁）`
+    - [ ] `curl` / MCP Inspector 能连上 `/mcp` 并 `tools/list` 看到 `ping`
+    - [ ] dev 模式（`npm run dev`）与生产模式（`npm run build && npm start`）**均**可连通
+    - [ ] 未设 `MCP_WRITES` 时行为与现在完全一致（`/api/trpc` 不受影响）
+  - **Verification**：MCP Inspector（`npx @modelcontextprotocol/inspector`）连 `http://localhost:3000/mcp`；**重点验证 `/mcp` 未被 vite `exclude` 正则吞掉**
+  - **Dependencies**：任务 1 ｜ **Files**：`api/mcp/server.ts`、`api/mcp/tools/index.ts`、`api/boot.ts` ｜ **Scope**：S~M
+  - **Commit**：`feat: 挂载 /mcp 端点与工具注册骨架（ping 工具打通链路）`
 
-### 阶段 2：可选代码加固（建议做，可砍）
+### 检查点：地基可用
 
-- [ ] **任务 3（P2 / XS~S）：API 入参校验补强**
-  - `vanRouter.ts`：update 的 `doneAt` 加 `z.string().regex(/^\d{4}-\d{2}-\d{2}$/)`；add/update 的 `requester` 加 `.min(1)`；`vanRouter.test.ts` 补两组拒绝用例。
-  - **Verification**：`npm test` ｜ **Files**：`api/vanRouter.ts`、`api/vanRouter.test.ts` ｜ **Commit**：`fix: doneAt/requester 入参校验补强（日期格式 + 非空）`
+- [ ] MCP Inspector 能列出并调用 `ping`；tRPC 与前端功能零回归（`npm test` + `npm run test:e2e`）
 
-- [ ] **任务 4（P2 / XS）：mysql group_concat 上限 + 过时注释**
-  - `connection.ts` mysql 分支 `pool.on('connection', ...)` 设 `group_concat_max_len`；`boot.ts`「SQLite 本地文件」注释改方言化表述；三份 schema 的 capacity 注释「天」→「点」。
-  - **Verification**：check/prettier ｜ **Files**：`connection.ts`、`boot.ts`、三份 `db/schema*.ts` ｜ **Commit**：`chore: mysql group_concat_max_len 加固 + 过时注释清理`
+- [ ] **任务 3（M）：只读工具集（开发向）**
+  - **Description**：按 tRPC 路径一一对应实现只读工具，**全部经 `appRouter.createCaller(ctx)`**。description 用英文写清业务语义（模型靠它决定调不调），**必须带上业务术语的英文解释**，否则模型看不懂 `van` / `task` / `carry-over` 的关系。
+  - 工具清单（description 为实现时须落地的英文原文）：
 
-### 检查点：代码修复完成
+    | MCP 工具       | 对应 tRPC           | description（英文，实现时落地）                                                                                                                                                                                                 |
+    | -------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | `van_list`     | `van.list`          | List all delivery-run codes, newest first. Code format is `DV` + 2-digit year + 2-digit month + letter, e.g. `DV2609A`.                                                                                                         |
+    | `tasks_by_van` | `van.tasks.byVan`   | List the packages on one van, in board display order. Pass `limit` to cap rows; when the cap is hit the response sets `truncated: true` and reports the total.                                                                  |
+    | `tasks_all`    | —（`listAllTasks`） | List every package across all vans. Read-only debugging aid — prefer `tasks_by_van` for normal use.                                                                                                                             |
+    | `members_list` | `van.members.list`  | List team members and their weekly capacity in points (1 point = half a day, 10 = full week, max 14).                                                                                                                           |
+    | `stats_by_van` | `van.stats.byVan`   | Weekly statistics for one van: task counts, completion rate, carry-over rate, per-owner capacity, requester scorecards, rarity inflation, source split, carry-reason breakdown, yesterday's-weather suggested load, and badges. |
 
-- [ ] 本地四件套 + e2e 全绿；推送后 CI 三 job 绿
+  - **Acceptance criteria**：
+    - [ ] 5 个工具在 Inspector 中可列出、可调用、返回真实数据
+    - [ ] `tasks_by_van` 超 `limit` 时返回 `truncated: true` 与实际条数，**不静默丢弃**
+    - [ ] 非法入参（如 `van: 'ABC'`）返回 MCP 错误而非崩溃——**证明 zod 校验确实生效**
+    - [ ] `api/mcp/tools/read.test.ts` 覆盖「caller 被正确调用」「错误映射为 MCP 错误」两条
+  - **Verification**：`npm test`；Inspector 手工过一遍
+  - **Dependencies**：任务 2 ｜ **Files**：`api/mcp/tools/read.ts`、`api/mcp/tools/read.test.ts` ｜ **Scope**：M
+  - **Commit**：`feat: 只读 MCP 工具集（van/tasks/members/stats，经 tRPC caller 执行）`
 
-### 阶段 3：文档收口（doing/ 差距评审产物）
+- [ ] **任务 4（S）：审计链校验工具**
+  - **Description**：`audit.ts` 已有纯函数 `verifyAuditChain` / `fingerprintOf`，但**没有读全链的查询函数**。补 `listAuditRows()`（按 id 升序），新增 `audit_verify` 工具返回「断点下标 / 链头指纹」。这是 dev 最有价值的自查工具（对应锚定仪式）。description（英文）：`Verify the integrity of the SHA256 hash-chained audit log. Returns \`ok\`, \`brokenAt\` (index of the first broken link, or null), and the chain-head fingerprint used in the weekly meeting record.`
+  - **Acceptance criteria**：
+    - [ ] 返回 `{ ok: boolean, brokenAt: number | null, fingerprint: string | null }`
+    - [ ] 空链时 `ok: true` + `fingerprint: null`（创世哈希语义正确）
+    - [ ] `audit.test.ts` 补 `listAuditRows` 用例
+  - **Verification**：`npm test`
+  - **Dependencies**：任务 2 ｜ **Files**：`api/queries/audit.ts`、`api/queries/audit.test.ts`、`api/mcp/tools/read.ts` ｜ **Scope**：S
+  - **Commit**：`feat: 审计链校验 MCP 工具——补 listAuditRows 与链完整性自查`
 
-- [ ] **任务 5（S）：灵魂文档执行决议 7 + 附 2 残留修订**
-  - **Description**：① `docs/doing/博弈机制科研探索-PM与开发显性博弈设计.md` 移至 `docs/` 根目录（git mv，决议 7）；② 决议 7 处追加注记：一页纸实施提案豁免（由 v2.0 落地计划与 AGENTS.md 承担职能）；③ 正文补附 2 承诺但未落地的四处：结论节「诺奖标准答案」措辞收敛（附 1 Minor 2）、法务注记（gacha 概率公示，内部工具低风险一句带过）、数据最小化注记（让步总账滚动保留 4 季，Phase 2 工具化时生效）、M9「点数制下的估算博弈分析」小节（可用附 2 M9 应答内容浓缩）；④ 状态行更新：「分支 feat/v2.0-phase1」→ 已并入 main、待发版策略见 README 谱系；⑤ T2.1 咬合节的 `carriedReason/'stranded'` 命名处加一句注记（实际代码为 `carry_reason`，Gate 2 工具化时对齐）。
-  - **Acceptance criteria**：文档移至 docs/ 根且 AGENTS.md/各计划文档中所有引用路径同步更新；上述四处正文修订完成
-  - **Files**：灵魂文档（git mv + 编辑）、`AGENTS.md`、`docs/doing/v2.0-博弈机制落地计划.md`、`README.md`（关联文档链接）
-  - **Commit**：`docs: 灵魂文档执行决议 7 移入 docs/ 根 + 附 2 残留修订落地`
+### 检查点：只读能力完成
 
-- [ ] **任务 6（XS）：三份计划/手册文档状态收口**
-  - **Description**：① v2.2 计划：line 112 实施状态小结更新（阶段 A 已随 d3ea355 提交、本轮评审结论与本修复批次补记）；「明确不做」小节补审计链分叉条目（任务 2 落地后改记「已修」）；② v2.0 计划：状态头更新（feat 分支已并入 main 可删、发版策略按拍板结果改写、Gate 0 待部署后启动）；WP2 示例 DDL 加注记（实际实现 ts/actor 无库级默认，由 appendAudit 统一供给）；③ v2.1 手册：启动记录补一句「系统侧仪式（周五落账/按统计条开奖/急件录件）依赖 v2.x 部署上线后生效」；§5.3 补操作提醒「朗读剔除前先开启表格上方『备注』列显示开关（v2.2 起默认隐藏）」；④ 删除远程 `feat/v2.0-phase1` 分支（已全并入，git push origin --delete）。
-  - **Acceptance criteria**：四份文档与代码/仓库状态零矛盾；引用路径全通
-  - **Files**：`docs/doing/v2.2-*.md`、`docs/doing/v2.0-*.md`、`docs/doing/v2.1-*.md`
-  - **Commit**：`docs: doing/ 三份计划与手册状态收口——评审差距修复`
+- [ ] 5+1 个只读工具可用；`npm test` / `npm run check` / `npm run lint` / prettier 全绿；e2e 无回归
 
-### 检查点：文档收口完成
+### 阶段 2：写工具（开关控制）
 
-- [ ] 全文检索（分支名/路径/「标准答案」/carryReason）无残留；prettier 绿
+- [ ] **任务 5（M）：写工具注册 + `MCP_WRITES` 开关 + 危险度标注**
+  - **Description**：`api/mcp/tools/write.ts` 实现写工具，**仅当 `MCP_WRITES=on` 时注册**。每个写工具强制 `actor` 参数（承接软身份，落审计链）。用 MCP `annotations` 标注危险度，**description 中须明写不可逆后果**（模型读的是 description，不是 annotations）。
+  - 工具清单（全部对应既有 mutation，**不新增任何业务规则**）：
 
-### 阶段 4：发版与部署（阻塞 Gate 0 / Phase 2 的关键路径）
+    | MCP 工具                          | 危险度 | description 要点（英文）                                                                                                                                                                   |
+    | --------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+    | `van_dispatch`                    | 中     | Dispatch a new van. Month-scoped letter sequencing is automatic.                                                                                                                           |
+    | `tasks_add` / `tasks_update`      | 中     | Add/update a package. `actor` is required and is recorded in the audit log.                                                                                                                |
+    | `tasks_confirm`                   | 中     | Confirm receipt of a delivered package. Must be `status=done`, van not archived, and `actor` an existing member.                                                                           |
+    | `carry_run`                       | **高** | **DESTRUCTIVE.** Writes a `carried` marker that **permanently archives the source van** — once any carried task exists, that van can no longer be added to, edited, or have tasks removed. |
+    | `tasks_remove` / `members_remove` | **高** | **DESTRUCTIVE.** Removal is recorded in the audit log; member removal is rejected if the name appears on any package as owner, requester, or confirmer.                                    |
 
-- [ ] **任务 7（M，含一次拍板）：发版 v2.2.0**
-  - **Description**：① 拍板版本策略（推荐直接 v2.2.0，见 Architecture Decisions；备选：回溯打 v2.0.0 再发 v2.2.0）；② README 谱系补 v2.2 行（表格体验 + 多数据库，代号按谱系取）+ v2.0 行标注「未独立发版，随 v2.2.0 首发」；AGENTS.md 项目概览版本段同步；package.json version bump 2.2.0；③ 确认 CI 三 job 绿 → 打 tag `v2.2.0` 推送触发 release.yml（GHCR 镜像 + Release 附件）；④ 按 README 部署节上线（sqlite 文件卷或 pg/mysql 连接串）。
-  - **Acceptance criteria**：GHCR 镜像发布成功；部署实例 `/api/trpc/ping` ok、看板可访问、建首班数据落库
-  - **Verification**：release workflow 绿 + 部署实例冒烟
-  - **Open**：版本策略与谱系代号需用户拍板
+  - **Acceptance criteria**：
+    - [ ] 默认（`MCP_WRITES` 未设）时 `tools/list` **不含任何写工具**
+    - [ ] `MCP_WRITES=on` 时写工具出现，且缺 `actor` 的调用被拒绝
+    - [ ] `carry_run` 经 MCP 执行后，**审计链 `verifyAuditChain` 仍返回 ok**（复用任务 4 的工具自证）
+    - [ ] `api/mcp/tools/write.test.ts` 覆盖「默认不注册」「开关注册」「缺 actor 拒绝」三条
+  - **Verification**：`npm test`；`MCP_WRITES=on` 用 Inspector 实跑一次结转演练（**在测试库上**）
+  - **Dependencies**：任务 3、4 ｜ **Files**：`api/mcp/tools/write.ts`、`api/mcp/tools/write.test.ts`、`api/mcp/server.ts` ｜ **Scope**：M
+  - **Commit**：`feat: 写类 MCP 工具——MCP_WRITES 开关控制 + actor 必填 + 危险度标注`
 
-- [ ] **任务 8（S）：流程启动与文档归档**
-  - **Description**：① 部署后按 v2.0 计划启动【Gate 0】基线采集（班次 1 起记）；第一个周五复盘会跑通锚定仪式（指纹进纪要，补 v2.0 DoD 5）；Phase 2 系统侧仪式（周五落账/开奖）自此生效，4 班计时从首个完整走完议价台流程的班次起算；② 发版完成节点文档归档（按仓库文档组织规则）：`docs/doing/v2.2-表格体验与多数据库支持计划.md` → `archived/`、`docs/doing/v2.0-博弈机制落地计划.md` → `archived/`（Phase 1 已发版完结；Gate 1 判定记录改由纪要与 v2.1 手册承接）；v2.1 手册留在 doing/（纸面运行中）；③ AGENTS.md 目录结构与文档清单同步。
-  - **Acceptance criteria**：纪要含指纹锚定；归档移动完成且引用路径更新
-  - **Dependencies**：任务 7
+### 检查点：全量完成
 
-### 检查点：全部完成
+- [ ] 只读 + 写工具全部可用；`npm test` / `npm run check` / `npm run lint` / `npx prettier --check .` 全绿；`npm run test:e2e` 无回归
+- [ ] **人工评审后再决定是否合并**
 
-- [ ] 所有验收标准达成；CI 绿；部署实例运行中；文档与实际状态零矛盾
+### 阶段 3：文档（随实现收口）
+
+- [ ] **任务 6（S）：文档与调试入口**
+  - `README.md` 加「MCP」节：启用方式、开关、Inspector 调试步骤、安全边界（**勿暴露公网**，与既有约定一致）；`AGENTS.md` 目录结构加 `api/mcp/`，并加一条约定「MCP 工具一律经 tRPC caller 执行，**禁止在工具里直连 `queries/`**」——防止后续维护绕过校验。
+  - **Dependencies**：任务 5
+
+### 明确不做（本期）
+
+- **不预建 Phase 2 机制工具**（议价单 / 预测投票 / 让步总账 / `swap` 枚举）——Gate 2 复盘会尚未拍板「工具化范围」，预建会形成既成事实干扰决策；目录与注册机制已留扩展位，拍板后按域新增 `tools/phase2.ts` 即可。
+- **不做鉴权**——沿用项目现状（全 public），不因 MCP 单独引入。
+- **不做 stdio 形态**——HTTP 已满足本机与内网；不额外维护一层薄代理（拍板记录 3）。
+- **不做业务向自然语言界面**——MCP 提供的是「能力」，团队要聊天式入口需要另做前端；本期只交付能力层。
+- **不改 `serializeAudit` 格式**，不碰 `runTx` / `appendAudit` 内部实现。
 
 ## Risks and Mitigations
 
-| 风险                                                   | 影响 | 缓解                                                                                           |
-| ------------------------------------------------------ | ---- | ---------------------------------------------------------------------------------------------- |
-| 任务 1 依赖 AG Grid「colDef 无 hide 时保留列状态」行为 | 中   | 文档化行为 + e2e 红转绿直接证明；保留重套 effect 兜底；人工确认首帧无闪烁                      |
-| 任务 2 mysql FOR UPDATE 在 `_dv_meta` 行缺失时静默无锁 | 低   | ensureSchema 后该行必存在；缺行=优雅降级为现状，不崩                                           |
-| 灵魂文档移动造成引用断链                               | 中   | git mv 后全文检索路径批量更新（AGENTS.md/README/三份计划/纪要模板）；prettier + 人工复核       |
-| 发版策略拍板悬置                                       | 中   | 计划给默认推荐（v2.2.0 直发），阻塞点只有一处、可快速决策                                      |
-| 归档时机争议（v2.0 计划是否等 Gate 1）                 | 低   | Phase 1 交付物已发版即完结，判定流程由纪要/手册承接；如需保留在 doing/ 亦可，只影响任务 8 一行 |
-| doneAt 严校验拒绝历史脏数据回写                        | 低   | 存量均为前端编辑器产出的 YYYY-MM-DD；报错反而暴露脏数据                                        |
-| CI 是 pg/mysql 唯一真实验证环境                        | 中   | 锁 SQL 语法错误会让变体套件全红（fail loud）                                                   |
+| 风险                                                                   | 影响   | 缓解                                                                      |
+| ---------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------- |
+| zod schema 拆分引入行为漂移                                            | 中     | 纯搬迁；`vanRouter.test.ts` 现有拒绝用例**不改即须通过**，是最强回归保证  |
+| `createCaller` 绕过了 superjson 序列化                                 | 低     | caller 返回原生 JS 值，**正是我们想要的**；无需 transformer               |
+| `/mcp` 被 vite dev server 的 `exclude` 正则吞掉（dev 可用、prod 挂掉） | 中     | 任务 2 验收项明确要求 dev + prod **双模式**实测；不挂尾斜杠               |
+| 写工具被误用造成整班归档锁定                                           | **高** | 默认不注册 + 开关控制 + `destructiveHint` 标注 + 工具描述中写明不可逆     |
+| MCP SDK v2 Hono 适配器不成熟                                           | 中     | 降级路径已定：低层 `StreamableHTTPServerTransport` 手动挂载，业务层零改动 |
+| 输出过大撑爆模型上下文                                                 | 中     | `limit` + `truncated` 显式标记，绝不静默截断                              |
+| 提前预建 Phase 2 工具干扰 Gate 2 决策                                  | 中     | 本期明确不做，扩展位靠目录分片预留                                        |
 
-## Open Questions
+## 拍板记录（2026-09-28，四项已决）
 
-1. **发版版本策略**（任务 7）：推荐直接 v2.2.0、不回溯打 v2.0.0 tag；谱系代号待取。
-2. 任务 3/4 是否纳入（建议纳入，合计 < 1 小时）。
-3. v2.0 落地计划归档时机（推荐发版后即归档；也可等 Gate 1 后）。
+1. **工具描述语言 → 英文。** 作为对 AGENTS.md「注释与业务文案使用中文」的显式例外，仅限 MCP tool description；工具名、参数名、错误文案、代码注释一律照旧中文。已在 Architecture Decisions 固化。
+2. **写工具默认策略 → 未注册。** `MCP_WRITES` 未设时 `tools/list` 不含任何写工具（未注册优于注册后拒绝）；`on` 时才注册并强制 `actor`。
+3. **stdio 形态 → 不补。** HTTP 已满足本机与内网；若日后出现「AI 编辑器只能配 stdio」的场合，再加一层薄代理转发到 `/mcp`，届时另行评估。
+4. **文档落位 → 立一页纸。** 已建 `docs/doing/v2.4-MCP接入一页纸实施提案.md`；本文保留为详细工作产出。
+
+## 遗留 Open Questions
+
+- **版本号与代号**：提议 v2.4.0（代号沿 v2.x.y 全系 `STEINS;GATE`），**待发版拍板时与谱系一并确认**——本页纸与 README 谱系尚未改动，避免既成事实。
+- **Phase 2 工具化**：Gate 2 复盘会拍板「工具化范围」后再动，届时按 `tools/phase2.ts` 分片新增。

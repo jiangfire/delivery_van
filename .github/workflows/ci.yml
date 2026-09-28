@@ -88,6 +88,14 @@ jobs:
           done
           curl -sf http://localhost:3000/ | grep -q 'lang="zh-CN"'
           curl -sf http://localhost:3000/api/trpc/ping | grep -q ok
+          # v2.4 MCP 冒烟：容器内 /mcp 必须真的能握手。曾栽过「dev 正常 / prod 挂」的坑，
+          # 故在 CI（打 tag 之前）与 release 两处都查。Streamable HTTP 须同时 accept
+          # json 与 event-stream，响应是 SSE 帧。
+          curl -sf -X POST http://localhost:3000/mcp \
+            -H 'content-type: application/json' \
+            -H 'accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ci-smoke","version":"0"}}}' \
+            | grep -q '"name":"delivery_van"'
           docker logs dv
       - name: 数据卷持久化验证（发版验收项：容器重建数据不丢）
         run: |

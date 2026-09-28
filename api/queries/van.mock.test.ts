@@ -181,35 +181,11 @@ describe("成员管理", () => {
   });
 
   describe("updateMemberCapacity", () => {
-    it("正常更新成员产能", async () => {
-      const memberQuery = createQueryable([
-        { id: 1, name: "张三", capacity: 5 },
-      ]);
-      const updatedQuery = createQueryable([
-        { id: 1, name: "张三", capacity: 7 },
-      ]);
-      let callCount = 0;
-
-      mockDb = {
-        select: vi.fn().mockImplementation(() => {
-          callCount++;
-          return callCount === 1 ? memberQuery : updatedQuery;
-        }),
-        update: vi.fn().mockReturnValue({
-          set: vi.fn().mockReturnValue({
-            where: vi.fn().mockReturnValue({
-              then: (resolve: (value: any) => any) =>
-                Promise.resolve(undefined).then(resolve),
-            }),
-          }),
-        }),
-      };
-
-      const result = await updateMemberCapacity(1, 7);
-
-      expect(result).toEqual([{ id: 1, name: "张三", capacity: 7 }]);
-    });
-
+    // 「正常改运力」的成功路径已移至 van.write.suite.ts（内存 SQLite 真实建表）：
+    // v2.4 起该写操作与审计同事务，mock 要跑通需把 runTx + appendAudit 的
+    // 链尾读取、哈希串链、批量插入整套桩出来——桩得越细，越验证不到真东西。
+    // 按 AGENTS.md「数据层行为优先用内存 SQLite，mock DB 只用于并发异常注入」，
+    // 此处只保留不触碰事务的前置校验分支。
     it("成员不存在时抛出 NOT_FOUND 错误", async () => {
       mockDb = {
         select: vi.fn().mockReturnValue(createQueryable([])),
