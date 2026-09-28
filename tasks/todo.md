@@ -26,7 +26,7 @@
 
 ### 检查点：全量完成 ✅
 
-- [x] 四件套全绿 + e2e 23/23；**未合并、未提交（按约定待人工评审）**
+- [x] 四件套全绿 + e2e 23/23（人工评审已过，最终于 v2.4.0 提交并发布）
 
 ## 阶段 3：文档
 
@@ -71,16 +71,22 @@
 - [x] `release.yml` 容器冒烟**新增 `/mcp` 握手检查**（本版主打功能此前完全不在冒烟范围内；曾栽过 dev 正常/prod 挂的坑，冒烟必查）
 - [x] **发版说明 heredoc 反引号转义**：NOTES 用的是不带引号的 `<<EOF`，其中反引号会被 shell 当**命令替换**执行——实测未转义时 bash 报 `/mcp: No such file or directory` 并**静默把文字从说明里抹空**。已全部转义为 ``\` `` 并用 Git Bash 复现验证渲染正确
 - [x] 发版前全量复验：`tsc` / `eslint` / `prettier --check .` / `npm test` 201 / `npm run build` / 真机 prod（MCP `serverInfo.version` = **2.4.0**，证明版本取自 package.json 的修复生效）
-- [ ] **提交 + 打 tag `v2.4.0` + 推送**（触发 `release.yml`：GHCR 镜像 + Release zip）——待用户确认后执行
+- [x] **提交 + 打 tag `v2.4.0` + 推送**（触发 `release.yml`：GHCR 镜像 + Release zip）——2026-09-28 已执行并完成
+- [x] **两条流水线全绿**：Release success（`delivery_van-v2.4.0.zip` 1.62 MB + `ghcr.io/jiangfire/delivery_van:v2.4.0`）；CI success
+- [x] **CI 内单测 277 passed / 277 零 skip**——即本地 skip 的 76 例 pg/mysql 方言变体在真实容器全跑通，补上发版前最后一块未实测项
 
-### 发版命令（确认后执行）
+### 发版实况（2026-09-28）
 
-```bash
-git add -A && git commit -m "..."
-git tag v2.4.0 && git push origin main --tags
-```
+- commit `d003f66`，tag `v2.4.0` 指向同一 commit，fast-forward 推 `origin/main`
+- Release「v2.4.0 STEINS;GATE」：<https://github.com/jiangfire/delivery_van/releases/tag/v2.4.0>
+- CI 三个 job 全过：check（277 单测 + lint + tsc + prettier）、e2e（23/23）、docker（**含新增的 `/mcp` 容器握手冒烟**）
+- 临发版修掉一个真缺陷：两条冒烟的 `protocolVersion` 原写 `2025-06-18`，而 SDK v2 只支持 `2025-11-25` / `2026-07-28`；**SDK 对不支持的版本是优雅降级不报错**，故它能一路混过 CI 直到客户端真用它才炸。已统一改为 `2025-11-25` 并实测原样协商
+
+### 本地无法补的验证（留给 CI，且已由 CI 兑现）
+
+本机无 docker；本机 5432 有 Postgres 但需密码且无凭据，而 harness 的 `cleanAllTables` 会**清空目标库全部表**，指向任何在用库都是破坏性的——不可借道。v2.2 设计文档已将 pg/mysql 定为 CI 专属验证关卡，本次照此执行。
 
 ## 遗留待拍板
 
-- [ ] 版本号与代号（提议 v2.4.0，沿 `STEINS;GATE`）——待发版拍板时与 README 谱系一并确认；本轮**未改** `package.json` 版本与 README 谱系
+- [x] 版本号与代号——**已定为 v2.4.0「STEINS;GATE」并发布**（`package.json`、README 谱系、AGENTS.md、`release.yml` 说明均已同步）
 - [ ] Phase 2 工具化范围——待 Gate 2 复盘会（扩展位已在 `api/mcp/tools/` 按域预留）

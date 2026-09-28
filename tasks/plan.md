@@ -161,5 +161,5 @@
 
 ## 遗留 Open Questions
 
-- **版本号与代号**：提议 v2.4.0（代号沿 v2.x.y 全系 `STEINS;GATE`），**待发版拍板时与谱系一并确认**——本页纸与 README 谱系尚未改动，避免既成事实。
+- **版本号与代号**：~~提议 v2.4.0，待发版拍板~~ **已定并发布**——v2.4.0「STEINS;GATE」（2026-09-28，commit `d003f66`），`package.json`、README 谱系、AGENTS.md、`release.yml` 发版说明均已同步。
 - **Phase 2 工具化**：Gate 2 复盘会拍板「工具化范围」后再动，届时按 `tools/phase2.ts` 分片新增。
