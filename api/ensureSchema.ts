@@ -1,5 +1,5 @@
 import { getDb } from "./queries/connection";
-import { getDialect } from "./queries/dialect";
+import { getDialect, type AppDb } from "./queries/dialect";
 import { ensureSchemaPg } from "./ensureSchema.pg";
 import { ensureSchemaMysql } from "./ensureSchema.mysql";
 import { LEGACY_RARITY_TO } from "../db/schema";
@@ -138,9 +138,18 @@ async function ensureSchemaSqlite() {
   await db.run(sql`
     CREATE TABLE IF NOT EXISTS task_owners (
       task_id integer NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-      owner_name text NOT NULL
+      owner_name text NOT NULL,
+      points integer NOT NULL DEFAULT 0
     )
   `);
+  // 兼容旧库：task_owners 可能没有 points 列（v2.5 每人点数制），幂等添加
+  try {
+    db.run(
+      sql`ALTER TABLE task_owners ADD COLUMN points integer NOT NULL DEFAULT 0`,
+    );
+  } catch {
+    // 列已存在，忽略
+  }
   // 半天点数制迁移：旧三档 1/3/5 天 ×2 变 2/6/10 点，成员运力 ≤7 天 ×2。
   // 用 PRAGMA user_version 作迁移标记保证只执行一次——值域迁移无法幂等
   // （迁移后新写入的 1/3/5 点与旧天数值撞车），新库表为空时 UPDATE 为 no-op。
@@ -167,5 +176,62 @@ async function ensureSchemaSqlite() {
         : sql`UPDATE tasks SET confirmed_at = '(历史)', confirmed_by = '(历史)' WHERE status = 'done' AND confirmed_at IS NULL`,
     );
     await db.run(sql`PRAGMA user_version = 2`);
+  }
+  // v2.5 每人点数制一次性回填：旧件级档位（tasks.size）均分给该件的各负责人。
+  // 无法幂等（回填后新写入的 0 点与"尚未回填"在库里无法区分），沿用 user_version
+  // 门控只执行一次；全新库表为空时为 no-op。
+  if (versionRow.user_version <= 2) {
+    await backfillOwnerPoints(db);
+    await db.run(sql`PRAGMA user_version = 3`);
+  }
+}
+
+/**
+ * 存量回填的均分规则（纯函数，仅供 v2.5 迁移使用，运行时不参与任何计算）：
+ * `base = floor(size / n)`，余数按**名字拼音序**补给前 r 人。
+ *
+ * 为什么要定序：负责人列表本来就靠 `group_concat` 聚合，组内顺序各方言无保证，
+ * 回填必须落在确定的人头上。用拼音序（`localeCompare(…, "zh")`）而不是默认的
+ * 码点序——码点序对中文名是随机的（"乙" 的码点小于 "甲"），拼音序人能看懂。
+ * `size` 为空 → 全 0 点。
+ */
+export function splitLegacyPoints(
+  size: number | null,
+  names: string[],
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (names.length === 0) return out;
+  const base = Math.floor((size ?? 0) / names.length);
+  let rest = (size ?? 0) - base * names.length;
+  for (const name of [...names].sort((a, b) => a.localeCompare(b, "zh"))) {
+    out[name] = base + (rest > 0 ? 1 : 0);
+    if (rest > 0) rest -= 1;
+  }
+  return out;
+}
+
+/** v2.5 回填执行体：把每个有负责人的旧件的档位均分写入 task_owners.points */
+async function backfillOwnerPoints(db: AppDb) {
+  const tasks = await db.all<{ id: number; size: number | null }>(
+    sql`SELECT id, size FROM tasks`,
+  );
+  const owners = await db.all<{ task_id: number; owner_name: string }>(
+    sql`SELECT task_id, owner_name FROM task_owners`,
+  );
+  const byTask = new Map<number, string[]>();
+  for (const o of owners) {
+    const list = byTask.get(o.task_id);
+    if (list) list.push(o.owner_name);
+    else byTask.set(o.task_id, [o.owner_name]);
+  }
+  for (const t of tasks) {
+    const names = byTask.get(t.id);
+    if (!names || names.length === 0) continue;
+    const split = splitLegacyPoints(t.size, names);
+    for (const name of names) {
+      await db.run(
+        sql`UPDATE task_owners SET points = ${split[name]} WHERE task_id = ${t.id} AND owner_name = ${name}`,
+      );
+    }
   }
 }

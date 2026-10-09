@@ -59,7 +59,9 @@ export function StatsPanel({
       {dim === "source" && <SourceView stats={stats} />}
       <p className="mt-4 text-xs text-muted-foreground">
         口径说明：三方占比与来源自 v2.0 起采集，历史快件统一记为客户件；
-        记分卡「送达」为签收口径，滞留率/完成率仍为 v1 口径（基线连续）。
+        记分卡「送达」为签收口径，滞留率/完成率仍为 v1 口径（基线连续）。 点数自
+        v2.5 起归属到人（任务点数 = 各负责人点数之和，未指派的件不计点数）；
+        历史快件按旧档位均分回填，因此历史周的个人点数与改造前不可比。
       </p>
     </section>
   );
@@ -97,11 +99,21 @@ function OwnerView({
 }) {
   const members = stats?.members ?? [];
   const streaks = stats?.badges.streaks ?? [];
+  /** 团队周运力上限 = 各成员 capacity 之和：整车装载没有分母就看不出是多是少 */
+  const teamCapacity = members.reduce((s, m) => s + m.capacity, 0);
   return (
     <div>
-      <h3 className="mb-2 text-xs font-bold text-muted-foreground">
-        成员运力（按标签自动统计）
-      </h3>
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h3 className="text-xs font-bold text-muted-foreground">
+          成员运力（按标签自动统计）
+        </h3>
+        {stats && (
+          <span className="text-xs text-muted-foreground">
+            整车装载 {stats.loadPoints} / {teamCapacity} 点 （各负责人点数之和 /
+            团队周运力）
+          </span>
+        )}
+      </div>
       {members.length === 0 ? (
         <p className="text-xs text-muted-foreground">
           还没有成员，快件表「负责人」编辑器里可即时新增

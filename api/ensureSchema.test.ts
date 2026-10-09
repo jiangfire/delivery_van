@@ -41,7 +41,7 @@ vi.mock("./queries/connection", () => ({
   getDb: vi.fn(() => mockDb),
 }));
 
-import { ensureSchema } from "./ensureSchema";
+import { ensureSchema, splitLegacyPoints } from "./ensureSchema";
 
 describe("ensureSchema 稀有度迁移", () => {
   it("启动时把旧六级存量迁移到新五级，新值不受影响，重复启动幂等", async () => {
@@ -159,14 +159,14 @@ describe("ensureSchema v2.0 签收与来源迁移", () => {
     expect(fresh).toEqual([{ title: "新送达件", confirmed_at: null }]);
   });
 
-  it("全新库（user_version 0）一次走完两级迁移，空表回填为 no-op", async () => {
+  it("全新库（user_version 0）一次走完三级迁移，空表回填为 no-op", async () => {
     mockDb = drizzle(new Database(":memory:"), { schema });
     await ensureSchema();
 
     const [v] = await mockDb.all<{ user_version: number }>(
       sql`PRAGMA user_version`,
     );
-    expect(v.user_version).toBe(2);
+    expect(v.user_version).toBe(3);
   });
 });
 
@@ -241,5 +241,117 @@ describe("ensureSchema 半天点数制迁移", () => {
         sql`SELECT capacity FROM members ORDER BY id`,
       ),
     ).toEqual([{ capacity: 10 }, { capacity: 14 }, { capacity: 4 }]);
+  });
+});
+
+// ── v2.5 每人点数制迁移：旧件级档位（tasks.size）均分回填到每个负责人 ──
+
+describe("splitLegacyPoints（回填期的均分规则）", () => {
+  it("整除：6 点 3 人 → 每人 2 点", () => {
+    expect(splitLegacyPoints(6, ["安", "白", "陈"])).toEqual({
+      安: 2,
+      白: 2,
+      陈: 2,
+    });
+  });
+
+  it("除不尽：5 点 2 人 → 余数给拼音序靠前者（安 3、陈 2）", () => {
+    expect(splitLegacyPoints(5, ["安", "陈"])).toEqual({ 安: 3, 陈: 2 });
+  });
+
+  it("余数按拼音序分配，与传入顺序无关（传入 陈、安 仍是安 3 陈 2）", () => {
+    expect(splitLegacyPoints(5, ["陈", "安"])).toEqual({ 安: 3, 陈: 2 });
+  });
+
+  it("余数多于 1：8 点 3 人 → 拼音序前两人各 3、末位 2", () => {
+    expect(splitLegacyPoints(8, ["陈", "安", "白"])).toEqual({
+      安: 3,
+      白: 3,
+      陈: 2,
+    });
+  });
+
+  it("旧档位为空 → 全员 0 点", () => {
+    expect(splitLegacyPoints(null, ["安", "白"])).toEqual({ 安: 0, 白: 0 });
+  });
+
+  it("没有负责人 → 空结果（不产生任何点数）", () => {
+    expect(splitLegacyPoints(5, [])).toEqual({});
+  });
+});
+
+describe("ensureSchema v2.5 点数回填", () => {
+  it("存量件的旧档位均分给各负责人，user_version 升到 3，重复启动幂等且不误伤新行", async () => {
+    mockDb = drizzle(new Database(":memory:"), { schema });
+    // 模拟 v2.4 旧库：task_owners 没有 points 列，user_version = 2
+    await mockDb.run(sql`
+      CREATE TABLE tasks (
+        id integer PRIMARY KEY AUTOINCREMENT,
+        van_code text NOT NULL,
+        title text NOT NULL,
+        requester text,
+        size integer,
+        status text NOT NULL DEFAULT 'todo',
+        created_at integer NOT NULL DEFAULT (unixepoch())
+      )
+    `);
+    await mockDb.run(sql`
+      CREATE TABLE task_owners (
+        task_id integer NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        owner_name text NOT NULL
+      )
+    `);
+    await mockDb.run(sql`PRAGMA user_version = 2`);
+    await mockDb.run(sql`
+      INSERT INTO tasks (van_code, title, size, status) VALUES
+        ('DV2607A', '除不尽件', 5, 'doing'),
+        ('DV2607A', '整除件', 6, 'doing'),
+        ('DV2607A', '无档位件', NULL, 'todo'),
+        ('DV2607A', '无负责人件', 10, 'todo')
+    `);
+    await mockDb.run(sql`
+      INSERT INTO task_owners (task_id, owner_name) VALUES
+        (1, '陈'), (1, '安'),
+        (2, '陈'), (2, '白'), (2, '安'),
+        (3, '安')
+    `);
+
+    await ensureSchema();
+
+    const pointsByTask = async () => {
+      const rows = await mockDb.all<{
+        task_id: number;
+        owner_name: string;
+        points: number;
+      }>(sql`SELECT task_id, owner_name, points FROM task_owners`);
+      const out: Record<number, Record<string, number>> = {};
+      for (const r of rows) {
+        (out[r.task_id] ??= {})[r.owner_name] = r.points;
+      }
+      return out;
+    };
+
+    // 除不尽 → 余数按拼音序；整除 → 均分；无档位 → 全员 0；无负责人的件不产生任何行
+    expect(await pointsByTask()).toEqual({
+      1: { 安: 3, 陈: 2 },
+      2: { 安: 2, 白: 2, 陈: 2 },
+      3: { 安: 0 },
+    });
+
+    const [v] = await mockDb.all<{ user_version: number }>(
+      sql`PRAGMA user_version`,
+    );
+    expect(v.user_version).toBe(3);
+
+    // cutover 后新增的负责人行默认 0 点，且重启不会被二次回填
+    await mockDb.run(
+      sql`INSERT INTO task_owners (task_id, owner_name) VALUES (1, '己')`,
+    );
+    await ensureSchema();
+    expect(await pointsByTask()).toEqual({
+      1: { 安: 3, 陈: 2, 己: 0 },
+      2: { 安: 2, 白: 2, 陈: 2 },
+      3: { 安: 0 },
+    });
   });
 });

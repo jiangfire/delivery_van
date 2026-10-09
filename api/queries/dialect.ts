@@ -1,4 +1,4 @@
-import { sql, type SQL, type SQLWrapper } from "drizzle-orm";
+import { sql, type SQL } from "drizzle-orm";
 import type { BetterSQLite3Database } from "drizzle-orm/better-sqlite3";
 import * as sqliteSchema from "../../db/schema";
 import * as pgSchema from "../../db/schema.pg";
@@ -69,13 +69,6 @@ export async function execRaw(db: AppDb, stmt: SQL): Promise<void> {
     return;
   }
   await (db as unknown as { execute(s: SQL): Promise<unknown> }).execute(stmt);
-}
-
-/** 字符串聚合的方言差异：pg 用 string_agg，sqlite/mysql 同名 group_concat */
-export function groupConcatSql(expr: SQLWrapper) {
-  return getDialect() === "postgres"
-    ? sql<string>`string_agg(${expr}, ',')`
-    : sql<string>`group_concat(${expr})`;
 }
 
 /**

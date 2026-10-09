@@ -176,7 +176,11 @@ describe("carry_run 经 MCP 执行后审计链仍完整", () => {
     await dispatchVan(new Date("2026-09-01T00:00:00Z"), "张三");
     await dispatchVan(new Date("2026-10-02T00:00:00Z"), "张三");
     await addMember("李四", 10, "张三");
-    await addTask({ van: VAN, title: "没做完的件", owners: ["李四"] });
+    await addTask({
+      van: VAN,
+      title: "没做完的件",
+      owners: [{ name: "李四", points: 3 }],
+    });
 
     await tool("carry_run").run({
       fromVan: VAN,

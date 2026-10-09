@@ -50,13 +50,16 @@ describe("toStrandedTask", () => {
     expect(again.carryCount).toBe(2);
   });
 
-  it("保留快件内容、稀有度、档位、验收标准和备注", () => {
+  it("保留快件内容、稀有度、验收标准和备注", () => {
     const carried = toStrandedTask(base, "DV2607B");
     expect(carried.title).toBe(base.title);
     expect(carried.rarity).toBe("ssr");
-    expect(carried.size).toBe(base.size);
     expect(carried.acceptance).toBe(base.acceptance);
     expect(carried.note).toBe(base.note);
+  });
+
+  it("不搬运已废弃的档位列（v2.5 起点数由各负责人各自持有）", () => {
+    expect(toStrandedTask(base, "DV2607B")).not.toHaveProperty("size");
   });
 
   it("排除 id 和 createdAt 字段", () => {

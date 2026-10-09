@@ -19,6 +19,7 @@ import {
 } from "./van";
 import { execRaw } from "./dialect";
 import { todayStr } from "../../contracts/vans";
+import { taskPointsOf } from "../../contracts/points";
 import type { DataLayerCtx } from "./dialectHarness";
 
 export function registerWriteSuite(ctx: DataLayerCtx) {
@@ -81,7 +82,11 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
 
       it("当过负责人的成员不可删除", async () => {
         await addMember("张三", 10);
-        await addTask({ van: "DV2607A", title: "甲", owners: ["张三"] });
+        await addTask({
+          van: "DV2607A",
+          title: "甲",
+          owners: [{ name: "张三", points: 3 }],
+        });
         await expect(removeMember("张三")).rejects.toThrow("不可删除");
         expect((await listMembers()).map((x) => x.name)).toContain("张三");
       });
@@ -139,17 +144,24 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
     });
 
     describe("快件增删改", () => {
-      it("创建快件时写入负责人标签，排在班次末尾", async () => {
+      it("创建快件时写入各负责人的点数，排在班次末尾", async () => {
         await addTask({ van: "DV2607A", title: "甲" });
         await addTask({
           van: "DV2607A",
           title: "乙",
-          owners: ["张三", "李四"],
+          owners: [
+            { name: "张三", points: 3 },
+            { name: "李四", points: 2 },
+          ],
           source: "exploration",
         });
         const list = await listTasksByVan("DV2607A");
         expect(list.map((t) => t.title)).toEqual(["甲", "乙"]);
-        expect(list[1].owners).toEqual(["张三", "李四"]);
+        expect(list[1].owners).toEqual([
+          { name: "张三", points: 3 },
+          { name: "李四", points: 2 },
+        ]);
+        expect(taskPointsOf(list[1].owners)).toBe(5);
         expect(list[1].source).toBe("exploration");
         expect(list[0].source).toBe("customer"); // 默认客户件
       });
@@ -174,8 +186,10 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
         await addTask({ van: "DV2607A", title: "甲" });
         const [t] = await listTasksByVan("DV2607A");
         await updateTask(t.id, { status: "done" });
-        const list = await updateTask(t.id, { owners: ["张三"] });
-        expect(list[0].owners).toEqual(["张三"]);
+        const list = await updateTask(t.id, {
+          owners: [{ name: "张三", points: 4 }],
+        });
+        expect(list[0].owners).toEqual([{ name: "张三", points: 4 }]);
         expect(list[0].status).toBe("done");
         expect(list[0].doneAt).toBe(todayStr());
       });

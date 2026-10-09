@@ -70,7 +70,8 @@ export async function ensureSchemaPg() {
     db,
     sql`CREATE TABLE IF NOT EXISTS task_owners (
       task_id integer NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-      owner_name text NOT NULL
+      owner_name text NOT NULL,
+      points integer NOT NULL DEFAULT 0
     )`,
   );
   // 链式审计日志表（WP2）：只追加不改写，读链校验见 queries/audit.ts

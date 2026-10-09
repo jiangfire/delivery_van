@@ -54,7 +54,7 @@ export const writeTools = [
     name: "tasks_add",
     title: "Add a package to a van",
     description:
-      "Add a package to a van. The van must not be archived (a van that already has carried packages is permanently read-only). `actor` is required and is recorded in the audit log.",
+      "Add a package to a van. `owners` is one entry per person, each carrying their own points: `[{ name, points }]` with points 0-10 (1 point = half a day; 0 means listed but not loaded). Every owner MUST be given an explicit points value — there is no default, and there is no task-level `size` field anymore: a package's total points is the sum over its owners. A package may also be added with no owners, in which case it counts as 0 points until someone is assigned. The van must not be archived (a van that already has carried packages is permanently read-only). `actor` is required and is recorded in the audit log.",
     inputSchema: taskAddInput.extend({ actor: actorRequired }),
     annotations: { readOnlyHint: false, destructiveHint: false },
     async run(input) {
@@ -66,7 +66,7 @@ export const writeTools = [
     name: "tasks_update",
     title: "Update a package",
     description:
-      "Update fields on an existing package. Only the fields you pass are changed. The van must not be archived. `actor` is required and is recorded in the audit log.",
+      "Update fields on an existing package. Only the fields you pass are changed. Passing `owners` REPLACES the entire owner list, so include every person together with their own points: `[{ name, points }]`, points 0-10 (1 point = half a day). Each owner must be given an explicit points value; there is no task-level `size` field anymore. The van must not be archived. `actor` is required and is recorded in the audit log.",
     inputSchema: taskUpdateInput.extend({ actor: actorRequired }),
     annotations: { readOnlyHint: false, destructiveHint: false },
     async run({ id, actor, ...patch }) {

@@ -14,6 +14,7 @@ import {
   nextVanCodeFrom,
   todayStr,
 } from "../../contracts/vans";
+import { taskPointsOf, type OwnerAlloc } from "../../contracts/points";
 import {
   appendAudit,
   fingerprintOf,
@@ -23,7 +24,6 @@ import {
 import { runTx } from "./tx";
 import {
   getSchema,
-  groupConcatSql,
   insertReturningId,
   isUniqueViolation,
   qAll,
@@ -39,13 +39,12 @@ const { members, tasks, taskOwners, vans, auditLog } = getSchema();
 export function toStrandedTask(
   task: Task,
   toVan: string,
-): Omit<Task, "id" | "createdAt"> {
+): Omit<Task, "id" | "createdAt" | "size"> {
   return {
     vanCode: toVan,
     title: task.title,
     rarity: task.rarity,
     requester: task.requester,
-    size: task.size,
     acceptance: task.acceptance,
     status: "todo",
     carriedFrom: task.vanCode,
@@ -201,13 +200,14 @@ export function sourceStatsOf(rows: Pick<Task, "source" | "status">[]): {
 
 /**
  * 昨日天气（WP4）：建议装载上限 = 上一班 done 任务（v1 口径，非签收口径——
- * 口径连续性规则：昨日天气与徽章统一用 done，confirmed 只喂签收覆盖率）点数合计。
+ * 口径连续性规则：昨日天气与徽章统一用 done，confirmed 只喂签收覆盖率）的**点数合计**
+ * ——v2.5 起点数归属到人，任务点数 = 各负责人点数之和（未指派的件为 0）。
  * vans 为最新在前的编码列表（编码定宽，字典序即发车时间序）；无历史班返回 null。
  */
 export function suggestedLoadOf(
   van: string,
   vans: string[],
-  rows: Pick<Task, "vanCode" | "status" | "size">[],
+  rows: (Pick<Task, "vanCode" | "status"> & { owners: { points: number }[] })[],
 ): number | null {
   const prev = vans
     .filter((v) => v < van)
@@ -216,7 +216,7 @@ export function suggestedLoadOf(
   if (prev === undefined) return null;
   return rows
     .filter((t) => t.vanCode === prev && t.status === "done")
-    .reduce((sum, t) => sum + (t.size ?? 0), 0);
+    .reduce((sum, t) => sum + taskPointsOf(t.owners), 0);
 }
 
 /** 滞留原因瀑布（WP5）：只统计 stranded（carried）件，按枚举定义序输出，未分类殿后 */
@@ -244,7 +244,7 @@ export function carryReasonStatsOf(
 export function badgesOf(
   van: string,
   vans: string[],
-  rows: (Pick<Task, "vanCode" | "status"> & { owners: string[] })[],
+  rows: (Pick<Task, "vanCode" | "status"> & { owners: { name: string }[] })[],
 ): { teamPunctual: boolean; streaks: string[] } {
   const mine = rows.filter((t) => t.vanCode === van);
   const teamPunctual =
@@ -252,11 +252,13 @@ export function badgesOf(
 
   const orderedVans = [...vans].sort().reverse(); // 最新在前
   const streaks: string[] = [];
-  for (const name of new Set(rows.flatMap((t) => t.owners))) {
+  for (const name of new Set(
+    rows.flatMap((t) => t.owners.map((o) => o.name)),
+  )) {
     let streak = 0;
     for (const v of orderedVans) {
       const mineInVan = rows.filter(
-        (t) => t.vanCode === v && t.owners.includes(name),
+        (t) => t.vanCode === v && t.owners.some((o) => o.name === name),
       );
       if (mineInVan.length === 0) continue; // 未参与的班次不补给连击
       if (mineInVan.some((t) => t.status === "carried")) break; // 滞留断连击
@@ -269,7 +271,11 @@ export function badgesOf(
 
 /* ── 任务带负责人列表的公共类型 ── */
 
-export type TaskWithOwners = Task & { owners: string[] };
+/**
+ * 读模型：快件 + 各负责人的点数。`size` 已废弃（v2.5），对外不再暴露——
+ * 任务点数一律由 `taskPointsOf(owners)` 求得。
+ */
+export type TaskWithOwners = Omit<Task, "size"> & { owners: OwnerAlloc[] };
 
 /* ── 班次（手动发新车，不再绑定周五） ── */
 
@@ -459,12 +465,12 @@ async function isVanArchived(van: string) {
   return rows.length > 0;
 }
 
-/** 查询班次快件列表（附带负责人标签，单次 JOIN 查询） */
+/** 查询班次快件列表（附带各负责人的点数） */
 export async function listTasksByVan(van: string): Promise<TaskWithOwners[]> {
   const rows = await taskRowsQuery(getDb())
     .where(eq(tasks.vanCode, van))
     .orderBy(asc(tasks.sortOrder), asc(tasks.id));
-  return rows.map(splitOwners);
+  return attachOwners(rows);
 }
 
 /** 全部班次的快件列表（昨日天气与徽章等跨班统计用） */
@@ -474,19 +480,15 @@ export async function listAllTasks(): Promise<TaskWithOwners[]> {
     asc(tasks.sortOrder),
     asc(tasks.id),
   );
-  return rows.map(splitOwners);
+  return attachOwners(rows);
 }
 
-/** 快件 + 负责人聚合的查询构造（listTasksByVan / listAllTasks 共用） */
+/**
+ * 快件查询（不含负责人）。负责人是**每人一份的叶子行**（各自带点数），
+ * 单独查一次再在 JS 里按 taskId 归组——不用 group_concat 把名字与点数拼成串对齐：
+ * 组内顺序各方言无保证，靠两次聚合恰好同序是脆弱假设。
+ */
 function taskRowsQuery(db: ReturnType<typeof getDb>) {
-  const ownerAgg = db
-    .select({
-      taskId: taskOwners.taskId,
-      owners: groupConcatSql(taskOwners.ownerName).as("owners"),
-    })
-    .from(taskOwners)
-    .groupBy(taskOwners.taskId)
-    .as("owner_agg");
   return db
     .select({
       id: tasks.id,
@@ -494,7 +496,6 @@ function taskRowsQuery(db: ReturnType<typeof getDb>) {
       title: tasks.title,
       rarity: tasks.rarity,
       requester: tasks.requester,
-      size: tasks.size,
       acceptance: tasks.acceptance,
       status: tasks.status,
       carriedFrom: tasks.carriedFrom,
@@ -507,14 +508,36 @@ function taskRowsQuery(db: ReturnType<typeof getDb>) {
       confirmedBy: tasks.confirmedBy,
       confirmedAt: tasks.confirmedAt,
       createdAt: tasks.createdAt,
-      owners: sql<string>`coalesce(${ownerAgg.owners}, '')`.as("owners"),
     })
-    .from(tasks)
-    .leftJoin(ownerAgg, eq(tasks.id, ownerAgg.taskId));
+    .from(tasks);
 }
 
-function splitOwners<T extends { owners: string | null }>(row: T) {
-  return { ...row, owners: row.owners ? row.owners.split(",") : [] };
+type TaskBaseRow = Omit<Task, "size">;
+
+/** 给一批快件挂上各自的负责人（含点数）；无负责人的件得到空数组 */
+async function attachOwners(rows: TaskBaseRow[]): Promise<TaskWithOwners[]> {
+  if (rows.length === 0) return [];
+  const allocs = await getDb()
+    .select({
+      taskId: taskOwners.taskId,
+      name: taskOwners.ownerName,
+      points: taskOwners.points,
+    })
+    .from(taskOwners)
+    .where(
+      inArray(
+        taskOwners.taskId,
+        rows.map((r) => r.id),
+      ),
+    );
+  const byTask = new Map<number, OwnerAlloc[]>();
+  for (const a of allocs) {
+    const alloc = { name: a.name, points: a.points };
+    const list = byTask.get(a.taskId);
+    if (list) list.push(alloc);
+    else byTask.set(a.taskId, [alloc]);
+  }
+  return rows.map((r) => ({ ...r, owners: byTask.get(r.id) ?? [] }));
 }
 
 /* ── 审计辅助（WP2：写操作出口统一走 appendAudit） ── */
@@ -527,17 +550,15 @@ function taskAuditValue(t: {
   title: string;
   rarity: string;
   requester: string | null;
-  size: number | null;
   source: string;
   status?: string;
   carriedFrom?: string | null;
-  owners?: string[];
+  owners?: OwnerAlloc[];
 }): string {
   return JSON.stringify({
     title: t.title,
     rarity: t.rarity,
     requester: t.requester ?? undefined,
-    size: t.size ?? undefined,
     source: t.source,
     ...(t.status ? { status: t.status } : {}),
     ...(t.carriedFrom !== undefined ? { carriedFrom: t.carriedFrom } : {}),
@@ -548,14 +569,18 @@ function taskAuditValue(t: {
 /** 事务对象的最小结构约束（业务写与审计同事务，回调内同步调用） */
 type TxDb = AuditDb & Pick<ReturnType<typeof getDb>, "update" | "delete">;
 
-/** 替换快件的负责人标签（先删后插；事务内调用，执行统一走方言层） */
-async function replaceOwners(tx: TxDb, taskId: number, owners: string[]) {
+/** 替换快件的负责人（含各自点数；先删后插；事务内调用，执行统一走方言层） */
+async function replaceOwners(tx: TxDb, taskId: number, owners: OwnerAlloc[]) {
   await qRun(tx.delete(taskOwners).where(eq(taskOwners.taskId, taskId)));
   if (owners.length > 0) {
     await qRun(
-      tx
-        .insert(taskOwners)
-        .values(owners.map((name) => ({ taskId, ownerName: name }))),
+      tx.insert(taskOwners).values(
+        owners.map((o) => ({
+          taskId,
+          ownerName: o.name,
+          points: o.points,
+        })),
+      ),
     );
   }
 }
@@ -565,8 +590,7 @@ export async function addTask(input: {
   title: string;
   rarity?: Rarity;
   requester?: string;
-  owners?: string[];
-  size?: number | null;
+  owners?: OwnerAlloc[];
   acceptance?: string | null;
   source?: Source;
   actor?: string;
@@ -591,7 +615,6 @@ export async function addTask(input: {
       title: input.title,
       rarity: input.rarity ?? "n",
       requester: input.requester ?? null,
-      size: input.size ?? null,
       acceptance: input.acceptance ?? null,
       source: input.source ?? "customer",
       sortOrder: (maxRow?.max ?? 0) + 1,
@@ -609,7 +632,6 @@ export async function addTask(input: {
           title: input.title,
           rarity: input.rarity ?? "n",
           requester: input.requester ?? null,
-          size: input.size ?? null,
           source: input.source ?? "customer",
           owners: input.owners,
         }),
@@ -676,8 +698,7 @@ export async function updateTask(
     title: string;
     rarity: Rarity;
     requester: string | null;
-    owners: string[];
-    size: number | null;
+    owners: OwnerAlloc[];
     acceptance: string | null;
     status: "todo" | "doing" | "done";
     doneAt: string | null;
@@ -699,13 +720,16 @@ export async function updateTask(
       message: `班次 ${current.vanCode} 已结转归档，不可修改`,
     });
   }
-  // 现任负责人（审计对比用，成员标签不含半角逗号，join 安全）
-  const currentOwners = (
-    await db
-      .select({ ownerName: taskOwners.ownerName })
-      .from(taskOwners)
-      .where(eq(taskOwners.taskId, id))
-  ).map((r) => r.ownerName);
+  // 现任负责人（含各自点数，审计对比用）。负责人顺序无语义（点数各归各人），
+  // 故对比前按名字归一，避免仅顺序变化就记一条无意义的链。
+  const currentOwners: OwnerAlloc[] = await db
+    .select({ name: taskOwners.ownerName, points: taskOwners.points })
+    .from(taskOwners)
+    .where(eq(taskOwners.taskId, id));
+  const ownersKey = (list: OwnerAlloc[]) =>
+    JSON.stringify(
+      [...list].sort((a, b) => a.name.localeCompare(b.name, "zh")),
+    );
 
   // 完成日期：打勾时随手填的自动化——置完成且无日期时记今天，取消完成则清空；
   // 取消完成同时作废签收（重新送达后需重新签收，与 doneAt 同口径）
@@ -729,7 +753,6 @@ export async function updateTask(
     "title",
     "rarity",
     "requester",
-    "size",
     "acceptance",
     "status",
     "doneAt",
@@ -771,13 +794,13 @@ export async function updateTask(
       newValue: null,
     });
   }
-  if (owners !== undefined && owners.join(",") !== currentOwners.join(",")) {
+  if (owners !== undefined && ownersKey(owners) !== ownersKey(currentOwners)) {
     entries.push({
       entity: "task",
       entityId: id,
       field: "owners",
-      oldValue: currentOwners.length > 0 ? currentOwners.join(",") : null,
-      newValue: owners.length > 0 ? owners.join(",") : null,
+      oldValue: currentOwners.length > 0 ? ownersKey(currentOwners) : null,
+      newValue: owners.length > 0 ? ownersKey(owners) : null,
     });
   }
 
@@ -895,10 +918,13 @@ export async function carryOver(
         sortOrder: nextSort++,
       });
       copies.push({ src: t, newId });
-      // 结转负责人标签
+      // 结转负责人：各自点数**随件搬运**（v2.5 每人点数制——点数属于人，不属于车）
       const owners = await qAll(
         tx
-          .select({ ownerName: taskOwners.ownerName })
+          .select({
+            ownerName: taskOwners.ownerName,
+            points: taskOwners.points,
+          })
           .from(taskOwners)
           .where(eq(taskOwners.taskId, t.id)),
       );
@@ -908,6 +934,7 @@ export async function carryOver(
             owners.map((o) => ({
               taskId: newId,
               ownerName: o.ownerName,
+              points: o.points,
             })),
           ),
         );
@@ -1054,14 +1081,18 @@ export async function weeklyStats(van: string) {
   const rows = await listTasksByVan(van);
   const taskStats = taskStatsOf(rows);
 
-  // 按负责人标签聚合运力统计
+  // 按负责人聚合运力统计（v2.5 每人点数制：每人只计**自己那份**点数，
+  // 不再"一件多人则每人各计全量"——那会把 5 点的活记成 3 个人各 5 点）
   const memberRows = await listMembers();
   const byMember = memberRows.map((m) => {
-    const mine = rows.filter((t) => t.owners.includes(m.name));
+    const mine = rows.filter((t) => t.owners.some((o) => o.name === m.name));
     return {
       name: m.name,
       capacity: m.capacity,
-      assigned: mine.reduce((s, t) => s + (t.size ?? 0), 0),
+      assigned: mine.reduce(
+        (s, t) => s + (t.owners.find((o) => o.name === m.name)?.points ?? 0),
+        0,
+      ),
       taskCount: mine.length,
       done: mine.filter((t) => t.status === "done").length,
       carriedIn: mine.filter((t) => t.carriedFrom !== null).length,
@@ -1080,6 +1111,8 @@ export async function weeklyStats(van: string) {
     van,
     ...taskStats,
     members: byMember,
+    /** 整车装载点数 = 本班各件点数（各负责人点数之和）的合计；对照个人条看口径 */
+    loadPoints: rows.reduce((s, t) => s + taskPointsOf(t.owners), 0),
     /* ── v2.0（Phase 1）统计扩展 ── */
     // 未签收：done 且不满足签收口径（自驱件视同签收，不计入）
     unconfirmed: rows.filter((t) => t.status === "done" && !isConfirmed(t))

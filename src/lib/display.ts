@@ -37,13 +37,6 @@ export const SOURCE_COLOR: Record<Source, string> = {
   exploration: "#8b5cf6",
 };
 
-/** 档位徽标颜色分桶：≤2 点（≤1 天）蓝、≤6 点（≤3 天）橙、更大红 */
-export function sizeBucket(size: number): 1 | 3 | 5 {
-  if (size <= 2) return 1;
-  if (size <= 6) return 3;
-  return 5;
-}
-
 /** 比率显示：null → “–” */
 export function fmtRate(x: number | null | undefined): string {
   return x == null ? "–" : `${Math.round(x * 100)}%`;

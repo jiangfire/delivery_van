@@ -196,20 +196,27 @@ describe("sourceStatsOf（三方占比）", () => {
 });
 
 describe("suggestedLoadOf（昨日天气）", () => {
-  const rows = (van: string, status: Task["status"], size: number | null) =>
-    t({ vanCode: van, status, size });
+  /** 造一件快件：points 为各负责人的点数（空数组 = 没派负责人 → 0 点） */
+  const rows = (van: string, status: Task["status"], points: number[]) =>
+    ({
+      vanCode: van,
+      status,
+      owners: points.map((p, i) => ({ name: `人${i}`, points: p })),
+    }) as Pick<Task, "vanCode" | "status"> & {
+      owners: { name: string; points: number }[];
+    };
 
-  it("取上一班 done 任务（v1 口径）点数合计，size 为空不计", () => {
+  it("取上一班 done 任务（v1 口径）点数合计——点数为各负责人之和，无负责人不计", () => {
     const load = suggestedLoadOf(
       "DV2608A",
       ["DV2608A", "DV2607B"],
       [
-        rows("DV2607B", "done", 3),
-        rows("DV2607B", "done", 4),
-        rows("DV2607B", "carried", 10),
-        rows("DV2607B", "todo", 2),
-        rows("DV2607B", "done", null),
-        rows("DV2608A", "done", 8),
+        rows("DV2607B", "done", [2, 1]), // 两人合计 3 点
+        rows("DV2607B", "done", [4]),
+        rows("DV2607B", "carried", [10]),
+        rows("DV2607B", "todo", [2]),
+        rows("DV2607B", "done", []), // 未指派 → 0 点
+        rows("DV2608A", "done", [8]),
       ],
     );
     expect(load).toBe(7);
@@ -225,7 +232,7 @@ describe("suggestedLoadOf（昨日天气）", () => {
     const load = suggestedLoadOf(
       "DV2608A",
       ["DV2608A", "DV2607C", "DV2607B"],
-      [rows("DV2607C", "done", 6), rows("DV2607B", "done", 10)],
+      [rows("DV2607C", "done", [6]), rows("DV2607B", "done", [10])],
     );
     expect(load).toBe(6);
   });
@@ -261,10 +268,10 @@ describe("badgesOf（徽章 v1，实时推导不落库）", () => {
     van: string,
     status: Task["status"],
     owners: string[],
-  ): Pick<Task, "vanCode" | "status"> & { owners: string[] } => ({
+  ): Pick<Task, "vanCode" | "status"> & { owners: { name: string }[] } => ({
     vanCode: van,
     status,
-    owners,
+    owners: owners.map((name) => ({ name })),
   });
 
   it("🚚 整班准点：本班全员送达点亮，有滞留或未完或空班不亮", () => {

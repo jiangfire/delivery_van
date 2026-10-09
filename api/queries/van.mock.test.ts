@@ -437,7 +437,7 @@ describe("周统计", () => {
     vi.clearAllMocks();
   });
 
-  it("返回正确的统计数据", async () => {
+  it("返回正确的统计数据（点数按各人各自的那份计）", async () => {
     const mockTasks = [
       {
         id: 1,
@@ -445,8 +445,6 @@ describe("周统计", () => {
         rarity: "n",
         carryCount: 0,
         carriedFrom: null,
-        size: 3,
-        owners: "张三",
       },
       {
         id: 2,
@@ -454,8 +452,6 @@ describe("周统计", () => {
         rarity: "ssr",
         carryCount: 0,
         carriedFrom: null,
-        size: 5,
-        owners: "张三",
       },
       {
         id: 3,
@@ -463,9 +459,22 @@ describe("周统计", () => {
         rarity: "sr",
         carryCount: 2,
         carriedFrom: "DV2607A",
-        size: 1,
-        owners: "李四",
       },
+      {
+        id: 4,
+        status: "todo",
+        rarity: "n",
+        carryCount: 0,
+        carriedFrom: null,
+      },
+    ];
+    // 各负责人**各自**的那份点数（v2.5）：件 4 是多人件（张三 2 + 李四 1 = 3 点）
+    const mockOwnerRows = [
+      { taskId: 1, name: "张三", points: 3 },
+      { taskId: 2, name: "张三", points: 5 },
+      { taskId: 3, name: "李四", points: 1 },
+      { taskId: 4, name: "张三", points: 2 },
+      { taskId: 4, name: "李四", points: 1 },
     ];
     const mockMembers = [
       { id: 1, name: "张三", capacity: 5 },
@@ -476,18 +485,19 @@ describe("周统计", () => {
     mockDb = {
       select: vi.fn().mockImplementation(() => {
         callCount++;
-        if (callCount <= 2) {
-          // listTasksByVan 的两次查询
-          return createQueryable(callCount === 1 ? [] : mockTasks);
-        } else {
-          // listMembers / listVans / listAllTasks / audit 链尾
-          return createQueryable(
-            callCount === 3
-              ? mockMembers
-              : callCount === 4
-                ? [{ code: "DV2607B" }, { code: "DV2607A" }]
-                : [],
-          );
+        switch (callCount) {
+          // 1 本班快件 → 2 该班各负责人的点数 → 3 成员 → 4 班次列表
+          case 1:
+            return createQueryable(mockTasks);
+          case 2:
+            return createQueryable(mockOwnerRows);
+          case 3:
+            return createQueryable(mockMembers);
+          case 4:
+            return createQueryable([{ code: "DV2607B" }, { code: "DV2607A" }]);
+          // 全部快件（空，故不再触发负责人查询）/ 审计链尾
+          default:
+            return createQueryable([]);
         }
       }),
     };
@@ -495,15 +505,37 @@ describe("周统计", () => {
     const result = await weeklyStats("DV2607B");
 
     expect(result.van).toBe("DV2607B");
-    expect(result.total).toBe(3);
+    expect(result.total).toBe(4);
     expect(result.done).toBe(2);
-    expect(result.remaining).toBe(1);
+    expect(result.remaining).toBe(2);
     expect(result.carriedOut).toBe(1);
     expect(result.carriedIn).toBe(1);
     expect(result.reviewNeeded).toBe(1);
-    expect(result.completionRate).toBeCloseTo(2 / 3);
+    expect(result.completionRate).toBeCloseTo(2 / 4);
     // 滞留率 = 结转出去的任务数 / 总数（结转后旧车数据随之更新）
-    expect(result.carryRate).toBeCloseTo(1 / 3);
+    expect(result.carryRate).toBeCloseTo(1 / 4);
+    // 每人只计**自己那份**：张三 3+5+2=10、李四 1+1=2
+    // （旧口径「每人各计全量」会把件 4 的 3 点同时记给两人 → 张三 11、李四 4）
+    expect(result.members).toEqual([
+      {
+        name: "张三",
+        capacity: 5,
+        assigned: 10,
+        taskCount: 3,
+        done: 1,
+        carriedIn: 0,
+      },
+      {
+        name: "李四",
+        capacity: 3,
+        assigned: 2,
+        taskCount: 2,
+        done: 1,
+        carriedIn: 1,
+      },
+    ]);
+    // 整车装载 = 各件点数之和（3 + 5 + 1 + 3）
+    expect(result.loadPoints).toBe(12);
   });
 
   it("空班次返回 null 完成率", async () => {

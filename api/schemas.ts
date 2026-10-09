@@ -12,13 +12,17 @@
 import { z } from "zod";
 import { VAN_CODE_RE } from "../contracts/vans";
 import { CARRY_REASONS, SOURCES } from "../contracts/enums";
+import { OWNER_POINTS_MAX } from "../contracts/points";
 import { RARITIES } from "../db/schema";
 
 export const vanCode = z
   .string()
   .regex(VAN_CODE_RE, "班次编码格式应为 DV2607A（年+月+当月第几班）");
-/** 半天点数制：1 点 = 半天，只允许 1~10 整数（10 点 = 5 天） */
-export const sizePoints = z.number().int().min(1).max(10);
+/**
+ * 负责人点数（v2.5 每人点数制）：每个负责人各自持有自己的点数，0 = 挂名不占运力；
+ * 任务点数 = 各负责人点数之和，故**任务合计无上限**。
+ */
+export const ownerPointsField = z.number().int().min(0).max(OWNER_POINTS_MAX);
 export const idField = z.number().int().positive();
 export const rarity = z.enum(RARITIES);
 /** 快件来源（三方占比口径，v2.0） */
@@ -29,8 +33,11 @@ export const carryReasonField = z.enum(CARRY_REASONS);
 export const actorField = z.string().trim().max(64).optional();
 
 /**
- * 成员/负责人标签的统一约束：trim 后 1~64 字符，且不含半角逗号——
- * 负责人列表读取时用逗号分隔聚合（group_concat），含逗号会错拆标签。
+ * 成员/负责人标签的统一约束：trim 后 1~64 字符，且不含半角逗号。
+ *
+ * 半角逗号的禁令来自历史上的负责人聚合方式（`group_concat` 逗号拼接，含逗号会错拆标签）；
+ * v2.5 每人点数制起负责人按行读取、已不再需要该限制，但为免存量标签与既有校验契约突变，
+ * 保留这条禁令。
  */
 export const memberTag = z
   .string()
@@ -38,6 +45,32 @@ export const memberTag = z
   .min(1)
   .max(64)
   .refine((v) => !v.includes(","), "名称不能包含半角逗号「,」");
+
+/**
+ * 负责人 + 该人在这个需求上的点数。`points` **必填**（不给默认值）：勾选负责人
+ * 不等于设置完成——一个需求多个负责人参加时，这些人都要各自设置自己的点数
+ * （见 docs/doing/负责人点数制设计方案.md D5；服务端不接受"有负责人但没有点数"的行）。
+ */
+export const ownerAllocInput = z.object({
+  name: memberTag,
+  points: ownerPointsField,
+});
+
+/** 负责人列表：同一个人不得重复出现（重复会让点数被双计） */
+export const ownerAllocList = z
+  .array(ownerAllocInput)
+  .superRefine((list, ctx) => {
+    const seen = new Set<string>();
+    for (const o of list) {
+      if (seen.has(o.name)) {
+        ctx.addIssue({
+          code: "custom",
+          message: `负责人「${o.name}」重复`,
+        });
+      }
+      seen.add(o.name);
+    }
+  });
 
 /**
  * 提出人标签：非空 1~64 字符。空串会让「requester IS NULL = 自驱件视同签收」
@@ -85,8 +118,7 @@ export const taskAddInput = z.object({
   title: z.string().min(1).max(255),
   rarity: rarity.default("n"),
   requester: requesterField.optional(),
-  owners: z.array(memberTag).optional(),
-  size: sizePoints.nullable().optional(),
+  owners: ownerAllocList.optional(),
   acceptance: z.string().max(255).nullable().optional(),
   source: sourceField.optional(),
   actor: actorField,
@@ -97,8 +129,7 @@ export const taskUpdateInput = z.object({
   title: z.string().min(1).max(255).optional(),
   rarity: rarity.optional(),
   requester: requesterField.nullable().optional(),
-  owners: z.array(memberTag).optional(),
-  size: sizePoints.nullable().optional(),
+  owners: ownerAllocList.optional(),
   acceptance: z.string().max(255).nullable().optional(),
   status: z.enum(["todo", "doing", "done"]).optional(),
   doneAt: doneAtField.nullable().optional(),

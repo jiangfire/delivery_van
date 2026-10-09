@@ -1,15 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
   memberTag,
-  sizePoints,
+  ownerPointsField,
   sourceField,
   carryReasonField,
   requesterField,
   doneAtField,
 } from "./vanRouter";
+import { taskAddInput } from "./schemas";
 
 describe("memberTag（成员/负责人标签约束）", () => {
-  it("拒绝含半角逗号的名称（负责人列表用逗号聚合，含逗号会错拆标签）", () => {
+  it("拒绝含半角逗号的名称（历史上负责人列表用逗号聚合，禁令保留）", () => {
     expect(memberTag.safeParse("张三,李四").success).toBe(false);
   });
 
@@ -28,17 +29,62 @@ describe("memberTag（成员/负责人标签约束）", () => {
   });
 });
 
-describe("sizePoints（半天点数制：1 点 = 半天，10 点 = 五天）", () => {
-  it("接受 1~10 任意整数", () => {
-    for (const p of [1, 2, 3, 7, 10]) {
-      expect(sizePoints.safeParse(p).success).toBe(true);
+describe("ownerPointsField（每人点数：0~10 整数，1 点 = 半天）", () => {
+  it("接受 0~10 任意整数（0 = 挂名不占运力）", () => {
+    for (const p of [0, 1, 5, 10]) {
+      expect(ownerPointsField.safeParse(p).success).toBe(true);
     }
   });
 
-  it("拒绝 0、超过 10 与非整数", () => {
-    for (const p of [0, 11, 1.5, -1]) {
-      expect(sizePoints.safeParse(p).success).toBe(false);
+  it("拒绝超过 10、负数与非整数", () => {
+    for (const p of [11, -1, 1.5]) {
+      expect(ownerPointsField.safeParse(p).success).toBe(false);
     }
+  });
+});
+
+describe("taskAddInput.owners（一个需求多个负责人时各自设置点数）", () => {
+  it("接受 [{ name, points }]，每人一份自己的点数", () => {
+    const r = taskAddInput.safeParse({
+      van: "DV2607A",
+      title: "多人件",
+      owners: [
+        { name: "甲", points: 3 },
+        { name: "乙", points: 2 },
+      ],
+    });
+    expect(r.success).toBe(true);
+  });
+
+  it("拒绝没有点数的负责人（勾选不等于设置完成）", () => {
+    const r = taskAddInput.safeParse({
+      van: "DV2607A",
+      title: "多人件",
+      owners: [{ name: "甲" }],
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("拒绝同一人重复出现（重复会让点数被双计）", () => {
+    const r = taskAddInput.safeParse({
+      van: "DV2607A",
+      title: "多人件",
+      owners: [
+        { name: "甲", points: 3 },
+        { name: "甲", points: 2 },
+      ],
+    });
+    expect(r.success).toBe(false);
+  });
+
+  it("size 已不属于入参契约（传了也会被剥离）", () => {
+    const r = taskAddInput.safeParse({
+      van: "DV2607A",
+      title: "件",
+      size: 5,
+    });
+    expect(r.success).toBe(true);
+    expect(r.success && "size" in r.data).toBe(false);
   });
 });
 

@@ -23,8 +23,8 @@ import {
   memberRemoveInput,
   memberSetCapacityInput,
   memberTag,
+  ownerPointsField,
   requesterField,
-  sizePoints,
   sourceField,
   taskAddInput,
   taskConfirmInput,
@@ -41,7 +41,7 @@ import {
  * `api/vanRouter.test.ts` 仍从中取用，保留转发以免破坏回归网。
  */
 export {
-  sizePoints,
+  ownerPointsField,
   sourceField,
   memberTag,
   carryReasonField,

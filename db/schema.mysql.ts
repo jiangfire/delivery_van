@@ -78,7 +78,10 @@ export const tasks = mysqlTable(
       .default("n"),
     /** 提出人：谁提的需求 */
     requester: varchar("requester", { length: 64 }),
-    /** 档位（半天点数制）：1~10 整数，1 点 = 半天，10 点 = 5 天 */
+    /**
+     * @deprecated v2.5 每人点数制起废弃：点数归属到人（`task_owners.points`），
+     * 任务点数 = 各负责人点数之和。列保留不读写，历史值仅供追溯与一次性回填。
+     */
     size: int("size"),
     /** 验收标准：周五凭什么说它做完了 */
     acceptance: text("acceptance"),
@@ -115,11 +118,20 @@ export const tasks = mysqlTable(
   (t) => [index("tasks_van_code_idx").on(t.vanCode)],
 );
 
+/**
+ * 快件负责人（v2.5 起为「每人一份的点数」叶子表）：`points` 是点数的唯一来源——
+ * 每人在同一件上各自持有自己的点数，任务点数 = 各负责人点数之和（`contracts/points.ts`）。
+ */
 export const taskOwners = mysqlTable("task_owners", {
   taskId: int("task_id")
     .notNull()
     .references(() => tasks.id, { onDelete: "cascade" }),
   ownerName: varchar("owner_name", { length: 64 }).notNull(),
+  /**
+   * 该负责人在这件上的点数（0~10 整数，1 点 = 半天；0 = 挂名不占运力）。
+   * 列默认 0 只为幂等补列时存量行必须有值；运行时点数一律由人显式设置（API 层必填）。
+   */
+  points: int("points").notNull().default(0),
 });
 
 /**

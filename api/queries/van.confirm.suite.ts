@@ -17,6 +17,7 @@ import {
 import { verifyAuditChain } from "./audit";
 import { insertReturningId } from "./dialect";
 import { todayStr } from "../../contracts/vans";
+import { taskPointsOf } from "../../contracts/points";
 import type { DataLayerCtx } from "./dialectHarness";
 
 export function registerConfirmSuite(ctx: DataLayerCtx) {
@@ -36,7 +37,6 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
         status: "done",
         doneAt: "2026-08-28",
         requester: requester ?? null,
-        size: 3,
       });
     }
 
@@ -175,6 +175,34 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
       });
     });
 
+    describe("每人点数随件搬运（v2.5）", () => {
+      it("结转时各负责人的点数各自原样搬到下一班，任务点数 = 各人之和", async () => {
+        const id = await insertReturningId(ctx.db(), S.tasks, {
+          vanCode: "DV2607A",
+          title: "多人滞留件",
+          status: "doing",
+        });
+        await ctx
+          .db()
+          .insert(S.taskOwners)
+          .values([
+            { taskId: id, ownerName: "张三", points: 3 },
+            { taskId: id, ownerName: "李四", points: 2 },
+          ]);
+
+        await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20), {
+          actor: "张三",
+        });
+
+        const [copy] = await listTasksByVan("DV2607B");
+        expect(copy.owners).toEqual([
+          { name: "张三", points: 3 },
+          { name: "李四", points: 2 },
+        ]);
+        expect(taskPointsOf(copy.owners)).toBe(5);
+      });
+    });
+
     describe("审计接线（WP2：写操作出口全部进链）", () => {
       it("发车/新增成员/新增快件/编辑/完成/签收/结转全部留痕，全链 verify 通过", async () => {
         // 发新车（第二班）+ 新增成员：覆盖 van / member 两类 entity
@@ -185,7 +213,7 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
           van: "DV2607A",
           title: "新快件",
           requester: "张三",
-          owners: ["张三"],
+          owners: [{ name: "张三", points: 3 }],
           source: "platform",
           actor: "张三",
         });
@@ -245,7 +273,6 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
           title: "上班完成件",
           status: "done",
           doneAt: "2026-08-28",
-          size: 3,
           requester: "张三",
           confirmedAt: "2026-08-28",
           confirmedBy: "(历史)",
@@ -254,7 +281,6 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
           vanCode: "DV2607A",
           title: "上班滞留件",
           status: "todo",
-          size: 2,
           requester: "张三",
         });
         // 本班：done 未签收 + carried 结转件
@@ -263,7 +289,6 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
           title: "本班完成件",
           status: "done",
           doneAt: "2026-08-29",
-          size: 4,
           requester: "张三",
           source: "platform",
           rarity: "ur",
@@ -272,8 +297,9 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
           .db()
           .insert(S.taskOwners)
           .values([
-            { taskId: prevDoneId, ownerName: "张三" },
-            { taskId: curDoneId, ownerName: "张三" }, // 本班完成件也归张三 → 两班零滞留点亮连击
+            // v2.5 每人点数制：点数记在负责人行上（张三上一班 3 点、本班 4 点）
+            { taskId: prevDoneId, ownerName: "张三", points: 3 },
+            { taskId: curDoneId, ownerName: "张三", points: 4 }, // 本班完成件也归张三 → 两班零滞留点亮连击
           ]);
         await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20), {
           actor: "张三",
@@ -306,6 +332,33 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
         expect(s.badges.streaks).toContain("张三");
         // 日志指纹：结转已进链，链头 hash 前 8 位
         expect(s.auditFingerprint).toMatch(/^[0-9a-f]{8}$/);
+      });
+
+      it("多人件按各人各自的那份计入个人已装（不再每人各计全量）", async () => {
+        await ctx.db().insert(S.vans).values({ code: "DV2607B" });
+        await ctx.db().insert(S.members).values({ name: "李四", capacity: 10 });
+        const id = await insertReturningId(ctx.db(), S.tasks, {
+          vanCode: "DV2607B",
+          title: "多人件",
+          status: "todo",
+        });
+        await ctx
+          .db()
+          .insert(S.taskOwners)
+          .values([
+            { taskId: id, ownerName: "张三", points: 3 },
+            { taskId: id, ownerName: "李四", points: 2 },
+          ]);
+
+        const s = await weeklyStats("DV2607B");
+        const assigned = Object.fromEntries(
+          s.members.map((m) => [m.name, m.assigned]),
+        );
+        // 一件 5 点、两人参加：旧口径「每人各计全量」会给张三 5、李四 5（个人合计 10 点）
+        expect(assigned["张三"]).toBe(3);
+        expect(assigned["李四"]).toBe(2);
+        // 整车装载 = 各负责人点数之和 = 这件快件的 5 点
+        expect(s.loadPoints).toBe(5);
       });
 
       it("空库班次：指纹 null、昨日天气 null、三方零桶", async () => {

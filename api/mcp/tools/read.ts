@@ -42,7 +42,7 @@ export const readTools = [
     name: "tasks_by_van",
     title: "List packages on one van",
     description:
-      "List the packages (tasks) on one van, in board display order. Fields include status (todo/doing/done/carried), owners, size in points (1 point = half a day), rarity, requester, source, doneAt and carry info. Pass `limit` to cap the rows; when the cap is hit the response sets `truncated: true` and reports the true total, so nothing is ever silently dropped.",
+      "List the packages (tasks) on one van, in board display order. Fields include status (todo/doing/done/carried), owners, rarity, requester, source, doneAt and carry info. Each owner carries their OWN points (`owners[].points`, 1 point = half a day, 0-10); a package's total points is the sum over its owners, and a package with no owners counts as 0 points. There is no longer a task-level `size` field. Pass `limit` to cap the rows; when the cap is hit the response sets `truncated: true` and reports the true total, so nothing is ever silently dropped.",
     inputSchema: z.object({
       van: vanCode.describe(
         "Van code, e.g. DV2609A. Use van_list to discover valid codes.",
@@ -110,7 +110,7 @@ export const readTools = [
     name: "stats_by_van",
     title: "Weekly statistics for one van",
     description:
-      "Weekly statistics for one van. Counts and rates: `total`, `done`, `carriedOut`, `carriedIn`, `reviewNeeded`, `remaining`, `completionRate` (done/total), `carryRate` (carriedOut/total), plus `unconfirmed` (delivered but not yet signed off). Also `members` (per-owner assigned/capacity), `requester` scorecards, `inflation` by rarity, `source` split, `carryReasons` breakdown, `suggestedLoad`, `badges`, and `auditFingerprint`. IMPORTANT: these metrics deliberately use different definitions — `completionRate`/`carryRate`/`suggestedLoad`/`badges` count a package as delivered on status=done, while `unconfirmed` uses the stricter signed-receipt rule. Do not recompute one from another; use the values as returned.",
+      "Weekly statistics for one van. Counts and rates: `total`, `done`, `carriedOut`, `carriedIn`, `reviewNeeded`, `remaining`, `completionRate` (done/total), `carryRate` (carriedOut/total), plus `unconfirmed` (delivered but not yet signed off). Also `members` (per-owner assigned/capacity — `assigned` now sums only the points each person holds themselves, not the full points of every package they appear on), `loadPoints` (the van's total points = sum over packages of their owners' points), `requester` scorecards, `inflation` by rarity, `source` split, `carryReasons` breakdown, `suggestedLoad`, `badges`, and `auditFingerprint`. IMPORTANT: these metrics deliberately use different definitions — `completionRate`/`carryRate`/`suggestedLoad`/`badges` count a package as delivered on status=done, while `unconfirmed` uses the stricter signed-receipt rule. Do not recompute one from another; use the values as returned.",
     inputSchema: z.object({
       van: vanCode.describe(
         "Van code, e.g. DV2609A. Use van_list to discover valid codes.",

@@ -260,8 +260,10 @@ body {
   }
 }
 
-/* ── 档位标签（半天点数制，按点数分桶着色：size-1 ≤2 点、size-3 ≤6 点、size-5 更大） ── */
-.size-badge {
+/* ── 点数标签（任务点数 = 各负责人点数之和）──
+   刻意用中性色：v2.5 起一件多人、合计可以很大，"大件"不该长得像告警；
+   红色留给真正需要看的东西（运力超载）。 */
+.points-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -272,24 +274,12 @@ body {
   font-size: 11px;
   font-weight: 700;
   transition: transform 0.2s cubic-bezier(0.25, 0.1, 0.25, 1);
+  background: rgba(100, 116, 139, 0.1);
+  color: #475569;
+  border: 1px solid rgba(100, 116, 139, 0.2);
 }
-.size-badge:hover {
+.points-badge:hover {
   transform: scale(1.05);
-}
-.size-1 {
-  background: rgba(14, 165, 233, 0.1);
-  color: var(--train-accent);
-  border: 1px solid rgba(14, 165, 233, 0.2);
-}
-.size-3 {
-  background: rgba(217, 119, 6, 0.1);
-  color: var(--train-amber);
-  border: 1px solid rgba(217, 119, 6, 0.2);
-}
-.size-5 {
-  background: rgba(239, 68, 68, 0.1);
-  color: #dc2626;
-  border: 1px solid rgba(239, 68, 68, 0.2);
 }
 
 /* ── 状态标签 ── */

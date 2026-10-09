@@ -1,38 +1,113 @@
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  type KeyboardEvent,
+} from "react";
 import { createPortal } from "react-dom";
+import { toast } from "sonner";
+import { OWNER_POINTS_MAX, type OwnerAlloc } from "@contracts/points";
 
 /**
- * 多选下拉编辑器：成员多选，勾选式操作，已选显示为标签。
- * 使用 React Portal 渲染到 body，逃出 backdrop-filter 层叠上下文。
+ * 负责人编辑器（v2.5 每人点数制）：成员多选 + **每个被选中的人各自设置自己的点数**。
+ *
+ * 三条交互约定（见 docs/doing/负责人点数制设计方案.md）：
+ * 1. **勾选负责人 ≠ 设置完成**（D5）：点数输入框默认空着，只要还有人没设置就不能确定；
+ * 2. **在这里就能看见运力**：每行右侧显示该成员"本周已装（不含这件）/ 上限"，
+ *    填了点数还会即时预览加上这件之后是多少、有没有压超载——不必滚到页面底部才知道；
+ * 3. **放弃要说话**：没填满就点外部 / Esc 视为放弃，把原值送回并**明确提示**——
+ *    静默回滚会让人以为存上了。
+ *
+ * 用 Portal 渲染到 body，逃出 backdrop-filter 层叠上下文。
  */
+
+/** 某人本周已装（不含当前这件）与周运力上限 */
+export type MemberLoad = { assigned: number; capacity: number };
+
 export default function MultiSelectEditor({
   initial,
   members,
+  loadByMember,
   onAddMember,
   onChange,
   onClose,
   pos,
 }: {
-  initial: string[];
+  initial: OwnerAlloc[];
   members: string[];
+  loadByMember?: Record<string, MemberLoad>;
   onAddMember?: (name: string) => void;
-  onChange: (v: string[]) => void;
-  onClose: (finalValue?: string[]) => void;
+  onChange: (v: OwnerAlloc[]) => void;
+  onClose: (finalValue?: OwnerAlloc[]) => void;
   pos: { top: number; left: number };
 }) {
-  const [selected, setSelected] = useState<string[]>(initial);
+  const [selected, setSelected] = useState<string[]>(() =>
+    initial.map((o) => o.name),
+  );
+  /** 输入框原文："" = 还没设置（空着不算 0 点） */
+  const [raw, setRaw] = useState<Record<string, string>>(() =>
+    Object.fromEntries(initial.map((o) => [o.name, String(o.points)])),
+  );
   const [newName, setNewName] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
+  const inputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
+  /** 原文 → 点数；不是 0~上限的整数一律当作"还没设置" */
+  const pointsOf = useCallback(
+    (name: string): number | null => {
+      const t = raw[name] ?? "";
+      if (!/^\d+$/.test(t)) return null;
+      const n = Number(t);
+      return n >= 0 && n <= OWNER_POINTS_MAX ? n : null;
+    },
+    [raw],
+  );
+
+  const complete = selected.every((n) => pointsOf(n) != null);
+  const unset = selected.filter((n) => pointsOf(n) == null);
+  const total = selected.reduce((s, n) => s + (pointsOf(n) ?? 0), 0);
+
+  /**
+   * 列表里的成员 = 成员表 ∪ 本件现有的负责人。
+   * 后者可能不是成员表里的人（只有 API / MCP 直写才会出现），不列出来的话
+   * 他们就成了"看不见但还在"的负责人。
+   */
+  const rows = (() => {
+    const known = new Set(members);
+    const extra = initial.map((o) => o.name).filter((n) => !known.has(n));
+    return extra.length > 0 ? [...members, ...extra] : members;
+  })();
+
+  const alloc = useCallback(
+    (): OwnerAlloc[] =>
+      selected.map((name) => ({ name, points: pointsOf(name) ?? 0 })),
+    [selected, pointsOf],
+  );
+
+  // 只有全部设置完毕才向上同步（没设置完的值不上屏、也不落库）
   useEffect(() => {
-    onChange(selected);
-  }, [selected, onChange]);
+    if (complete) onChange(alloc());
+  }, [complete, alloc, onChange]);
 
-  // 点击外部关闭
+  const commit = useCallback(() => onClose(alloc()), [onClose, alloc]);
+
+  /** 放弃编辑：送回原值，并明确告诉用户"这次改动没保存" */
+  const abort = useCallback(() => {
+    if (unset.length > 0) {
+      toast.warning("已放弃修改", {
+        description: `还有 ${unset.length} 人没设置点数，每个人都要有自己的点数`,
+      });
+    }
+    onClose(initial);
+  }, [onClose, initial, unset.length]);
+
+  // 点击外部关闭：设置完毕即提交，否则放弃（且会提示）
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
-        onClose(selected);
+        if (complete) commit();
+        else abort();
       }
     };
     // 延迟绑定，避免当前点击触发关闭
@@ -43,16 +118,19 @@ export default function MultiSelectEditor({
       clearTimeout(timer);
       document.removeEventListener("mousedown", handleClickOutside);
     };
-  }, [onClose, selected]);
+  }, [complete, commit, abort]);
 
-  // Escape 关闭
+  // Escape 关闭（同上：没设置完 = 放弃）
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose(selected);
+    const handleKeyDown = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape") {
+        if (complete) commit();
+        else abort();
+      }
     };
     document.addEventListener("keydown", handleKeyDown);
     return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [onClose, selected]);
+  }, [complete, commit, abort]);
 
   const toggle = useCallback((name: string) => {
     setSelected((prev) =>
@@ -62,17 +140,40 @@ export default function MultiSelectEditor({
 
   const clearAll = useCallback(() => {
     setSelected([]);
+    setRaw({});
   }, []);
+
+  /** 只收数字，最多两位（挡住 150 这类越界输入） */
+  const setPoints = useCallback((name: string, v: string) => {
+    setRaw((prev) => ({ ...prev, [name]: v.replace(/\D/g, "").slice(0, 2) }));
+  }, []);
+
+  /** 回车：填满了就提交；没填满就跳到下一个还没设置的人 */
+  const onPointsKeyDown = useCallback(
+    (e: KeyboardEvent<HTMLInputElement>, name: string) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      if (complete) {
+        commit();
+        return;
+      }
+      const next = unset.find((n) => n !== name);
+      if (next) inputRefs.current[next]?.focus();
+    },
+    [complete, commit, unset],
+  );
 
   const submitNew = useCallback(() => {
     const trimmed = newName.trim();
-    // 半角逗号与服务端负责人聚合分隔符冲突，直接不添加（服务端 zod 也会拦截）
+    // 半角逗号与服务端负责人标签约束冲突，直接不添加（服务端 zod 也会拦截）
     if (!trimmed || trimmed.includes(",")) return;
     if (!members.includes(trimmed)) {
       onAddMember?.(trimmed);
     }
     setSelected((prev) => (prev.includes(trimmed) ? prev : [...prev, trimmed]));
     setNewName("");
+    // 新加的人也要设置点数：焦点直接送到他的输入框
+    setTimeout(() => inputRefs.current[trimmed]?.focus(), 0);
   }, [newName, members, onAddMember]);
 
   const panel = (
@@ -82,7 +183,7 @@ export default function MultiSelectEditor({
         position: "fixed",
         top: pos.top,
         left: pos.left,
-        minWidth: 220,
+        width: 360,
         background: "rgba(255,255,255,0.97)",
         border: "1px solid rgba(0,0,0,0.1)",
         borderRadius: 12,
@@ -93,54 +194,20 @@ export default function MultiSelectEditor({
       }}
       onMouseDown={(e) => e.stopPropagation()}
     >
-      {selected.length > 0 && (
-        <div
-          style={{
-            padding: "8px 10px 6px",
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 4,
-            borderBottom: "1px solid rgba(0,0,0,0.05)",
-          }}
-        >
-          {selected.map((t) => (
-            <span
-              key={t}
-              style={{
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 3,
-                padding: "2px 8px",
-                borderRadius: 6,
-                background: "linear-gradient(135deg, #0ea5e9, #0284c7)",
-                color: "#fff",
-                fontSize: 11,
-                fontWeight: 600,
-                lineHeight: "16px",
-              }}
-            >
-              {t}
-              <button
-                style={{
-                  background: "none",
-                  border: "none",
-                  color: "inherit",
-                  cursor: "pointer",
-                  padding: 0,
-                  lineHeight: 1,
-                  fontSize: 12,
-                  opacity: 0.8,
-                }}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  toggle(t);
-                }}
-              >
-                ×
-              </button>
-            </span>
-          ))}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          gap: 8,
+          padding: "8px 12px 6px",
+          borderBottom: "1px solid rgba(0,0,0,0.05)",
+          fontSize: 11,
+          color: "#64748b",
+        }}
+      >
+        <span>勾选负责人，并给每个人设置自己的点数</span>
+        {selected.length > 0 && (
           <button
             style={{
               background: "none",
@@ -148,8 +215,7 @@ export default function MultiSelectEditor({
               color: "#94a3b8",
               cursor: "pointer",
               fontSize: 11,
-              padding: "0 4px",
-              lineHeight: "16px",
+              padding: 0,
             }}
             onMouseDown={(e) => {
               e.preventDefault();
@@ -159,9 +225,9 @@ export default function MultiSelectEditor({
           >
             清空
           </button>
-        </div>
-      )}
-      <div style={{ maxHeight: 200, overflowY: "auto", padding: "4px 0" }}>
+        )}
+      </div>
+      <div style={{ maxHeight: 240, overflowY: "auto", padding: "4px 0" }}>
         {members.length === 0 && (
           <div
             style={{ padding: "6px 12px 2px", fontSize: 12, color: "#94a3b8" }}
@@ -169,30 +235,27 @@ export default function MultiSelectEditor({
             暂无成员，可直接添加 ↓
           </div>
         )}
-        {members.map((m) => {
+        {rows.map((m) => {
           const checked = selected.includes(m);
+          const load = loadByMember?.[m];
+          const p = pointsOf(m);
+          const after = load && p != null ? load.assigned + p : null;
+          const over = load != null && after != null && after > load.capacity;
           return (
-            <label
+            <div
               key={m}
               style={{
                 display: "flex",
                 alignItems: "center",
                 gap: 8,
-                padding: "5px 12px",
-                cursor: "pointer",
+                padding: "4px 12px",
                 fontSize: 13,
                 background: checked ? "rgba(14,165,233,0.06)" : "transparent",
-              }}
-              onMouseEnter={(e) => {
-                if (!checked)
-                  e.currentTarget.style.background = "rgba(0,0,0,0.02)";
-              }}
-              onMouseLeave={(e) => {
-                if (!checked) e.currentTarget.style.background = "transparent";
               }}
             >
               <input
                 type="checkbox"
+                id={`dv-owner-${m}`}
                 checked={checked}
                 onChange={() => toggle(m)}
                 style={{
@@ -200,13 +263,80 @@ export default function MultiSelectEditor({
                   width: 14,
                   height: 14,
                   cursor: "pointer",
+                  flexShrink: 0,
                 }}
               />
-              <span style={{ flex: 1 }}>{m}</span>
-              {checked && (
-                <span style={{ color: "#0ea5e9", fontSize: 12 }}>✓</span>
-              )}
-            </label>
+              <label
+                htmlFor={`dv-owner-${m}`}
+                style={{ flex: 1, cursor: "pointer" }}
+              >
+                {m}
+              </label>
+              {/* 本周已装（不含这件）/ 上限：选人时就看得出谁还有余量 */}
+              <span
+                title="本周已装（不含这件）/ 周运力上限"
+                style={{
+                  fontSize: 11,
+                  color: "#94a3b8",
+                  fontVariantNumeric: "tabular-nums",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {load ? `${load.assigned}/${load.capacity}` : ""}
+              </span>
+              <span
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "flex-end",
+                  gap: 4,
+                  width: 92,
+                  flexShrink: 0,
+                }}
+              >
+                {checked && (
+                  <input
+                    ref={(el) => {
+                      inputRefs.current[m] = el;
+                    }}
+                    aria-label={`${m} 的点数`}
+                    inputMode="numeric"
+                    placeholder="点"
+                    value={raw[m] ?? ""}
+                    onChange={(e) => setPoints(m, e.target.value)}
+                    onKeyDown={(e) => onPointsKeyDown(e, m)}
+                    style={{
+                      width: 42,
+                      padding: "2px 4px",
+                      textAlign: "center",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      fontVariantNumeric: "tabular-nums",
+                      border: `1px solid ${p == null ? "#fbbf24" : "rgba(0,0,0,0.15)"}`,
+                      background: p == null ? "#fffbeb" : "#fff",
+                      borderRadius: 6,
+                      outline: "none",
+                    }}
+                  />
+                )}
+                {checked && after != null && load && (
+                  <span
+                    title={`加上这件后：${after}/${load.capacity}`}
+                    style={{
+                      width: 44,
+                      textAlign: "right",
+                      fontSize: 11,
+                      fontWeight: 700,
+                      color: over ? "#dc2626" : "#0ea5e9",
+                      fontVariantNumeric: "tabular-nums",
+                    }}
+                  >
+                    →{after}
+                    {over && " ⚠"}
+                  </span>
+                )}
+              </span>
+            </div>
           );
         })}
       </div>
@@ -270,29 +400,55 @@ export default function MultiSelectEditor({
           </button>
         </div>
       )}
-      {/* 确定按钮 */}
+      {/* 合计与确定：还有人没设置点数就不许确定（D5） */}
       <div
         style={{
           padding: "6px 10px 8px",
           borderTop: "1px solid rgba(0,0,0,0.06)",
         }}
       >
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginBottom: 6,
+            fontSize: 11,
+          }}
+        >
+          <span style={{ color: "#0f172a", fontWeight: 600 }}>
+            合计 {total} 点
+          </span>
+          {unset.length > 0 && (
+            <span style={{ color: "#b45309" }}>
+              {unset.length} 人还没设置点数
+            </span>
+          )}
+        </div>
         <button
+          disabled={!complete}
+          title={
+            complete
+              ? "回车也可提交"
+              : "每个负责人都要设置自己的点数（敲数字后回车可跳到下一个人）"
+          }
           style={{
             width: "100%",
             padding: "6px 0",
             borderRadius: 8,
             border: "none",
-            background: "linear-gradient(135deg, #0ea5e9, #0284c7)",
-            color: "#fff",
+            background: complete
+              ? "linear-gradient(135deg, #0ea5e9, #0284c7)"
+              : "#e2e8f0",
+            color: complete ? "#fff" : "#94a3b8",
             fontSize: 12,
             fontWeight: 600,
-            cursor: "pointer",
+            cursor: complete ? "pointer" : "not-allowed",
           }}
           onMouseDown={(e) => {
             e.preventDefault();
             e.stopPropagation();
-            onClose(selected);
+            if (complete) commit();
           }}
         >
           确定

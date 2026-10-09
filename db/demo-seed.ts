@@ -84,28 +84,24 @@ async function seed() {
   await put("DV2608A", "微波炉定时器联调", {
     rarity: "sr",
     requester: "天王寺",
-    owners: ["冈部"],
-    size: 4,
+    owners: [{ name: "冈部", points: 4 }],
     source: "customer",
   });
   await put("DV2608A", "电话微波炉支架改造", {
     rarity: "r",
     requester: "天王寺",
-    owners: ["桶子"],
-    size: 2,
+    owners: [{ name: "桶子", points: 2 }],
     source: "customer",
   });
   await put("DV2608A", "Lab 门户样式微调", {
     rarity: "n",
-    owners: ["琉华"],
-    size: 1,
+    owners: [{ name: "琉华", points: 1 }],
     source: "exploration",
   });
   await put("DV2608A", "Jellyman 报告模板", {
     rarity: "n",
     requester: "比屋定",
-    owners: ["红莉栖"],
-    size: 2,
+    owners: [{ name: "红莉栖", points: 2 }],
     source: "platform",
   });
   await deliver("DV2608A", "微波炉定时器联调", "2026-08-11");
@@ -118,28 +114,24 @@ async function seed() {
   await put("DV2608B", "D-mail 协议加密", {
     rarity: "ssr",
     requester: "天王寺",
-    owners: ["红莉栖"],
-    size: 6,
+    owners: [{ name: "红莉栖", points: 6 }],
     source: "customer",
   });
   await put("DV2608B", "IBN5100 拆机评估", {
     rarity: "r",
     requester: "比屋定",
-    owners: ["桶子"],
-    size: 3,
+    owners: [{ name: "桶子", points: 3 }],
     source: "platform",
   });
   await put("DV2608B", "时间跳跃机 PoC", {
     rarity: "ur",
     requester: "天王寺",
-    owners: ["冈部"],
-    size: 8,
+    owners: [{ name: "冈部", points: 8 }],
     source: "customer",
   });
   await put("DV2608B", "记忆数据恢复工具", {
     rarity: "sr",
-    owners: ["铃羽"],
-    size: 4,
+    owners: [{ name: "铃羽", points: 4 }],
     source: "exploration",
   });
   await deliver("DV2608B", "D-mail 协议加密", "2026-08-18");
@@ -154,28 +146,24 @@ async function seed() {
   await put("DV2608C", "D-mail 网关重试", {
     rarity: "r",
     requester: "天王寺",
-    owners: ["桶子"],
-    size: 2,
+    owners: [{ name: "桶子", points: 2 }],
     source: "customer",
   });
   await put("DV2608C", "Lab 安全演练", {
     rarity: "n",
-    owners: ["琉华"],
-    size: 1,
+    owners: [{ name: "琉华", points: 1 }],
     source: "customer",
   });
   await put("DV2608C", "世界线变动率计量", {
     rarity: "sr",
     requester: "比屋定",
-    owners: ["冈部"],
-    size: 4,
+    owners: [{ name: "冈部", points: 4 }],
     source: "platform",
   });
   await put("DV2608C", "42 寸显像管采购", {
     rarity: "n",
     requester: "天王寺",
-    owners: ["菲莉"],
-    size: 2,
+    owners: [{ name: "菲莉", points: 2 }],
     source: "customer",
   });
   await deliver("DV2608C", "记忆数据恢复工具", "2026-08-26"); // B 班结转来的探索件（自驱，视同签收）
@@ -192,35 +180,30 @@ async function seed() {
   await put("DV2608D", "世界线变动率探测器", {
     rarity: "sr",
     requester: "比屋定",
-    owners: ["红莉栖"],
-    size: 4,
+    owners: [{ name: "红莉栖", points: 4 }],
     source: "platform",
   });
   await put("DV2608D", "菲利斯咖啡联动页", {
     rarity: "r",
     requester: "天王寺",
-    owners: ["菲莉"],
-    size: 2,
+    owners: [{ name: "菲莉", points: 2 }],
     source: "customer",
   });
   await put("DV2608D", "未来道具补完计划", {
     rarity: "n",
-    owners: ["桶子"],
-    size: 1,
+    owners: [{ name: "桶子", points: 1 }],
     source: "exploration",
   });
   await put("DV2608D", "Lab 空调滤网更换", {
     rarity: "n",
     requester: "天王寺",
-    owners: ["琉华"],
-    size: 2,
+    owners: [{ name: "琉华", points: 2 }],
     source: "customer",
   });
   await put("DV2608D", "CERN 漏洞通报处理", {
     rarity: "ssr",
     requester: "比屋定",
-    owners: ["冈部"],
-    size: 6,
+    owners: [{ name: "冈部", points: 6 }],
     source: "platform",
   });
   await deliver("DV2608D", "Lab 空调滤网更换", "2026-08-29");
@@ -237,41 +220,35 @@ async function seed() {
   await put("DV2609A", "Luka 邮件模板引擎", {
     rarity: "n",
     requester: "天王寺",
-    owners: ["琉华"],
-    size: 2,
+    owners: [{ name: "琉华", points: 2 }],
     source: "customer",
   });
   await put("DV2609A", "Amadeus 语音接口", {
     rarity: "ssr",
     requester: "比屋定",
-    owners: ["红莉栖"],
-    size: 6,
+    owners: [{ name: "红莉栖", points: 6 }],
     source: "platform",
   });
   await put("DV2609A", "运维脚本整理", {
     rarity: "r",
-    owners: ["桶子"],
-    size: 2,
+    owners: [{ name: "桶子", points: 2 }],
     source: "exploration",
   });
   await put("DV2609A", "显像管散热改造", {
     rarity: "sr",
-    owners: ["冈部"],
-    size: 4,
+    owners: [{ name: "冈部", points: 4 }],
     source: "exploration",
   });
   await put("DV2609A", "需求评审会纪要", {
     rarity: "n",
     requester: "天王寺",
-    owners: ["菲莉"],
-    size: 1,
+    owners: [{ name: "菲莉", points: 1 }],
     source: "customer",
   });
   await put("DV2609A", "D-mail 检索加速", {
     rarity: "ur",
     requester: "天王寺",
-    owners: ["冈部"],
-    size: 8,
+    owners: [{ name: "冈部", points: 8 }],
     source: "customer",
   });
   for (const title of ["Luka 邮件模板引擎", "Amadeus 语音接口"]) {

@@ -72,6 +72,7 @@ export async function ensureSchemaMysql() {
     sql`CREATE TABLE IF NOT EXISTS task_owners (
       task_id int NOT NULL,
       owner_name varchar(64) NOT NULL,
+      points int NOT NULL DEFAULT 0,
       FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
     )`,
   );

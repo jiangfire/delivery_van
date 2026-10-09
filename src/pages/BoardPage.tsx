@@ -16,6 +16,7 @@ type TaskColDef = ColDef<TaskRow> & { editField?: string };
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { carryTargetCode } from "@contracts/vans";
+import { taskPointsOf, type OwnerAlloc } from "@contracts/points";
 import {
   CARRY_REASON_LABELS,
   SOURCE_LABELS,
@@ -28,7 +29,6 @@ import {
   SOURCE_COLOR,
   STATUS_CODE,
   STATUS_LABEL,
-  sizeBucket,
 } from "@/lib/display";
 import type { TaskWithOwners } from "../../api/queries/van";
 import MultiSelectCellEditor from "@/components/MultiSelectCellEditor";
@@ -250,6 +250,24 @@ export default function BoardPage() {
   /* ── 列定义 ── */
   const memberNames = useMemo(() => members.map((m) => m.name), [members]);
 
+  /**
+   * 负责人编辑器里「看见运力」的数据：每人本周已装点数**扣掉这件自己的那份**
+   * （即"其他件"的负载）+ 周运力上限。改这件时就能看到会不会把人压超载，
+   * 而不用等滚到页面底部的运力条才知道。
+   */
+  const loadByMemberExcluding = useCallback(
+    (task: TaskRow | undefined) => {
+      if (!task || !stats) return {};
+      const out: Record<string, { assigned: number; capacity: number }> = {};
+      for (const m of stats.members) {
+        const own = task.owners.find((o) => o.name === m.name)?.points ?? 0;
+        out[m.name] = { assigned: m.assigned - own, capacity: m.capacity };
+      }
+      return out;
+    },
+    [stats],
+  );
+
   // columnDefs 引用必须稳定：AG Grid 收到新数组会重建列并销毁正在编辑的编辑器。
   // react-query 的 structural sharing 保证数据不变时引用稳定；编辑参数延迟到编辑时求值。
   const columnDefs = useMemo<TaskColDef[]>(
@@ -407,14 +425,15 @@ export default function BoardPage() {
         editable: !vanReadonly,
         editField: "owners",
         cellEditor: MultiSelectCellEditor,
-        cellEditorParams: () => ({
+        cellEditorParams: (p: { data?: TaskRow }) => ({
           members: memberNames,
           onAddMember: (name: string) => addMember({ name, actor: actorArg }),
+          loadByMember: loadByMemberExcluding(p.data),
         }),
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
           if (!d) return null;
-          const owners: string[] = p.value ?? d.owners ?? [];
+          const owners: OwnerAlloc[] = p.value ?? d.owners ?? [];
           if (owners.length === 0)
             return (
               <span className="text-xs text-muted-foreground/50">
@@ -426,15 +445,27 @@ export default function BoardPage() {
             <span className="flex flex-wrap items-center content-center gap-1 py-1">
               {owners.map((o) => (
                 <span
-                  key={o}
-                  className="inline-block rounded-lg px-2 py-0.5 text-xs font-medium"
+                  key={o.name}
+                  className="inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-xs font-medium"
                   style={{
                     background: "rgba(14, 165, 233, 0.1)",
                     color: "#0ea5e9",
                     border: "1px solid rgba(14, 165, 233, 0.15)",
                   }}
+                  title={`${o.name} 在这件上 ${o.points} 点`}
                 >
-                  {o}
+                  {o.name}
+                  {/* 点数与名字分开呈现：一眼看得出哪截是点数 */}
+                  <span
+                    className="rounded tabular-nums"
+                    style={{
+                      padding: "0 3px",
+                      background: "rgba(14, 165, 233, 0.18)",
+                      fontWeight: 700,
+                    }}
+                  >
+                    {o.points}
+                  </span>
                 </span>
               ))}
             </span>
@@ -443,40 +474,30 @@ export default function BoardPage() {
         valueGetter: (p) => p.data?.owners ?? [],
         valueSetter: (p) => {
           if (p.data) {
-            p.data.owners = p.newValue as string[];
+            p.data.owners = p.newValue as OwnerAlloc[];
             return true;
           }
           return false;
         },
       },
       {
-        colId: "_size",
-        headerName: "档位",
+        // 任务点数是**派生值**（各负责人点数之和），不是录入项：只读展示
+        colId: "_points",
+        headerName: "点数",
         width: 86,
-        editable: !vanReadonly,
-        editField: "size",
-        cellEditor: "agSelectCellEditor",
-        // 半天点数制：1 点 = 半天，1~10 整数
-        cellEditorParams: {
-          values: ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"],
-        },
-        valueGetter: (p) => String(p.data?.size ?? ""),
-        valueSetter: (p) => {
-          if (p.data) {
-            const v = p.newValue === "" ? null : Number(p.newValue);
-            p.data.size = v as number | null;
-            return true;
-          }
-          return false;
-        },
+        editable: false,
+        valueGetter: (p) => taskPointsOf(p.data?.owners ?? []),
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
-          if (!d || !d.size) return null;
-          return (
-            <span className={`size-badge size-${sizeBucket(d.size)}`}>
-              {d.size} 点
-            </span>
-          );
+          if (!d) return null;
+          const pts = taskPointsOf(d.owners);
+          if (pts === 0)
+            return (
+              <span className="text-xs text-muted-foreground/50">
+                {d.owners.length === 0 ? "未指派" : "0 点"}
+              </span>
+            );
+          return <span className="points-badge">{pts} 点</span>;
         },
       },
       {
@@ -653,6 +674,7 @@ export default function BoardPage() {
     ],
     [
       memberNames,
+      loadByMemberExcluding,
       removeTask,
       addMember,
       vanReadonly,
@@ -699,7 +721,6 @@ export default function BoardPage() {
       _requester: "requester",
       _source: "source",
       _owners: "owners",
-      _size: "size",
       _status: "status",
       _doneAt: "doneAt",
       _acceptance: "acceptance",
@@ -716,9 +737,6 @@ export default function BoardPage() {
     }
     if (key === "source") {
       value = SOURCE_CODE[value as string] ?? value;
-    }
-    if (key === "size") {
-      value = value === "" || value == null ? null : Number(value);
     }
     if (key === "doneAt") {
       if (value instanceof Date) {
