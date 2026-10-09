@@ -139,7 +139,10 @@ async function ensureSchemaSqlite() {
     CREATE TABLE IF NOT EXISTS task_owners (
       task_id integer NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       owner_name text NOT NULL,
-      points integer NOT NULL DEFAULT 0
+      points integer NOT NULL DEFAULT 0,
+      done_at text,
+      confirmed_at text,
+      confirmed_by text
     )
   `);
   // 兼容旧库：task_owners 可能没有 points 列（v2.5 每人点数制），幂等添加
@@ -147,6 +150,22 @@ async function ensureSchemaSqlite() {
     db.run(
       sql`ALTER TABLE task_owners ADD COLUMN points integer NOT NULL DEFAULT 0`,
     );
+  } catch {
+    // 列已存在，忽略
+  }
+  // 兼容旧库：task_owners 可能没有逐人完成/签收三列（v2.6），幂等添加
+  try {
+    db.run(sql`ALTER TABLE task_owners ADD COLUMN done_at text`);
+  } catch {
+    // 列已存在，忽略
+  }
+  try {
+    db.run(sql`ALTER TABLE task_owners ADD COLUMN confirmed_at text`);
+  } catch {
+    // 列已存在，忽略
+  }
+  try {
+    db.run(sql`ALTER TABLE task_owners ADD COLUMN confirmed_by text`);
   } catch {
     // 列已存在，忽略
   }
@@ -183,6 +202,14 @@ async function ensureSchemaSqlite() {
   if (versionRow.user_version <= 2) {
     await backfillOwnerPoints(db);
     await db.run(sql`PRAGMA user_version = 3`);
+  }
+  // v2.6 逐人完成与签收一次性回填：存量 done 件是「整件一起交的」，把件级
+  // done_at / confirmed_* 复制给该件的每个负责人行（诚实近似）。无法幂等
+  // （新产生的「部分完成」与「尚未回填」在库里无法区分），沿用 user_version 门控
+  // 只执行一次；全新库表为空时为 no-op。非 done 件与无负责人的件不产生任何行。
+  if (versionRow.user_version <= 3) {
+    await backfillOwnerDelivery(db);
+    await db.run(sql`PRAGMA user_version = 4`);
   }
 }
 
@@ -231,6 +258,35 @@ async function backfillOwnerPoints(db: AppDb) {
     for (const name of names) {
       await db.run(
         sql`UPDATE task_owners SET points = ${split[name]} WHERE task_id = ${t.id} AND owner_name = ${name}`,
+      );
+    }
+  }
+}
+
+/**
+ * v2.6 回填执行体：存量 done 件把件级完成日期复制给每个负责人行；件级已签收的
+ * 同时复制签收日期与签收人（件级签收人为空时以 '(历史)' 占位，与 v2.0 回填同口径）。
+ * 非 done 件的负责人行三列保持 NULL；无负责人的件没有行可改（不参与聚合推导）。
+ */
+async function backfillOwnerDelivery(db: AppDb) {
+  // 早于「送达日期」特性的远古库连 done_at 列都没有，无日期可回填
+  const cols = await db.all<{ name: string }>(sql`PRAGMA table_info(tasks)`);
+  if (!cols.some((c) => c.name === "done_at")) return;
+  const doneTasks = await db.all<{
+    id: number;
+    done_at: string | null;
+    confirmed_at: string | null;
+    confirmed_by: string | null;
+  }>(
+    sql`SELECT id, done_at, confirmed_at, confirmed_by FROM tasks WHERE status = 'done'`,
+  );
+  for (const t of doneTasks) {
+    await db.run(
+      sql`UPDATE task_owners SET done_at = ${t.done_at} WHERE task_id = ${t.id}`,
+    );
+    if (t.confirmed_at !== null) {
+      await db.run(
+        sql`UPDATE task_owners SET confirmed_at = ${t.confirmed_at}, confirmed_by = ${t.confirmed_by ?? "(历史)"} WHERE task_id = ${t.id}`,
       );
     }
   }

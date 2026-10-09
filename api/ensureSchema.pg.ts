@@ -71,7 +71,10 @@ export async function ensureSchemaPg() {
     sql`CREATE TABLE IF NOT EXISTS task_owners (
       task_id integer NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
       owner_name text NOT NULL,
-      points integer NOT NULL DEFAULT 0
+      points integer NOT NULL DEFAULT 0,
+      done_at text,
+      confirmed_at text,
+      confirmed_by text
     )`,
   );
   // 链式审计日志表（WP2）：只追加不改写，读链校验见 queries/audit.ts

@@ -166,7 +166,7 @@ describe("ensureSchema v2.0 签收与来源迁移", () => {
     const [v] = await mockDb.all<{ user_version: number }>(
       sql`PRAGMA user_version`,
     );
-    expect(v.user_version).toBe(3);
+    expect(v.user_version).toBe(4);
   });
 });
 
@@ -341,7 +341,7 @@ describe("ensureSchema v2.5 点数回填", () => {
     const [v] = await mockDb.all<{ user_version: number }>(
       sql`PRAGMA user_version`,
     );
-    expect(v.user_version).toBe(3);
+    expect(v.user_version).toBe(4);
 
     // cutover 后新增的负责人行默认 0 点，且重启不会被二次回填
     await mockDb.run(
@@ -353,5 +353,131 @@ describe("ensureSchema v2.5 点数回填", () => {
       2: { 安: 2, 白: 2, 陈: 2 },
       3: { 安: 0 },
     });
+  });
+});
+
+// ── v2.6 逐人完成与签收迁移：存量 done 件的件级日期复制给每个负责人 ──
+
+describe("ensureSchema v2.6 逐人完成回填", () => {
+  it("done 件每人拿到件级完成/签收日期，todo 件保持 NULL，无负责人件不入列，幂等重跑", async () => {
+    mockDb = drizzle(new Database(":memory:"), { schema });
+    // 模拟 v2.5 旧库：task_owners 没有三列，user_version = 3
+    await mockDb.run(sql`
+      CREATE TABLE tasks (
+        id integer PRIMARY KEY AUTOINCREMENT,
+        van_code text NOT NULL,
+        title text NOT NULL,
+        requester text,
+        size integer,
+        status text NOT NULL DEFAULT 'todo',
+        done_at text,
+        confirmed_by text,
+        confirmed_at text,
+        created_at integer NOT NULL DEFAULT (unixepoch())
+      )
+    `);
+    await mockDb.run(sql`
+      CREATE TABLE task_owners (
+        task_id integer NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        owner_name text NOT NULL,
+        points integer NOT NULL DEFAULT 0
+      )
+    `);
+    await mockDb.run(sql`PRAGMA user_version = 3`);
+    await mockDb.run(sql`
+      INSERT INTO tasks (van_code, title, status, done_at, confirmed_by, confirmed_at) VALUES
+        ('DV2607A', '已交已签件', 'done', '2026-08-20', '张三', '2026-08-21'),
+        ('DV2607A', '已交未签件', 'done', '2026-08-22', NULL, NULL),
+        ('DV2607A', '进行中件', 'doing', NULL, NULL, NULL),
+        ('DV2607A', '无负责人完成件', 'done', '2026-08-23', NULL, NULL)
+    `);
+    await mockDb.run(sql`
+      INSERT INTO task_owners (task_id, owner_name, points) VALUES
+        (1, '安', 3), (1, '陈', 2),
+        (2, '白', 4),
+        (3, '安', 2)
+    `);
+
+    await ensureSchema();
+
+    const ownerRows = async () =>
+      await mockDb.all<{
+        task_id: number;
+        owner_name: string;
+        done_at: string | null;
+        confirmed_at: string | null;
+        confirmed_by: string | null;
+      }>(
+        sql`SELECT task_id, owner_name, done_at, confirmed_at, confirmed_by FROM task_owners ORDER BY task_id, owner_name`,
+      );
+
+    expect(await ownerRows()).toEqual([
+      {
+        task_id: 1,
+        owner_name: "安",
+        done_at: "2026-08-20",
+        confirmed_at: "2026-08-21",
+        confirmed_by: "张三",
+      },
+      {
+        task_id: 1,
+        owner_name: "陈",
+        done_at: "2026-08-20",
+        confirmed_at: "2026-08-21",
+        confirmed_by: "张三",
+      },
+      {
+        task_id: 2,
+        owner_name: "白",
+        done_at: "2026-08-22",
+        confirmed_at: null,
+        confirmed_by: null,
+      },
+      {
+        task_id: 3,
+        owner_name: "安",
+        done_at: null,
+        confirmed_at: null,
+        confirmed_by: null,
+      },
+    ]);
+
+    const [v] = await mockDb.all<{ user_version: number }>(
+      sql`PRAGMA user_version`,
+    );
+    expect(v.user_version).toBe(4);
+
+    // 幂等：重跑不改动已回填的行，也不给 todo 件补日期
+    await ensureSchema();
+    expect(await ownerRows()).toEqual([
+      {
+        task_id: 1,
+        owner_name: "安",
+        done_at: "2026-08-20",
+        confirmed_at: "2026-08-21",
+        confirmed_by: "张三",
+      },
+      {
+        task_id: 1,
+        owner_name: "陈",
+        done_at: "2026-08-20",
+        confirmed_at: "2026-08-21",
+        confirmed_by: "张三",
+      },
+      {
+        task_id: 2,
+        owner_name: "白",
+        done_at: "2026-08-22",
+        confirmed_at: null,
+        confirmed_by: null,
+      },
+      {
+        task_id: 3,
+        owner_name: "安",
+        done_at: null,
+        confirmed_at: null,
+        confirmed_by: null,
+      },
+    ]);
   });
 });

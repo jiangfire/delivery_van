@@ -73,6 +73,9 @@ export async function ensureSchemaMysql() {
       task_id int NOT NULL,
       owner_name varchar(64) NOT NULL,
       points int NOT NULL DEFAULT 0,
+      done_at varchar(16),
+      confirmed_at varchar(16),
+      confirmed_by varchar(64),
       FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
     )`,
   );

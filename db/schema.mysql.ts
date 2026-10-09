@@ -132,6 +132,15 @@ export const taskOwners = mysqlTable("task_owners", {
    * 列默认 0 只为幂等补列时存量行必须有值；运行时点数一律由人显式设置（API 层必填）。
    */
   points: int("points").notNull().default(0),
+  /**
+   * 该负责人的完成日期 YYYY-MM-DD（v2.6 逐人完成）：非空 = 已交付。
+   * 无布尔完成标记——`done_at IS NOT NULL` 就是完成，与「打勾即记日期、取消即清空」同构。
+   */
+  doneAt: varchar("done_at", { length: 16 }),
+  /** 提出人对该人交付的签收日期 YYYY-MM-DD（v2.6 逐人签收） */
+  confirmedAt: varchar("confirmed_at", { length: 16 }),
+  /** 签收人（软身份，惯例是提出人本人） */
+  confirmedBy: varchar("confirmed_by", { length: 64 }),
 });
 
 /**
