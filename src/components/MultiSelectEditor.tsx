@@ -234,6 +234,10 @@ export default function MultiSelectEditor({
         top: pos.top,
         left: pos.left,
         width: 430,
+        // 面板不超出视口：底部「确定」始终可见（成员多时列表内部滚动）
+        maxHeight: Math.max(240, window.innerHeight - pos.top - 8),
+        display: "flex",
+        flexDirection: "column",
         background: "rgba(255,255,255,0.97)",
         border: "1px solid rgba(0,0,0,0.1)",
         borderRadius: 12,
@@ -277,7 +281,14 @@ export default function MultiSelectEditor({
           </button>
         )}
       </div>
-      <div style={{ maxHeight: 240, overflowY: "auto", padding: "4px 0" }}>
+      <div
+        style={{
+          flex: "1 1 auto",
+          minHeight: 0,
+          overflowY: "auto",
+          padding: "4px 0",
+        }}
+      >
         {members.length === 0 && (
           <div
             style={{ padding: "6px 12px 2px", fontSize: 12, color: "#94a3b8" }}

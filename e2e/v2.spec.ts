@@ -13,6 +13,9 @@ import {
  * 每个用例从「发新车」拿独立班次，不依赖执行顺序。
  */
 
+// 整轮共享库随用例增长，重载与统计会变慢；统一放宽超时避免环境性抖动
+test.describe.configure({ timeout: 60_000 });
+
 /** 当前班次的快件列表（页面内直调 tRPC 查询） */
 async function tasksOf(page: Page, van: string) {
   return page.evaluate(async (v) => {
@@ -39,40 +42,45 @@ test.describe("v2 签收与博弈机制", () => {
     await actorSel.selectOption("签收人");
   });
 
-  test("签收动线：打勾送达 → 待签收徽标 → 一次点击签收 → 统计变化并持久化", async ({
+  test("签收动线：负责人打勾送达 → 待签收 n/m 徽标 → chip 逐个签收 → 统计变化并持久化", async ({
     page,
   }) => {
     await addTaskAndWait(page);
     const van = await page.getByLabel("班次").inputValue();
     const [task] = await tasksOf(page, van);
+    // 挂提出人与一名负责人（v2.6：完成/签收都拆到人）
     await trpcCall(page, "van.tasks.update", {
       id: task.id,
       requester: "签收人",
+      owners: [{ name: "签收人", points: 3 }],
     });
     await page.reload();
     await expect(page.getByText("快递发车台")).toBeVisible();
 
     // 未完成时没有签收徽标
-    await expect(page.getByRole("button", { name: "待签收" })).toBeHidden();
+    await expect(page.getByText(/待签收/)).toBeHidden();
 
-    // 置完成 → 提出人格子出现「待签收」，统计条提示未签收 1 件
+    // 件级完成快捷（单人件不弹确认）→ 提出人列出现「待签收 1/1」，统计条提示未签收 1 件
     await selectEditorOption(page, "_status", "完成");
     await expect(dataCell(page, "_status")).toHaveText("完成", {
       timeout: 5000,
     });
-    await expect(page.getByRole("button", { name: "待签收" })).toBeVisible({
+    await expect(dataCell(page, "_requester")).toContainText("待签收 1/1", {
       timeout: 5000,
     });
     await expect(page.getByText("未签收", { exact: true })).toBeVisible();
     await expect(page.getByText("1 件", { exact: true })).toBeVisible();
 
-    // 一次点击签收 → 徽标消失、✅ 出现、未签收归零后统计条不再显示
-    await page.getByRole("button", { name: "待签收" }).click();
+    // 逐人签收：点负责人 chip 上的「签收」→ 徽标消失、🔏 出现、未签收归零
+    await dataCell(page, "_owners")
+      .getByRole("button", { name: "签收" })
+      .click();
     await expect(page.getByText("已签收")).toBeVisible({ timeout: 5000 });
-    await expect(page.getByRole("button", { name: "待签收" })).toBeHidden({
+    await expect(dataCell(page, "_requester")).toContainText("✅", {
       timeout: 5000,
     });
-    await expect(dataCell(page, "_requester")).toContainText("✅");
+    await expect(dataCell(page, "_requester")).not.toContainText("待签收");
+    await expect(dataCell(page, "_owners")).toContainText("🔏");
     await expect(page.getByText("未签收", { exact: true })).toBeHidden({
       timeout: 5000,
     });
@@ -80,7 +88,7 @@ test.describe("v2 签收与博弈机制", () => {
     // 持久化：刷新后仍已签收
     await page.reload();
     await expect(page.getByText("快递发车台")).toBeVisible();
-    await expect(dataCell(page, "_requester")).toContainText("✅", {
+    await expect(dataCell(page, "_owners")).toContainText("🔏", {
       timeout: 5000,
     });
   });
@@ -115,6 +123,7 @@ test.describe("v2 签收与博弈机制", () => {
     // 归档班次签收被拒（服务端校验，DoD 人工动线第 3 条）
     const res = await trpcCall(page, "van.tasks.confirm", {
       taskId: tasks[0].id,
+      owner: "签收人",
       actor: "签收人",
     });
     expect(JSON.stringify(res)).toContain("归档");
@@ -226,5 +235,140 @@ test.describe("v2 签收与博弈机制", () => {
     });
     // 角标本体（轻提示 toast 文案相近，用徽章类名定位避免 strict mode 冲突）
     await expect(page.locator(".badge-green")).toBeVisible({ timeout: 5000 });
+  });
+
+  /* ── v2.6 逐人完成与签收 ── */
+  test.describe("v2.6 逐人完成与签收", () => {
+    // 展开人员编辑器 + 多次 reload 的用例偏慢，给足余量
+    test.describe.configure({ timeout: 60_000 });
+    const FENG = "丰智娟";
+    const LI = "李子烨";
+
+    /** 两人件（丰 3 / 李 7）+ 提出人，返回源班次与任务 id */
+    async function seedTwoOwnerTask(page: Page) {
+      await trpcCall(page, "van.members.add", { name: FENG });
+      await trpcCall(page, "van.members.add", { name: LI });
+      await page.reload();
+      await page.getByText("快递发车台").waitFor();
+      await addTaskAndWait(page);
+      const van = await page.getByLabel("班次").inputValue();
+      const [task] = await tasksOf(page, van);
+      await trpcCall(page, "van.tasks.update", {
+        id: task.id,
+        requester: "签收人",
+        owners: [
+          { name: FENG, points: 3 },
+          { name: LI, points: 7 },
+        ],
+      });
+      await page.reload();
+      await page.getByText("快递发车台").waitFor();
+      return { van, id: task.id };
+    }
+
+    test("①逐人打勾/取消与件级快捷", async ({ page }) => {
+      await seedTwoOwnerTask(page);
+      const ownersCell = dataCell(page, "_owners");
+
+      // 编辑器里勾一个人完成 → 状态列显示 n/m
+      await ownersCell.dblclick();
+      await page.getByLabel(`${FENG} 已完成`).check();
+      const doneResp = page.waitForResponse(
+        (r) => r.url().includes("van.tasks.setOwnerDone") && r.status() === 200,
+        { timeout: 8000 },
+      );
+      await page.getByRole("button", { name: "确定" }).click();
+      await doneResp;
+      await expect(dataCell(page, "_status")).toHaveText(
+        "进行中 · 1/2 人已交",
+        { timeout: 5000 },
+      );
+      await expect(ownersCell).toContainText("✅");
+
+      // 件级快捷：多人件点击「完成」弹确认（自动接受）→ 全体打同一天
+      page.once("dialog", (d) => d.accept());
+      await selectEditorOption(page, "_status", "完成");
+      await expect(dataCell(page, "_status")).toHaveText("完成", {
+        timeout: 5000,
+      });
+      await expect(dataCell(page, "_owners")).toContainText(FENG);
+      await expect(dataCell(page, "_owners")).toContainText(LI);
+
+      // 件级取消完成：清全体完成日期（不回落到未开始）
+      await selectEditorOption(page, "_status", "未开始");
+      await expect(dataCell(page, "_status")).toHaveText("进行中", {
+        timeout: 5000,
+      });
+    });
+
+    test("②逐人签收与件级待签收 n/m 汇总", async ({ page }) => {
+      const { id } = await seedTwoOwnerTask(page);
+      // 两人各自交付（API 直调，聚焦签收动线）
+      await trpcCall(page, "van.tasks.setOwnerDone", {
+        taskId: id,
+        owner: FENG,
+        done: true,
+        doneAt: "2026-10-01",
+      });
+      await trpcCall(page, "van.tasks.setOwnerDone", {
+        taskId: id,
+        owner: LI,
+        done: true,
+        doneAt: "2026-10-02",
+      });
+      await page.reload();
+      await page.getByText("快递发车台").waitFor();
+
+      await expect(dataCell(page, "_requester")).toContainText("待签收 2/2", {
+        timeout: 5000,
+      });
+
+      const ownersCell = dataCell(page, "_owners");
+      await ownersCell.getByRole("button", { name: "签收" }).first().click();
+      await expect(dataCell(page, "_requester")).toContainText("待签收 1/2", {
+        timeout: 5000,
+      });
+      await expect(dataCell(page, "_owners")).toContainText("🔏");
+
+      await ownersCell.getByRole("button", { name: "签收" }).first().click();
+      await expect(dataCell(page, "_requester")).toContainText("✅", {
+        timeout: 5000,
+      });
+      await expect(dataCell(page, "_requester")).not.toContainText("待签收");
+    });
+
+    test("③部分完成件结转后已完成份额仍标记完成/已签收", async ({ page }) => {
+      const { van: source, id } = await seedTwoOwnerTask(page);
+      // 丰交付并签收，李未交付 → 部分完成
+      await trpcCall(page, "van.tasks.setOwnerDone", {
+        taskId: id,
+        owner: FENG,
+        done: true,
+        doneAt: "2026-10-01",
+      });
+      await trpcCall(page, "van.tasks.confirm", {
+        taskId: id,
+        owner: FENG,
+        actor: "签收人",
+      });
+
+      await dispatchVan(page); // 下一班车
+      await page.getByLabel("班次").selectOption(source);
+      await page.getByRole("button", { name: "滞留件转下一班" }).click();
+      await page.getByRole("button", { name: "确认结转" }).click();
+      await expect(page.getByText(/已把 1 个滞留件/)).toBeVisible({
+        timeout: 5000,
+      });
+
+      // 新班副本：已完成份额保持 ✅ 与 🔏，未完成份额无标记
+      await page.getByLabel("班次").selectOption({ index: 0 });
+      const ownersCell = dataCell(page, "_owners");
+      await expect(ownersCell).toContainText("✅", { timeout: 5000 });
+      await expect(ownersCell).toContainText("🔏");
+      await expect(dataCell(page, "_status")).toHaveText(
+        "进行中 · 1/2 人已交",
+        { timeout: 5000 },
+      );
+    });
   });
 });

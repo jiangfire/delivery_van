@@ -719,10 +719,13 @@ export default function BoardPage() {
           );
         },
       },
-      // 操作列
+      // 操作列（右固定：新增列变宽后不滚动也能触达删除）
       {
         headerName: "",
         width: 60,
+        pinned: "right",
+        lockPinned: true,
+        resizable: false,
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
           if (!d) return null;
