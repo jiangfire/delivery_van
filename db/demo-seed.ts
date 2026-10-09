@@ -72,11 +72,12 @@ async function seed() {
     title: string,
     opts: Omit<Parameters<typeof addTask>[0], "van" | "title" | "actor">,
   ) => addTask({ van, title, ...opts, actor: ACTOR });
-  /** 打勾送达（可补历史日期）+ 提出人签收（自驱件 confirmTask 幂等跳过） */
+  /** 打勾送达（可补历史日期）+ 逐人签收（自驱件 confirmTask 幂等跳过） */
   const deliver = async (van: string, title: string, doneAt: string) => {
     const id = await idOf(van, title);
     await updateTask(id, { status: "done", doneAt }, ACTOR);
-    await confirmTask(id, ACTOR);
+    const owners = (await listTasksByVan(van)).find((t) => t.id === id)!.owners;
+    for (const o of owners) await confirmTask(id, o.name, ACTOR);
   };
 
   /* ── DV2608A（8/7 发）：整班准点素材——4 件全送达全签收，无结转 → 🚚 徽章 ── */

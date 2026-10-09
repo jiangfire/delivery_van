@@ -92,13 +92,13 @@ export const writeTools = [
 
   defineWriteTool({
     name: "tasks_confirm",
-    title: "Confirm receipt of a delivered package",
+    title: "Confirm receipt of one owner's delivery",
     description:
-      "Confirm receipt (sign-off) of a package that has already been delivered. The package must be status=done, the van must not be archived, and `actor` must be an existing member. Re-confirming is idempotent and does not overwrite the first signature. Packages with no requester are treated as self-driven and count as signed without a record.",
+      "Confirm receipt (sign-off) of ONE owner's share of a package. The named `owner` must have already delivered (their personal done date is set), the van must not be archived, and `actor` must be an existing member. Re-confirming the same owner is idempotent and does not overwrite the first signature. Packages with no requester are treated as self-driven and count as signed without a record. The package-level confirmation is written automatically once every judged owner is signed.",
     inputSchema: taskConfirmInput,
     annotations: { readOnlyHint: false, destructiveHint: false },
-    async run({ taskId, actor }) {
-      return createCaller().van.tasks.confirm({ taskId, actor });
+    async run({ taskId, owner, actor }) {
+      return createCaller().van.tasks.confirm({ taskId, owner, actor });
     },
   }),
 

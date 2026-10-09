@@ -101,12 +101,17 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
       });
 
       it("签收过快件的成员不可删除", async () => {
-        await addMember("张三", 10); // 提出人
+        await addMember("张三", 10); // 提出人兼负责人
         await addMember("李四", 10); // 签收人
-        await addTask({ van: "DV2607A", title: "甲", requester: "张三" });
+        await addTask({
+          van: "DV2607A",
+          title: "甲",
+          requester: "张三",
+          owners: [{ name: "张三", points: 3 }],
+        });
         const [t] = await listTasksByVan("DV2607A");
         await updateTask(t.id, { status: "done" });
-        await confirmTask(t.id, "李四");
+        await confirmTask(t.id, "张三", "李四");
         await expect(removeMember("李四")).rejects.toThrow("不可删除");
       });
 

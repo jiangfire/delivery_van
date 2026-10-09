@@ -97,10 +97,12 @@ export const vanRouter = createRouter({
     reorder: publicQuery
       .input(taskReorderInput)
       .mutation(({ input }) => reorderTasks(input.van, input.ids, input.actor)),
-    /* 签收制（v2.0 WP3）：done 后由提出人一次点击签收 */
+    /* 签收制（v2.6）：逐人签收某份交付 */
     confirm: publicQuery
       .input(taskConfirmInput)
-      .mutation(({ input }) => confirmTask(input.taskId, input.actor)),
+      .mutation(({ input }) =>
+        confirmTask(input.taskId, input.owner, input.actor),
+      ),
     /* 逐人完成（v2.6）：打勾/取消某个负责人各自的完成 */
     setOwnerDone: publicQuery
       .input(taskSetOwnerDoneInput)

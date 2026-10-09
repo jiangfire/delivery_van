@@ -1360,11 +1360,16 @@ export async function carryOver(
 /* ── 签收制（WP3）：done 拆两拍，送达（承运人）→ 签收（提出人） ── */
 
 /**
- * 提出人签收：任务必须已送达（done）、班次未归档、签收人必须是成员。
- * 无提出人的自驱件不写库直接视同签收（能推导不落库）；已签收的重签幂等
- * （保持首签信息不变）。
+ * 提出人逐人签收（v2.6）：只签**该负责人的那份交付**；该人必须已交（`done_at` 非空）、
+ * 班次未归档、签收人必须是成员。无提出人的自驱件不写库直接视同签收（能推导不落库）；
+ * 该人已签收的重签幂等（保持首签信息不变）。参与判定全体签完 → 件级 `confirmed_*`
+ * 由 recomputeTaskAggregate 写入。
  */
-export async function confirmTask(taskId: number, actor: string) {
+export async function confirmTask(
+  taskId: number,
+  ownerName: string,
+  actor: string,
+) {
   const db = getDb();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task)
@@ -1372,12 +1377,6 @@ export async function confirmTask(taskId: number, actor: string) {
       code: "NOT_FOUND",
       message: `任务 ${taskId} 不存在`,
     });
-  if (task.status !== "done") {
-    throw new TRPCError({
-      code: "BAD_REQUEST",
-      message: "只有已送达（完成）的快件才能签收",
-    });
-  }
   if (await isVanArchived(task.vanCode)) {
     throw new TRPCError({
       code: "BAD_REQUEST",
@@ -1395,25 +1394,58 @@ export async function confirmTask(taskId: number, actor: string) {
       message: `签收人「${actor}」不是团队成员`,
     });
   }
-  // 自驱件（无提出人）与已签收件：直接返回，不写库（幂等，不覆盖首签）
-  if (task.requester === null || task.confirmedAt !== null) {
+  const [row] = await db
+    .select()
+    .from(taskOwners)
+    .where(
+      and(
+        eq(taskOwners.taskId, taskId),
+        eq(taskOwners.ownerName, ownerName),
+      ),
+    );
+  if (!row) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: `快件 ${taskId} 上没有负责人「${ownerName}」`,
+    });
+  }
+  if (row.doneAt === null) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `「${ownerName}」尚未交付，不能签收`,
+    });
+  }
+  // 自驱件（无提出人）与已签收的人：直接返回，不写库（幂等，不覆盖首签）
+  if (task.requester === null || row.confirmedAt !== null) {
     return listTasksByVan(task.vanCode);
   }
+  const confirmedAt = todayStr();
   // 签收留痕与签收同事务
   await runTx(db, async (tx) => {
     await qRun(
       tx
-        .update(tasks)
-        .set({ confirmedBy: actor, confirmedAt: todayStr() })
-        .where(eq(tasks.id, taskId)),
+        .update(taskOwners)
+        .set({ confirmedBy: actor, confirmedAt })
+        .where(
+          and(
+            eq(taskOwners.taskId, taskId),
+            eq(taskOwners.ownerName, ownerName),
+          ),
+        ),
     );
+    // 全部签完 → 件级签收由聚合写入（单一重算入口）
+    await recomputeTaskAggregate(tx, taskId);
     await appendAudit(tx, actor, [
       {
         entity: "task",
         entityId: taskId,
-        field: "confirm",
-        oldValue: null,
-        newValue: actor,
+        field: `owner:${ownerName}`,
+        oldValue: ownerAuditValue(row),
+        newValue: ownerAuditValue({
+          points: row.points,
+          doneAt: row.doneAt,
+          confirmedAt,
+        }),
       },
     ]);
   });

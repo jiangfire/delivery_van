@@ -3,6 +3,7 @@
  * pg/mysql CI 容器（dialect.pg.test.ts / dialect.mysql.test.ts）。
  * pg/mysql 容器库自增序号跨用例不复位：取 id 一律走 insertReturningId。 */
 import { beforeEach, describe, expect, it } from "vitest";
+import { and, eq } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import {
   addMember,
@@ -11,6 +12,7 @@ import {
   confirmTask,
   dispatchVan,
   listTasksByVan,
+  setOwnerDone,
   updateTask,
   weeklyStats,
 } from "./van";
@@ -30,44 +32,69 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
       await ctx.db().insert(S.members).values({ name: "张三", capacity: 10 });
     });
 
-    async function seedDoneTask(requester?: string) {
-      return insertReturningId(ctx.db(), S.tasks, {
+    /** 两人件（张三 3 / 李四 2），默认都没交；requester 缺省 null = 自驱件 */
+    async function seedTwoOwners(requester?: string) {
+      const id = await insertReturningId(ctx.db(), S.tasks, {
         vanCode: "DV2607A",
         title: "客户看板",
-        status: "done",
-        doneAt: "2026-08-28",
+        status: "todo",
         requester: requester ?? null,
       });
+      await ctx.db().insert(S.taskOwners).values([
+        { taskId: id, ownerName: "张三", points: 3 },
+        { taskId: id, ownerName: "李四", points: 2 },
+      ]);
+      return id;
     }
 
-    describe("签收制（WP3）", () => {
-      it("正常签收：done 件写入签收人与当天日期，audit 留痕", async () => {
-        const id = await seedDoneTask("张三");
+    describe("签收制（v2.6 逐人）", () => {
+      it("逐人签收：只签该人的交付，件级未全签时 confirmed_* 仍为空", async () => {
+        await ctx.db().insert(S.members).values({ name: "李四", capacity: 10 });
+        const id = await seedTwoOwners("张三");
+        await setOwnerDone(id, "张三", true, "2026-08-27");
+        await setOwnerDone(id, "李四", true, "2026-08-28");
 
-        const list = await confirmTask(id, "张三");
+        const list = await confirmTask(id, "张三", "张三");
 
         const [t] = list;
-        expect(t.confirmedBy).toBe("张三");
-        expect(t.confirmedAt).toBe(todayStr());
-        const rows = await ctx.db().select().from(S.auditLog);
-        expect(rows).toHaveLength(1);
-        expect(rows[0].field).toBe("confirm");
-        expect(rows[0].newValue).toBe("张三");
+        expect(t.owners.find((o) => o.name === "张三")!.confirmedAt).toBe(
+          todayStr(),
+        );
+        expect(t.owners.find((o) => o.name === "李四")!.confirmedAt).toBeNull();
+        expect(t.confirmedAt).toBeNull(); // 未全签
+        const rec = (
+          await ctx.db().select().from(S.auditLog).orderBy(S.auditLog.id)
+        )
+          .filter((r) => r.field === "owner:张三")
+          .at(-1);
+        expect(rec?.actor).toBe("张三");
+        expect(JSON.parse(rec!.newValue!).confirmedAt).toBe(todayStr());
       });
 
-      it("非 done 不可签", async () => {
-        const id = await insertReturningId(ctx.db(), S.tasks, {
-          vanCode: "DV2607A",
-          title: "进行中",
-          status: "doing",
-          requester: "张三",
-        });
-        await expect(confirmTask(id, "张三")).rejects.toThrow(TRPCError);
-        await expect(confirmTask(id, "张三")).rejects.toThrow("已送达");
+      it("参与判定全体签完 → 件级 confirmed_* 写入", async () => {
+        await ctx.db().insert(S.members).values({ name: "李四", capacity: 10 });
+        const id = await seedTwoOwners("张三");
+        await setOwnerDone(id, "张三", true, "2026-08-27");
+        await setOwnerDone(id, "李四", true, "2026-08-28");
+        await confirmTask(id, "张三", "张三");
+        const list = await confirmTask(id, "李四", "李四");
+
+        const [t] = list;
+        expect(t.confirmedAt).toBe(todayStr());
+        expect(["张三", "李四"]).toContain(t.confirmedBy);
+      });
+
+      it("未交付的份额不可签收", async () => {
+        const id = await seedTwoOwners("张三");
+        await expect(confirmTask(id, "张三", "张三")).rejects.toThrow(TRPCError);
+        await expect(confirmTask(id, "张三", "张三")).rejects.toThrow(
+          "尚未交付",
+        );
       });
 
       it("归档班次（已结转）不可签收", async () => {
-        const id = await seedDoneTask("张三");
+        const id = await seedTwoOwners("张三");
+        await setOwnerDone(id, "张三", true, "2026-08-27");
         await ctx.db().insert(S.tasks).values({
           vanCode: "DV2607A",
           title: "滞留件",
@@ -76,67 +103,83 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
         });
         await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
 
-        await expect(confirmTask(id, "张三")).rejects.toThrow(TRPCError);
-        await expect(confirmTask(id, "张三")).rejects.toThrow("归档");
+        await expect(confirmTask(id, "张三", "张三")).rejects.toThrow(TRPCError);
+        await expect(confirmTask(id, "张三", "张三")).rejects.toThrow("归档");
       });
 
       it("签收人必须是成员", async () => {
-        const id = await seedDoneTask("张三");
-        await expect(confirmTask(id, "路人甲")).rejects.toThrow(TRPCError);
-        await expect(confirmTask(id, "路人甲")).rejects.toThrow("不是团队成员");
+        const id = await seedTwoOwners("张三");
+        await setOwnerDone(id, "张三", true, "2026-08-27");
+        await expect(confirmTask(id, "张三", "路人甲")).rejects.toThrow(
+          TRPCError,
+        );
+        await expect(confirmTask(id, "张三", "路人甲")).rejects.toThrow(
+          "不是团队成员",
+        );
       });
 
-      it("幂等重签：不报错且不覆盖首签信息", async () => {
-        const id = await seedDoneTask("张三");
-        await addMember("李四", 10);
-        await confirmTask(id, "张三");
-        await confirmTask(id, "李四"); // 再签不覆盖
+      it("幂等重签：不覆盖首签信息", async () => {
+        await ctx.db().insert(S.members).values({ name: "李四", capacity: 10 });
+        const id = await seedTwoOwners("张三");
+        await setOwnerDone(id, "张三", true, "2026-08-27");
+        await confirmTask(id, "张三", "张三");
+        const list = await confirmTask(id, "张三", "李四"); // 再签不覆盖
 
-        const [t] = await listTasksByVan("DV2607A");
-        expect(t.confirmedBy).toBe("张三");
+        expect(
+          list[0].owners.find((o) => o.name === "张三")!.confirmedBy,
+        ).toBe("张三");
       });
 
       it("无提出人的自驱件不写库直接视同签收：confirm 成功且 confirmed_* 保持 NULL", async () => {
-        const id = await seedDoneTask(); // requester = null
-        const list = await confirmTask(id, "张三");
+        const id = await seedTwoOwners(); // requester = null
+        // 直接落库置已交付，避免 setOwnerDone 的审计条目干扰断言
+        await ctx
+          .db()
+          .update(S.taskOwners)
+          .set({ doneAt: "2026-08-28" })
+          .where(
+            and(
+              eq(S.taskOwners.taskId, id),
+              eq(S.taskOwners.ownerName, "张三"),
+            ),
+          );
+        const list = await confirmTask(id, "张三", "张三");
         const [t] = list;
-        expect(t.confirmedBy).toBeNull();
+        expect(t.owners.find((o) => o.name === "张三")!.confirmedAt).toBeNull();
         expect(t.confirmedAt).toBeNull();
         // 不写库也不写审计（能推导不落库）
         expect(await ctx.db().select().from(S.auditLog)).toHaveLength(0);
       });
 
       it("任务不存在抛 NOT_FOUND", async () => {
-        await expect(confirmTask(999, "张三")).rejects.toThrow(TRPCError);
+        await expect(confirmTask(999, "张三", "张三")).rejects.toThrow(
+          TRPCError,
+        );
       });
 
-      it("取消完成时签收作废：confirmed_* 清空，重新送达后需重新签收", async () => {
-        const id = await seedDoneTask("张三");
-        await confirmTask(id, "张三");
+      it("取消某人完成 → 只作废该人签收，他人签收保留，件级签收失效", async () => {
+        await ctx.db().insert(S.members).values({ name: "李四", capacity: 10 });
+        const id = await seedTwoOwners("张三");
+        await setOwnerDone(id, "张三", true, "2026-08-27");
+        await setOwnerDone(id, "李四", true, "2026-08-28");
+        await confirmTask(id, "张三", "张三");
+        await confirmTask(id, "李四", "李四");
+        expect((await listTasksByVan("DV2607A"))[0].confirmedAt).not.toBeNull();
 
-        await updateTask(id, { status: "todo" });
-        const [afterUndo] = await listTasksByVan("DV2607A");
-        expect(afterUndo.status).toBe("todo");
-        expect(afterUndo.doneAt).toBeNull();
-        expect(afterUndo.confirmedBy).toBeNull();
-        expect(afterUndo.confirmedAt).toBeNull();
+        await setOwnerDone(id, "张三", false);
+        let [t] = await listTasksByVan("DV2607A");
+        expect(t.owners.find((o) => o.name === "张三")!.confirmedAt).toBeNull();
+        expect(
+          t.owners.find((o) => o.name === "李四")!.confirmedAt,
+        ).not.toBeNull();
+        expect(t.confirmedAt).toBeNull(); // 件级签收失效
+        expect(t.status).toBe("doing");
 
-        // 重新送达：回到未签收状态（不沿用旧签收，isConfirmed 口径正确）
-        await updateTask(id, { status: "done" });
-        const [afterRedo] = await listTasksByVan("DV2607A");
-        expect(afterRedo.status).toBe("done");
-        expect(afterRedo.confirmedAt).toBeNull();
-
-        // 签收作废进审计链（留痕可对质）
-        const rows = await ctx
-          .db()
-          .select()
-          .from(S.auditLog)
-          .orderBy(S.auditLog.id);
-        const voided = rows.find(
-          (r) => r.field === "confirm" && r.newValue === null,
-        );
-        expect(voided?.oldValue).toBe("张三");
+        // 重新送达 → 该人需重新签收（不沿用旧签收）
+        await setOwnerDone(id, "张三", true, "2026-08-29");
+        [t] = await listTasksByVan("DV2607A");
+        expect(t.owners.find((o) => o.name === "张三")!.confirmedAt).toBeNull();
+        expect(t.status).toBe("done");
       });
     });
 
@@ -232,8 +275,8 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
         const id = list[0].id;
         // 编辑：完成 + 补送达日期
         await updateTask(id, { status: "done", doneAt: "2026-08-29" }, "张三");
-        // 签收
-        await confirmTask(id, "张三");
+        // 签收（逐人）
+        await confirmTask(id, "张三", "张三");
         // 结转另一件滞留件
         await ctx
           .db()

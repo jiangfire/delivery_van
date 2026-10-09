@@ -146,8 +146,14 @@ export const taskReorderInput = z.object({
   actor: actorField,
 });
 
-/** 签收制（v2.0 WP3）：done 后由提出人一次点击签收，actor 必填且必须是成员 */
-export const taskConfirmInput = z.object({ taskId: idField, actor: memberTag });
+/**
+ * 签收制（v2.6）：逐人签收，actor 必填且必须是成员，owner = 被签收的那份交付的负责人。
+ */
+export const taskConfirmInput = z.object({
+  taskId: idField,
+  owner: memberTag,
+  actor: memberTag,
+});
 
 /**
  * 逐人完成（v2.6）：done=true 打勾（doneAt 缺省今天，可补录），false 取消

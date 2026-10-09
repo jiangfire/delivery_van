@@ -168,14 +168,19 @@ export default function BoardPage() {
   const { mutate: confirmTask } = confirmM;
   const { mutate: removeMember } = removeMemberM;
 
-  /* ── 签收：done 且有提出人且未签收 → 待签收徽标，一次点击 ── */
+  /* ── 签收（v2.6 逐人）：done 且有提出人且有人未签收 → 逐个签收 ──
+     T9 会把入口改到负责人 chip 上，这里先取第一个「已交付未签收」的负责人。 */
   const onConfirm = useCallback(
     (d: TaskRow) => {
       if (!actor) {
         toast.error("请先在页头选择「我是谁」再签收");
         return;
       }
-      confirmTask({ taskId: d.id, actor });
+      const pending = d.owners.find(
+        (o) => o.doneAt !== null && o.confirmedAt === null,
+      );
+      if (!pending) return;
+      confirmTask({ taskId: d.id, owner: pending.name, actor });
     },
     [actor, confirmTask],
   );
