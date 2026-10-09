@@ -49,7 +49,7 @@ export const memberTag = z
 /**
  * 负责人 + 该人在这个需求上的点数。`points` **必填**（不给默认值）：勾选负责人
  * 不等于设置完成——一个需求多个负责人参加时，这些人都要各自设置自己的点数
- * （见 docs/doing/负责人点数制设计方案.md D5；服务端不接受"有负责人但没有点数"的行）。
+ * （见 docs/archived/负责人点数制设计方案.md D5；服务端不接受"有负责人但没有点数"的行）。
  */
 export const ownerAllocInput = z.object({
   name: memberTag,

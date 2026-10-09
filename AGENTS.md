@@ -6,7 +6,7 @@
 
 delivery_van 是一个**周度发车管理工具**：团队每周五发一班"厢式快递车"，任务是快件，周五验收只看"这班的件送没送到"；没送完的滞留件跟下一班车走。机制设计见 `docs/周度发车机制设计方案.md`。
 
-- 当前版本 **v2.4.0**，主版本线代号 `STEINS;GATE`（v2.x.y 全系通用，谱系见 `README.md`）：v2.4 MCP 接入（`/mcp` 端点，只读工具默认开放、写工具须 `MCP_WRITES=on`）、v2.3 统计面板统一与成员删除、v2.2 表格体验与多数据库、v2.0 博弈机制（签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章，随 v2.2.0 合并首发）。**Phase 2「议价台 + 预测投票」纸面运行中（2026-09-01 启动，零开发零发版，手册见 `docs/doing/v2.1-Phase2-议价台与预测投票纸面运行手册.md`）**。
+- 当前版本 **v2.5.0**，主版本线代号 `STEINS;GATE`（v2.x.y 全系通用，谱系见 `README.md`）：v2.5 每人点数制（点数归属到人，任务点数 = 各负责人点数之和；件级档位 `tasks.size` 废弃）、v2.4 MCP 接入（`/mcp` 端点，只读工具默认开放、写工具须 `MCP_WRITES=on`）、v2.3 统计面板统一与成员删除、v2.2 表格体验与多数据库、v2.0 博弈机制（签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章，随 v2.2.0 合并首发）。**Phase 2「议价台 + 预测投票」纸面运行中（2026-09-01 启动，零开发零发版，手册见 `docs/doing/v2.1-Phase2-议价台与预测投票纸面运行手册.md`）**。
 - 单页应用：`src/pages/BoardPage.tsx` 承载全部功能——班次切换、AG Grid 快件表（行内编辑）、统计条、统一统计面板（负责人 / 提出人 / 稀有度 / 结转原因 / 来源五维度页签，负责人默认，设计见 `docs/archived/统计面板统一设计方案.md`）。
 - **快件即一切**：工作条目只有 `tasks` 表一种，直接携带稀有度与提出人。旧「任务大厅」（`pool_items` 表）已废弃：表结构保留但不读写。
 - 无账号无鉴权，成员用名字标签。成员删除是**有守卫的硬删**：零历史成员可删（删除与审计同事务），名字出现在任何快件上（负责人 / 提出人 / 签收人，均无外键的纯文本引用）即拒绝（方案见 `docs/archived/成员删除功能设计方案.md`）。
@@ -15,8 +15,8 @@ delivery_van 是一个**周度发车管理工具**：团队每周五发一班"�
 ### 核心业务规则（改动代码时不得破坏）
 
 - **班次编码**：`DV` + 2 位年 + 2 位月 + 字母序号（如 `DV2607A`）；「发新车」手动创建，不绑定周五；锚定创建时所在日历月，**每个自然月从 A 重新计数**，同月 A–Z，到 Z 后跨月回 A。规则在 `contracts/vans.ts`。
-- **半天点数制**：任务体量 1~10 整数点（1 点 = 半天），接口层 zod 强制；成员运力同口径（默认 10 点/周、上限 14 点），仅记录不校验。
-- **多人负责**：一个任务多人负责（勾选式多选编辑器，可即时新增成员标签）。
+- **每人点数制（v2.5）**：点数归属到**人**——`task_owners.points`（0~10 整数，1 点 = 半天；0 = 挂名不占运力）是唯一来源，**任务点数 = 各负责人点数之和**（`contracts/points.ts` 的 `taskPointsOf`），未指派的件计 0 点；件级档位 `tasks.size` 已废弃（列保留、不读不写）。成员运力同口径（默认 10 点/周、上限 14 点），仅记录不校验。
+- **多人负责**：一个任务多人负责（勾选式多选编辑器，可即时新增成员标签），**每个人各自持有自己的那份点数**——勾选负责人 ≠ 设置完成：每人必须显式填点数（入参 `points` 必填、重名拦截），没填满不许确定；没填满而关闭（点外部 / Esc）会明确提示「已放弃修改」，不静默回滚。
 - **送达二值化**：没有"完成 80%"；打勾自动记送达日期，取消自动清空，日期可手工补录。
 - **滞留结转**：只能转**紧邻的下一班**（服务端 `carryTargetCode` 校验：已存在则必须转已存在的最近一班，否则按当前日期推导，目标班不存在自动创建）；同一事务把源班任务标 `carried`（四态 todo/doing/done/carried 仅由结转写入）；同一对班次幂等；`carryCount >= 2` 仅提示不拦截；**结转归档只读**——班次存在 carried 任务则整班不可增/改/删（`isVanArchived`）。
 - **稀有度/提出人**：五级 `n/r/sr/ssr/ur`（显示 N/R/SR/SSR/UR）与提出人只是标记，系统不做任何校验或上车拦截。
@@ -25,7 +25,7 @@ delivery_van 是一个**周度发车管理工具**：团队每周五发一班"�
 - **快件来源**：三枚举 `customer/platform/exploration`，默认 customer，仅供统计不拦截。
 - **结转原因**：五枚举，默认空=未分类；滞留原因瀑布只统计本班 status=carried 的件（与滞留率同口径）。**Phase 2 纸面约定（改代码/清理数据不得破坏）**：让位件结转选 `priority` 且 note 以 `swap：` 开头——Gate 2 工具化时凭此前缀回溯补录。
 - **链式审计日志**：`audit_log` 以 SHA256 hash 链记录一切写操作（读不记）。**业务写与审计追加同一事务**，统一走 `api/queries/tx.ts` 的 `runTx` + `api/queries/audit.ts` 的 `appendAudit`（事务回调内 await 调用）；**铁律：事务 body 内禁止任何真实 I/O 的 await**（sqlite 手写 BEGIN IMMEDIATE 包裹 async body，better-sqlite3 驱动事务回调必须同步，传 async 会在首个 await 提前 COMMIT）；**序列化格式锁定**（`serializeAudit`），改格式 = 旧链全量失效，必须同步改锁定单测；自由文本以 `'(text)'` 占位进链。actor 是软身份（页头「我是谁」单选），缺省 `'(unknown)'`。
-- **昨日天气**：建议装载上限 = 上一班 done 点数合计，无历史班返回 null，只提示不拦截。
+- **昨日天气**：建议装载上限 = 上一班 done 件的点数合计（件点数 = 各负责人点数之和），无历史班返回 null，只提示不拦截。
 - **徽章**：🚚 整班准点、📦 送达连击，实时推导不落库（`badgesOf` 纯函数）。
 - **口径连续性**：滞留率/完成率/三方占比/通胀沿用 done/carried 定义；记分卡「送达」用签收口径（`isConfirmed`）；昨日天气与徽章用 done 口径——一处函数一个口径，禁止混用。
 
@@ -43,7 +43,7 @@ delivery_van 是一个**周度发车管理工具**：团队每周五发一班"�
 
 ```
 api/          Hono + tRPC 薄后端：boot.ts（入口，含 /mcp 挂载）/ schemas.ts（入参 zod，tRPC 与 MCP 共享）/ vanRouter.ts（转发）/ ensureSchema*.ts（幂等建表）/ queries/（业务与 SQL：van.ts、audit.ts、tx.ts、dialect.ts 方言层）/ mcp/（MCP 适配层：server.ts + caller.ts + tools/）
-contracts/    前后端共享：vans.ts（班次编码）、enums.ts（枚举）——会被前端打包，勿 import 服务端依赖
+contracts/    前后端共享：vans.ts（班次编码）、enums.ts（枚举）、points.ts（每人点数与 taskPointsOf）——会被前端打包，勿 import 服务端依赖
 db/           三方言 Drizzle 表定义 schema.ts / schema.pg.ts / schema.mysql.ts + 种子脚本
 src/          React 前端：pages/BoardPage.tsx（看板页）、components/（单元格编辑器 + 统计组件）、lib/、providers/
 e2e/          Playwright E2E（board / bugs / v2 三套 + helpers.ts + pre-test.mjs）
@@ -109,7 +109,7 @@ npm run db:seed    # 写入示例成员（会先自动建表）；db:seed:demo �
 
 - 三方言一份业务代码：方言差异全部收敛在 `api/queries/dialect.ts`；启动时自动幂等建表（`api/ensureSchema*.ts` 按方言分发），无需手动迁移。
 - **新增列/表必须同步改三份 schema + ensureSchema**：`db/schema.ts` / `schema.pg.ts` / `schema.mysql.ts` 与 `api/ensureSchema.ts`（+ `.pg/.mysql` 建表 SQL），防漂移单测 `api/schemaDrift.test.ts` 兜底；sqlite 旧库补列用 `try ALTER TABLE ... catch 忽略` 的幂等模式。
-- 无法幂等的值域迁移（仅 sqlite 有历史库）用 `PRAGMA user_version` 门控只执行一次；pg/mysql 对应 `_dv_meta` 版本表。
+- 无法幂等的值域迁移（仅 sqlite 有历史库）用 `PRAGMA user_version` 门控只执行一次；pg/mysql 对应 `_dv_meta` 版本表。**现有门控**：`1` = 半天点数制（旧三档 ×2）、`2` = 存量 done 回填签收、`3` = v2.5 把旧件级档位按均分回填到各负责人（`splitLegacyPoints`，余数按名字拼音序）——下一个新迁移从 `4` 起。
 - drizzle-kit 脚本（`db:generate/migrate/push`）存在但不是主流程，`drizzle.config.ts` 只覆盖 sqlite 方言。
 
 ## 部署
@@ -121,4 +121,4 @@ npm run db:seed    # 写入示例成员（会先自动建表）；db:seed:demo �
 - 应用**没有任何鉴权**，所有 tRPC 过程都是 public；不要暴露到公网，也不要在接口中存放敏感数据。
 - 请求体上限 50MB（`hono/body-limit`）。
 - 所有 SQL 走 Drizzle 参数化查询，无拼接 SQL；保持这一点。
-- 班次编码、档位等输入在服务端 zod 层强制校验，不要只在前端校验。
+- 班次编码、点数等输入在服务端 zod 层强制校验，不要只在前端校验。
