@@ -62,6 +62,10 @@ export function StatsPanel({
         记分卡「送达」为签收口径，滞留率/完成率仍为 v1 口径（基线连续）。 点数自
         v2.5 起归属到人（任务点数 = 各负责人点数之和，未指派的件不计点数）；
         历史快件按旧档位均分回填，因此历史周的个人点数与改造前不可比。
+        <br />
+        自 v2.6 起完成与签收拆到人：<strong>部分完成的份额不计入任何送达口径</strong>
+        ——完成率/滞留率/昨日天气/徽章仍按件（整件 status=done 才算），
+        个人「已交付 x/y 点」只是留痕，不代表本周送达。
       </p>
     </section>
   );
@@ -146,7 +150,8 @@ function OwnerView({
                   {m.assigned}/{m.capacity} 点{overloaded && "（超载）"}
                 </span>
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
-                  {m.taskCount} 件 · 送达 {m.done} · 滞留 {m.carriedIn}
+                  {m.taskCount} 件 · 送达 {m.done} · 滞留 {m.carriedIn} · 已交付{" "}
+                  {m.deliveredPoints}/{m.assigned} 点
                 </span>
                 <button
                   className="btn btn-danger shrink-0 px-2 py-0.5 text-xs"

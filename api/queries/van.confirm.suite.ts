@@ -256,6 +256,33 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
         ]);
         expect(taskPointsOf(copy.owners)).toBe(5);
       });
+
+      it("部分完成件结转：已完成份额保持完成/已签收，未完成份额为空（D3）", async () => {
+        await ctx.db().insert(S.members).values({ name: "李四", capacity: 10 });
+        const id = await seedTwoOwners("张三"); // 张三 3 / 李四 2
+        await setOwnerDone(id, "张三", true, "2026-08-27");
+        await confirmTask(id, "张三", "张三");
+
+        await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
+
+        const [copy] = await listTasksByVan("DV2607B");
+        const zhang = copy.owners.find((o) => o.name === "张三")!;
+        const li = copy.owners.find((o) => o.name === "李四")!;
+        // 已交付已签收的份额随件转运，不重做
+        expect(zhang.doneAt).toBe("2026-08-27");
+        expect(zhang.confirmedAt).toBe(todayStr());
+        expect(zhang.confirmedBy).toBe("张三");
+        // 未完成份额仍为空
+        expect(li.doneAt).toBeNull();
+        expect(li.confirmedAt).toBeNull();
+        // 装载仍是承诺量（含已交付份额）
+        expect(taskPointsOf(copy.owners)).toBe(5);
+        // 源班 owner 行原样保留（历史事实）
+        const [src] = await listTasksByVan("DV2607A");
+        expect(src.owners.find((o) => o.name === "张三")!.doneAt).toBe(
+          "2026-08-27",
+        );
+      });
     });
 
     describe("审计接线（WP2：写操作出口全部进链）", () => {
@@ -414,6 +441,30 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
         expect(assigned["李四"]).toBe(2);
         // 整车装载 = 各负责人点数之和 = 这件快件的 5 点
         expect(s.loadPoints).toBe(5);
+      });
+
+      it("负责人页签补「已交付 x / y 点」：只算该人已完成的份额（v2.6/D5）", async () => {
+        await ctx.db().insert(S.vans).values({ code: "DV2607B" });
+        await ctx.db().insert(S.members).values({ name: "李四", capacity: 10 });
+        const id = await insertReturningId(ctx.db(), S.tasks, {
+          vanCode: "DV2607B",
+          title: "多人件",
+          status: "todo",
+        });
+        await ctx
+          .db()
+          .insert(S.taskOwners)
+          .values([
+            { taskId: id, ownerName: "张三", points: 3, doneAt: "2026-08-28" },
+            { taskId: id, ownerName: "李四", points: 2 },
+          ]);
+
+        const s = await weeklyStats("DV2607B");
+        const byName = Object.fromEntries(s.members.map((m) => [m.name, m]));
+        expect(byName["张三"].deliveredPoints).toBe(3);
+        expect(byName["张三"].assigned).toBe(3);
+        expect(byName["李四"].deliveredPoints).toBe(0);
+        expect(byName["李四"].assigned).toBe(2);
       });
 
       it("空库班次：指纹 null、昨日天气 null、三方零桶", async () => {

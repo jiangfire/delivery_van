@@ -1263,12 +1263,16 @@ export async function carryOver(
         sortOrder: nextSort++,
       });
       copies.push({ src: t, newId });
-      // 结转负责人：各自点数**随件搬运**（v2.5 每人点数制——点数属于人，不属于车）
+      // 结转负责人：各自点数与逐人完成/签收记录**随件搬运**（D3）——已完成并签收的
+      // 份额在新副本里保持，不重做；未完成份额保持为空。
       const owners = await qAll(
         tx
           .select({
             ownerName: taskOwners.ownerName,
             points: taskOwners.points,
+            doneAt: taskOwners.doneAt,
+            confirmedAt: taskOwners.confirmedAt,
+            confirmedBy: taskOwners.confirmedBy,
           })
           .from(taskOwners)
           .where(eq(taskOwners.taskId, t.id)),
@@ -1280,9 +1284,14 @@ export async function carryOver(
               taskId: newId,
               ownerName: o.ownerName,
               points: o.points,
+              doneAt: o.doneAt,
+              confirmedAt: o.confirmedAt,
+              confirmedBy: o.confirmedBy,
             })),
           ),
         );
+        // 叶子搬完后重算件级聚合（单一重算入口）：部分完成的副本 → doing
+        await recomputeTaskAggregate(tx, newId);
       }
     }
     // 源班次的快件标记为 🔁结转，旧车数据同步可见（四态：未开始/进行中/完成/结转）
@@ -1463,13 +1472,17 @@ export async function weeklyStats(van: string) {
   const memberRows = await listMembers();
   const byMember = memberRows.map((m) => {
     const mine = rows.filter((t) => t.owners.some((o) => o.name === m.name));
+    const ownPoints = (t: (typeof mine)[number]) =>
+      t.owners.find((o) => o.name === m.name)?.points ?? 0;
     return {
       name: m.name,
       capacity: m.capacity,
-      assigned: mine.reduce(
-        (s, t) => s + (t.owners.find((o) => o.name === m.name)?.points ?? 0),
-        0,
-      ),
+      assigned: mine.reduce((s, t) => s + ownPoints(t), 0),
+      /** 本人已交付的份额点数（v2.6）：只作留痕，不进任何送达口径（D5） */
+      deliveredPoints: mine.reduce((s, t) => {
+        const own = t.owners.find((o) => o.name === m.name);
+        return s + (own?.doneAt != null ? own.points : 0);
+      }, 0),
       taskCount: mine.length,
       done: mine.filter((t) => t.status === "done").length,
       carriedIn: mine.filter((t) => t.carriedFrom !== null).length,
