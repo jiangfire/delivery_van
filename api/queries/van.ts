@@ -800,10 +800,7 @@ export async function updateTask(
     ) {
       // 送达日期手工补录/清除（当前已完成）
       leafDoneAt = patch.doneAt;
-    } else if (
-      patch.status !== undefined &&
-      current.status === "done"
-    ) {
+    } else if (patch.status !== undefined && current.status === "done") {
       // 取消完成：清全体完成日期并作废全体签收（D6/D8）
       leafDoneAt = null;
     }
@@ -1009,17 +1006,12 @@ async function recomputeTaskAggregate(tx: AppDb, taskId: number) {
       .where(eq(taskOwners.taskId, taskId)),
   );
   const [task] = await qAll(
-    tx
-      .select({ status: tasks.status })
-      .from(tasks)
-      .where(eq(tasks.id, taskId)),
+    tx.select({ status: tasks.status }).from(tasks).where(eq(tasks.id, taskId)),
   );
   if (!task) return;
   const agg = aggregateOf(leaves, task.status);
   if (!agg) return; // D12：无 owner 的件不推导
-  await qRun(
-    tx.update(tasks).set(agg).where(eq(tasks.id, taskId)),
-  );
+  await qRun(tx.update(tasks).set(agg).where(eq(tasks.id, taskId)));
 }
 
 /**
@@ -1039,10 +1031,7 @@ async function applyJudgedDone(
         .select()
         .from(taskOwners)
         .where(
-          and(
-            eq(taskOwners.taskId, taskId),
-            eq(taskOwners.ownerName, name),
-          ),
+          and(eq(taskOwners.taskId, taskId), eq(taskOwners.ownerName, name)),
         ),
     );
     if (!row) continue;
@@ -1063,10 +1052,7 @@ async function applyJudgedDone(
         .update(taskOwners)
         .set(next)
         .where(
-          and(
-            eq(taskOwners.taskId, taskId),
-            eq(taskOwners.ownerName, name),
-          ),
+          and(eq(taskOwners.taskId, taskId), eq(taskOwners.ownerName, name)),
         ),
     );
     entries.push({
@@ -1094,7 +1080,10 @@ export async function setOwnerDone(
   const db = getDb();
   const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
   if (!task)
-    throw new TRPCError({ code: "NOT_FOUND", message: `任务 ${taskId} 不存在` });
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: `任务 ${taskId} 不存在`,
+    });
   if (await isVanArchived(task.vanCode)) {
     throw new TRPCError({
       code: "BAD_REQUEST",
@@ -1105,10 +1094,7 @@ export async function setOwnerDone(
     .select()
     .from(taskOwners)
     .where(
-      and(
-        eq(taskOwners.taskId, taskId),
-        eq(taskOwners.ownerName, ownerName),
-      ),
+      and(eq(taskOwners.taskId, taskId), eq(taskOwners.ownerName, ownerName)),
     );
   if (!row) {
     throw new TRPCError({
@@ -1407,10 +1393,7 @@ export async function confirmTask(
     .select()
     .from(taskOwners)
     .where(
-      and(
-        eq(taskOwners.taskId, taskId),
-        eq(taskOwners.ownerName, ownerName),
-      ),
+      and(eq(taskOwners.taskId, taskId), eq(taskOwners.ownerName, ownerName)),
     );
   if (!row) {
     throw new TRPCError({

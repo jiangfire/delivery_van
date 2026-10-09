@@ -306,9 +306,7 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
           status: "todo",
         });
         await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
-        await expect(setOwnerDone(id, "李子烨", true)).rejects.toThrow(
-          "归档",
-        );
+        await expect(setOwnerDone(id, "李子烨", true)).rejects.toThrow("归档");
       });
 
       it("负责人不在件上报 NOT_FOUND", async () => {

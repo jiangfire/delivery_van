@@ -18,7 +18,12 @@ vi.mock("../../queries/connection", () => ({
 }));
 
 import { ensureSchema } from "../../ensureSchema";
-import { addMember, addTask, dispatchVan, listTasksByVan } from "../../queries/van";
+import {
+  addMember,
+  addTask,
+  dispatchVan,
+  listTasksByVan,
+} from "../../queries/van";
 import { writeTools } from "./write";
 import { createMcpHttpHandler, writesEnabled } from "../server";
 

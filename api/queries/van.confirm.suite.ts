@@ -40,10 +40,13 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
         status: "todo",
         requester: requester ?? null,
       });
-      await ctx.db().insert(S.taskOwners).values([
-        { taskId: id, ownerName: "张三", points: 3 },
-        { taskId: id, ownerName: "李四", points: 2 },
-      ]);
+      await ctx
+        .db()
+        .insert(S.taskOwners)
+        .values([
+          { taskId: id, ownerName: "张三", points: 3 },
+          { taskId: id, ownerName: "李四", points: 2 },
+        ]);
       return id;
     }
 
@@ -86,7 +89,9 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
 
       it("未交付的份额不可签收", async () => {
         const id = await seedTwoOwners("张三");
-        await expect(confirmTask(id, "张三", "张三")).rejects.toThrow(TRPCError);
+        await expect(confirmTask(id, "张三", "张三")).rejects.toThrow(
+          TRPCError,
+        );
         await expect(confirmTask(id, "张三", "张三")).rejects.toThrow(
           "尚未交付",
         );
@@ -103,7 +108,9 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
         });
         await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
 
-        await expect(confirmTask(id, "张三", "张三")).rejects.toThrow(TRPCError);
+        await expect(confirmTask(id, "张三", "张三")).rejects.toThrow(
+          TRPCError,
+        );
         await expect(confirmTask(id, "张三", "张三")).rejects.toThrow("归档");
       });
 
@@ -125,9 +132,9 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
         await confirmTask(id, "张三", "张三");
         const list = await confirmTask(id, "张三", "李四"); // 再签不覆盖
 
-        expect(
-          list[0].owners.find((o) => o.name === "张三")!.confirmedBy,
-        ).toBe("张三");
+        expect(list[0].owners.find((o) => o.name === "张三")!.confirmedBy).toBe(
+          "张三",
+        );
       });
 
       it("无提出人的自驱件不写库直接视同签收：confirm 成功且 confirmed_* 保持 NULL", async () => {
