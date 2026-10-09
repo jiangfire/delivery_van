@@ -18,7 +18,7 @@ vi.mock("../../queries/connection", () => ({
 }));
 
 import { ensureSchema } from "../../ensureSchema";
-import { addMember, addTask, dispatchVan } from "../../queries/van";
+import { addMember, addTask, dispatchVan, listTasksByVan } from "../../queries/van";
 import { writeTools } from "./write";
 import { createMcpHttpHandler, writesEnabled } from "../server";
 
@@ -168,6 +168,38 @@ describe("写工具入参纪律", () => {
 
   it("全部写工具标 readOnlyHint=false", () => {
     for (const t of writeTools) expect(t.annotations.readOnlyHint).toBe(false);
+  });
+
+  it("tasks_confirm 需要 owner 参数（v2.6 逐人签收）", () => {
+    const def = writeTools.find((t) => t.name === "tasks_confirm")!;
+    expect("owner" in def.inputSchema.shape).toBe(true);
+  });
+});
+
+describe("tasks_set_owner_done 经 MCP 执行（v2.6）", () => {
+  it("逐人打勾后件级聚合同步（走 caller，未绕业务规则）", async () => {
+    await dispatchVan(new Date("2026-09-01T00:00:00Z"), "张三");
+    await addMember("李四", 10, "张三");
+    const list = await addTask({
+      van: VAN,
+      title: "甲",
+      requester: "张三",
+      owners: [{ name: "李四", points: 3 }],
+    });
+    const id = list[0].id;
+
+    await tool("tasks_set_owner_done").run({
+      taskId: id,
+      owner: "李四",
+      done: true,
+      doneAt: "2026-09-02",
+      actor: "张三",
+    });
+
+    const [after] = await listTasksByVan(VAN);
+    expect(after.status).toBe("done");
+    expect(after.doneAt).toBe("2026-09-02");
+    expect(after.owners[0].doneAt).toBe("2026-09-02");
   });
 });
 

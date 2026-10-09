@@ -7,10 +7,11 @@
  *   tasks_update    → van.tasks.update    tasks_remove    → van.tasks.remove
  *   tasks_reorder   → van.tasks.reorder   members_add     → van.members.add
  *   members_remove  → van.members.remove  members_set_capacity → van.members.setCapacity
+ *   tasks_set_owner_done → van.tasks.setOwnerDone
  *
  * 两条纪律：
  * 1. **actor 必填**：软身份，落链式审计日志（AGENTS.md「写操作一律带 actor」）。
- *    全部 10 个写工具的 schema 里都有**必填** actor——`write.test.ts` 对
+ *    全部 11 个写工具的 schema 里都有**必填** actor——`write.test.ts` 对
  *    「actor 字段存在」与「actor 非 optional」各有一条断言，勿用「空对象被拒」
  *    之类的代理条件代替（那只会证明存在别的必填字段）。
  * 2. **description 必须明写不可逆后果**：模型读的是 description，不是
@@ -29,6 +30,7 @@ import {
   taskConfirmInput,
   taskRemoveInput,
   taskReorderInput,
+  taskSetOwnerDoneInput,
   taskUpdateInput,
 } from "../../schemas";
 
@@ -99,6 +101,22 @@ export const writeTools = [
     annotations: { readOnlyHint: false, destructiveHint: false },
     async run({ taskId, owner, actor }) {
       return createCaller().van.tasks.confirm({ taskId, owner, actor });
+    },
+  }),
+
+  defineWriteTool({
+    name: "tasks_set_owner_done",
+    title: "Mark one owner's share as delivered or not",
+    description:
+      "Set the personal delivery state of ONE owner on a package (v2.6 per-person completion). With `done: true` the owner's done date is set (defaults to today; pass `doneAt` as YYYY-MM-DD to backdate). With `done: false` that owner's done date is cleared AND that owner's signature is voided (other owners' signatures are kept). Owners with 0 points can be marked too, but they are ignored when deciding whether the whole package is done. The van must not be archived. The package-level status/done date/signature are recomputed automatically. Idempotent: repeating a no-op call writes nothing. `actor` is required and is recorded in the audit log.",
+    inputSchema: taskSetOwnerDoneInput.extend({ actor: actorRequired }),
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+    async run(input) {
+      return createCaller().van.tasks.setOwnerDone(input);
     },
   }),
 
