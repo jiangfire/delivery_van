@@ -432,14 +432,24 @@ export async function removeMember(name: string, actor?: string) {
     .select({ id: tasks.id })
     .from(tasks)
     .where(eq(tasks.requester, name));
-  const confirmed = await db
+  // 签收人可能出现在两处：件级 confirmed_by（全体签完的汇总）与**逐人签收的叶子**
+  // confirmed_by（v2.6：部分签收时件级还是 NULL）——两处都要拦，否则会留悬空签收人。
+  const confirmedTasks = await db
     .select({ id: tasks.id })
     .from(tasks)
     .where(eq(tasks.confirmedBy, name));
-  if (owned.length + requested.length + confirmed.length > 0) {
+  const confirmedShares = await db
+    .select({ taskId: taskOwners.taskId })
+    .from(taskOwners)
+    .where(eq(taskOwners.confirmedBy, name));
+  const signCount = new Set([
+    ...confirmedTasks.map((r) => r.id),
+    ...confirmedShares.map((r) => r.taskId),
+  ]).size;
+  if (owned.length + requested.length + signCount > 0) {
     throw new TRPCError({
       code: "CONFLICT",
-      message: `成员「${name}」已有快件记录（负责 ${owned.length} 件 / 提出 ${requested.length} 件 / 签收 ${confirmed.length} 件），不可删除`,
+      message: `成员「${name}」已有快件记录（负责 ${owned.length} 件 / 提出 ${requested.length} 件 / 签收 ${signCount} 件），不可删除`,
     });
   }
 
@@ -907,8 +917,12 @@ export async function updateTask(
         leafEntries,
       );
     }
-    // 叶子有变动才重算件级聚合（单一重算入口，§3.3）
-    if (hasOwners && (owners !== undefined || shortcut)) {
+    // 叶子有变动、或手动改了件级状态，都重算件级聚合（单一重算入口，§3.3）：
+    // 手动把「有已交付份额」的件改回未开始，会被聚合收回 doing，保证不变量
+    if (
+      hasOwners &&
+      (owners !== undefined || shortcut || patch.status !== undefined)
+    ) {
       await recomputeTaskAggregate(tx, id);
     }
     await appendAudit(tx, actor, [...entries, ...leafEntries]);

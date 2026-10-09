@@ -115,6 +115,26 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
         await expect(removeMember("李四")).rejects.toThrow("不可删除");
       });
 
+      it("部分签收中当签收人的成员不可删除（v2.6 逐人签收叶子）", async () => {
+        await addMember("张三", 10); // 提出人兼负责人
+        await addMember("李四", 10); // 签收人（非负责人）
+        await addTask({
+          van: "DV2607A",
+          title: "甲",
+          requester: "张三",
+          owners: [
+            { name: "张三", points: 3 },
+            { name: "王五", points: 2 },
+          ],
+        });
+        const [t] = await listTasksByVan("DV2607A");
+        // 只交付并签收其中一人 → 件级 confirmed_* 仍为 NULL，签收人名只在叶子上
+        await setOwnerDone(t.id, "张三", true, "2026-08-28");
+        await confirmTask(t.id, "张三", "李四");
+        expect((await listTasksByVan("DV2607A"))[0].confirmedAt).toBeNull();
+        await expect(removeMember("李四")).rejects.toThrow("不可删除");
+      });
+
       it("删除不存在的成员报 NOT_FOUND", async () => {
         await expect(removeMember("查无此人")).rejects.toThrow("不存在");
       });
@@ -394,6 +414,16 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
         expect(list[0].owners.every((o) => o.doneAt === null)).toBe(true);
         expect(list[0].status).toBe("doing"); // 不自动回落（D9）
         expect(list[0].doneAt).toBeNull();
+      });
+
+      it("手动把有已交付份额的件改回未开始，会被聚合收回 doing（不变量）", async () => {
+        const id = await seedMulti();
+        await setOwnerDone(id, "丰智娟", true, "2026-07-18");
+        const list = await updateTask(id, { status: "todo" });
+        expect(list[0].status).toBe("doing");
+        expect(list[0].owners.find((o) => o.name === "丰智娟")!.doneAt).toBe(
+          "2026-07-18",
+        );
       });
 
       it("改点数不抹交付与签收记录（D14 同名保留）", async () => {
