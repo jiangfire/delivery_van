@@ -25,6 +25,15 @@ import { OWNER_POINTS_MAX, type OwnerAlloc } from "@contracts/points";
 /** 某人本周已装（不含当前这件）与周运力上限 */
 export type MemberLoad = { assigned: number; capacity: number };
 
+/** 编辑器草稿：名字 + 点数 + 逐人完成日期（v2.6，null = 未交付） */
+export type OwnerDraft = OwnerAlloc & { doneAt: string | null };
+
+/** 本地当天 YYYY-MM-DD（不用 toISOString——那是 UTC，会偏移） */
+function todayLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export default function MultiSelectEditor({
   initial,
   members,
@@ -34,12 +43,12 @@ export default function MultiSelectEditor({
   onClose,
   pos,
 }: {
-  initial: OwnerAlloc[];
+  initial: OwnerDraft[];
   members: string[];
   loadByMember?: Record<string, MemberLoad>;
   onAddMember?: (name: string) => void;
-  onChange: (v: OwnerAlloc[]) => void;
-  onClose: (finalValue?: OwnerAlloc[]) => void;
+  onChange: (v: OwnerDraft[]) => void;
+  onClose: (finalValue?: OwnerDraft[]) => void;
   pos: { top: number; left: number };
 }) {
   const [selected, setSelected] = useState<string[]>(() =>
@@ -48,6 +57,12 @@ export default function MultiSelectEditor({
   /** 输入框原文："" = 还没设置（空着不算 0 点） */
   const [raw, setRaw] = useState<Record<string, string>>(() =>
     Object.fromEntries(initial.map((o) => [o.name, String(o.points)])),
+  );
+  /** 逐人完成日期：有值 = 已交付（空字符串不存在，取消勾选即删除） */
+  const [doneMap, setDoneMap] = useState<Record<string, string>>(() =>
+    Object.fromEntries(
+      initial.filter((o) => o.doneAt).map((o) => [o.name, o.doneAt!]),
+    ),
   );
   const [newName, setNewName] = useState("");
   const panelRef = useRef<HTMLDivElement>(null);
@@ -80,9 +95,13 @@ export default function MultiSelectEditor({
   })();
 
   const alloc = useCallback(
-    (): OwnerAlloc[] =>
-      selected.map((name) => ({ name, points: pointsOf(name) ?? 0 })),
-    [selected, pointsOf],
+    (): OwnerDraft[] =>
+      selected.map((name) => ({
+        name,
+        points: pointsOf(name) ?? 0,
+        doneAt: doneMap[name] ?? null,
+      })),
+    [selected, pointsOf, doneMap],
   );
 
   // 只有全部设置完毕才向上同步（没设置完的值不上屏、也不落库）
@@ -136,11 +155,42 @@ export default function MultiSelectEditor({
     setSelected((prev) =>
       prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
     );
+    // 取消勾选负责人时一并清掉他的完成状态（重新勾上视为未交付）
+    setDoneMap((prev) => {
+      if (!(name in prev)) return prev;
+      const next = { ...prev };
+      delete next[name];
+      return next;
+    });
   }, []);
 
   const clearAll = useCallback(() => {
     setSelected([]);
     setRaw({});
+    setDoneMap({});
+  }, []);
+
+  /** 勾选完成：默认今天（可手改）；取消勾选 = 未交付 */
+  const toggleDone = useCallback((name: string) => {
+    setDoneMap((prev) => {
+      if (name in prev) {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      }
+      return { ...prev, [name]: todayLocal() };
+    });
+  }, []);
+
+  const setDoneDate = useCallback((name: string, v: string) => {
+    setDoneMap((prev) => {
+      if (!v) {
+        const next = { ...prev };
+        delete next[name];
+        return next;
+      }
+      return { ...prev, [name]: v };
+    });
   }, []);
 
   /** 只收数字，最多两位（挡住 150 这类越界输入） */
@@ -183,7 +233,7 @@ export default function MultiSelectEditor({
         position: "fixed",
         top: pos.top,
         left: pos.left,
-        width: 360,
+        width: 430,
         background: "rgba(255,255,255,0.97)",
         border: "1px solid rgba(0,0,0,0.1)",
         borderRadius: 12,
@@ -206,7 +256,7 @@ export default function MultiSelectEditor({
           color: "#64748b",
         }}
       >
-        <span>勾选负责人，并给每个人设置自己的点数</span>
+        <span>勾选负责人，给每个人设点数与完成日期</span>
         {selected.length > 0 && (
           <button
             style={{
@@ -336,6 +386,48 @@ export default function MultiSelectEditor({
                   </span>
                 )}
               </span>
+              {/* 逐人完成（v2.6）：勾 = 已交付并记日期（默认今天，可手改）；0 点的人也能勾 */}
+              {checked && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 4,
+                    flexShrink: 0,
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    aria-label={`${m} 已完成`}
+                    checked={doneMap[m] !== undefined}
+                    onChange={() => toggleDone(m)}
+                    title="已完成（0 点的人也能勾，不参与整件闭环判定）"
+                    style={{
+                      accentColor: "#16a34a",
+                      width: 14,
+                      height: 14,
+                      cursor: "pointer",
+                    }}
+                  />
+                  {doneMap[m] !== undefined && (
+                    <input
+                      type="date"
+                      aria-label={`${m} 完成日期`}
+                      value={doneMap[m]}
+                      onChange={(e) => setDoneDate(m, e.target.value)}
+                      style={{
+                        width: 120,
+                        padding: "1px 3px",
+                        fontSize: 11,
+                        border: "1px solid rgba(0,0,0,0.15)",
+                        borderRadius: 6,
+                        outline: "none",
+                        fontVariantNumeric: "tabular-nums",
+                      }}
+                    />
+                  )}
+                </span>
+              )}
             </div>
           );
         })}
@@ -419,6 +511,12 @@ export default function MultiSelectEditor({
           <span style={{ color: "#0f172a", fontWeight: 600 }}>
             合计 {total} 点
           </span>
+          {selected.length > 0 && (
+            <span style={{ color: "#0f172a" }}>
+              {selected.filter((n) => doneMap[n] !== undefined).length}/
+              {selected.length} 人已交
+            </span>
+          )}
           {unset.length > 0 && (
             <span style={{ color: "#b45309" }}>
               {unset.length} 人还没设置点数

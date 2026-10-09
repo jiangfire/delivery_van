@@ -16,7 +16,7 @@ type TaskColDef = ColDef<TaskRow> & { editField?: string };
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { carryTargetCode } from "@contracts/vans";
-import { taskPointsOf, type OwnerAlloc } from "@contracts/points";
+import { taskPointsOf } from "@contracts/points";
 import {
   CARRY_REASON_LABELS,
   SOURCE_LABELS,
@@ -32,6 +32,7 @@ import {
 } from "@/lib/display";
 import type { TaskWithOwners } from "../../api/queries/van";
 import MultiSelectCellEditor from "@/components/MultiSelectCellEditor";
+import type { OwnerDraft } from "@/components/MultiSelectEditor";
 import RarityCellEditor from "@/components/RarityCellEditor";
 import RequesterCellEditor from "@/components/RequesterCellEditor";
 import DateCellEditorComp from "@/components/DateCellEditorComp";
@@ -45,6 +46,12 @@ type Rarity = "n" | "r" | "sr" | "ssr" | "ur";
 type TaskRow = TaskWithOwners;
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** 参与件级闭环判定的负责人（D11）：points>0；一件全是 0 点时退化为全部 owner */
+function judgedOwners(owners: TaskRow["owners"]): TaskRow["owners"] {
+  const positive = owners.filter((o) => o.points > 0);
+  return positive.length > 0 ? positive : owners;
+}
 
 export default function BoardPage() {
   const [van, setVan] = useState<string | null>(null);
@@ -163,24 +170,28 @@ export default function BoardPage() {
     onError,
   });
 
+  const setOwnerDoneM = trpc.van.tasks.setOwnerDone.useMutation({
+    onSuccess: refresh,
+    onError: (e) => {
+      toast.error(e.message);
+      utils.invalidate();
+    },
+  });
+
   const { mutate: removeTask } = removeTaskM;
   const { mutate: addMember } = addMemberM;
   const { mutate: confirmTask } = confirmM;
   const { mutate: removeMember } = removeMemberM;
+  const { mutateAsync: setOwnerDone } = setOwnerDoneM;
 
-  /* ── 签收（v2.6 逐人）：done 且有提出人且有人未签收 → 逐个签收 ──
-     T9 会把入口改到负责人 chip 上，这里先取第一个「已交付未签收」的负责人。 */
+  /* ── 签收（v2.6 逐人）：点负责人 chip 上的「签收」，一次签一个人 ── */
   const onConfirm = useCallback(
-    (d: TaskRow) => {
+    (d: TaskRow, ownerName: string) => {
       if (!actor) {
         toast.error("请先在页头选择「我是谁」再签收");
         return;
       }
-      const pending = d.owners.find(
-        (o) => o.doneAt !== null && o.confirmedAt === null,
-      );
-      if (!pending) return;
-      confirmTask({ taskId: d.id, owner: pending.name, actor });
+      confirmTask({ taskId: d.id, owner: ownerName, actor });
     },
     [actor, confirmTask],
   );
@@ -333,7 +344,7 @@ export default function BoardPage() {
       {
         colId: "_requester",
         headerName: "提出人",
-        width: 128,
+        width: 150,
         editable: !vanReadonly,
         editField: "requester",
         cellEditor: RequesterCellEditor,
@@ -352,28 +363,30 @@ export default function BoardPage() {
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
           if (!d) return null;
-          const pending = d.status === "done" && d.requester && !d.confirmedAt;
+          // 件级汇总徽标：已交付未签收的份数 / 参与判定人数（签收入口在负责人 chip 上）
+          const judged = judgedOwners(d.owners);
+          const unsigned = judged.filter(
+            (o) => o.doneAt !== null && o.confirmedAt === null,
+          ).length;
           return (
-            <span className="flex h-full items-center gap-1">
+            <span className="flex flex-wrap items-center gap-1">
               {d.requester && <span className="text-sm">{d.requester}</span>}
               {d.confirmedAt && (
                 <span title={`已签收：${d.confirmedBy}（${d.confirmedAt}）`}>
                   ✅
                 </span>
               )}
-              {pending && (
-                <button
-                  className="btn btn-glass px-1.5 py-0.5 text-[10px] leading-none"
-                  disabled={vanReadonly || confirmM.isPending}
-                  title={
-                    vanArchived
-                      ? "班次已结转归档，不可签收"
-                      : "提出人签收（一次点击）"
-                  }
-                  onClick={() => onConfirm(d)}
+              {Boolean(d.requester) && unsigned > 0 && (
+                <span
+                  className="rounded px-1.5 py-0.5 text-[10px] leading-none font-medium"
+                  style={{
+                    background: "rgba(245, 158, 11, 0.15)",
+                    color: "#b45309",
+                  }}
+                  title="已交付但尚未全部签收（逐人签收，点负责人 chip 上的「签收」）"
                 >
-                  待签收
-                </button>
+                  待签收 {unsigned}/{judged.length}
+                </span>
               )}
             </span>
           );
@@ -424,7 +437,7 @@ export default function BoardPage() {
       {
         colId: "_owners",
         headerName: "负责人",
-        width: 200,
+        width: 300,
         wrapText: true,
         autoHeight: true,
         editable: !vanReadonly,
@@ -438,7 +451,7 @@ export default function BoardPage() {
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
           if (!d) return null;
-          const owners: OwnerAlloc[] = p.value ?? d.owners ?? [];
+          const owners = d.owners ?? [];
           if (owners.length === 0)
             return (
               <span className="text-xs text-muted-foreground/50">
@@ -448,41 +461,90 @@ export default function BoardPage() {
           return (
             // autoHeight 行高由内容撑开，容器不能用 h-full（自适应行高下高度未定）
             <span className="flex flex-wrap items-center content-center gap-1 py-1">
-              {owners.map((o) => (
-                <span
-                  key={o.name}
-                  className="inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-xs font-medium"
-                  style={{
-                    background: "rgba(14, 165, 233, 0.1)",
-                    color: "#0ea5e9",
-                    border: "1px solid rgba(14, 165, 233, 0.15)",
-                  }}
-                  title={`${o.name} 在这件上 ${o.points} 点`}
-                >
-                  {o.name}
-                  {/* 点数与名字分开呈现：一眼看得出哪截是点数 */}
+              {owners.map((o) => {
+                const canSign =
+                  !vanReadonly &&
+                  Boolean(d.requester) &&
+                  o.doneAt !== null &&
+                  o.confirmedAt === null;
+                return (
                   <span
-                    className="rounded tabular-nums"
+                    key={o.name}
+                    className="inline-flex items-center gap-1 rounded-lg px-2 py-0.5 text-xs font-medium"
                     style={{
-                      padding: "0 3px",
-                      background: "rgba(14, 165, 233, 0.18)",
-                      fontWeight: 700,
+                      background: "rgba(14, 165, 233, 0.1)",
+                      color: "#0ea5e9",
+                      border: "1px solid rgba(14, 165, 233, 0.15)",
                     }}
+                    title={`${o.name} 在这件上 ${o.points} 点`}
                   >
-                    {o.points}
+                    {o.name}
+                    {/* 点数与名字分开呈现：一眼看得出哪截是点数 */}
+                    <span
+                      className="rounded tabular-nums"
+                      style={{
+                        padding: "0 3px",
+                        background: "rgba(14, 165, 233, 0.18)",
+                        fontWeight: 700,
+                      }}
+                    >
+                      {o.points}
+                    </span>
+                    {o.doneAt && (
+                      <span
+                        className="tabular-nums"
+                        style={{ color: "#16a34a" }}
+                        title={`已交付 ${o.doneAt}`}
+                      >
+                        ✅{o.doneAt.slice(5)}
+                      </span>
+                    )}
+                    {o.confirmedAt && (
+                      <span
+                        title={`已签收：${o.confirmedBy}（${o.confirmedAt}）`}
+                      >
+                        🔏
+                      </span>
+                    )}
+                    {canSign && (
+                      <button
+                        className="btn btn-glass px-1 py-0 text-[10px] leading-none"
+                        disabled={vanReadonly || confirmM.isPending}
+                        title={
+                          vanArchived
+                            ? "班次已结转归档，不可签收"
+                            : `签收「${o.name}」的交付`
+                        }
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onConfirm(d, o.name);
+                        }}
+                      >
+                        签收
+                      </button>
+                    )}
                   </span>
-                </span>
-              ))}
+                );
+              })}
             </span>
           );
         },
         valueGetter: (p) => p.data?.owners ?? [],
         valueSetter: (p) => {
-          if (p.data) {
-            p.data.owners = p.newValue as TaskWithOwners["owners"];
-            return true;
-          }
-          return false;
+          if (!p.data) return false;
+          // 编辑器只产出了名字/点数/完成日期；签收信息沿用原行（由服务端维护）
+          const prev = p.data.owners;
+          p.data.owners = (p.newValue as OwnerDraft[]).map((o) => {
+            const before = prev.find((x) => x.name === o.name);
+            return {
+              name: o.name,
+              points: o.points,
+              doneAt: o.doneAt,
+              confirmedAt: before?.confirmedAt ?? null,
+              confirmedBy: before?.confirmedBy ?? null,
+            };
+          });
+          return true;
         },
       },
       {
@@ -508,7 +570,7 @@ export default function BoardPage() {
       {
         colId: "_status",
         headerName: "状态",
-        width: 100,
+        width: 150,
         editable: !vanReadonly,
         editField: "status",
         cellEditor: "agSelectCellEditor",
@@ -526,10 +588,14 @@ export default function BoardPage() {
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
           if (!d || !d.status) return null;
+          if (d.status === "carried")
+            return <span className="status-badge status-carried">🔁 结转</span>;
+          const judged = judgedOwners(d.owners);
+          const doneCount = judged.filter((o) => o.doneAt !== null).length;
           return (
             <span className={`status-badge status-${d.status}`}>
-              {d.status === "carried"
-                ? "🔁 结转"
+              {d.status === "doing" && doneCount > 0
+                ? `进行中 · ${doneCount}/${judged.length} 人已交`
                 : (STATUS_LABEL[d.status] ?? d.status)}
             </span>
           );
@@ -739,6 +805,16 @@ export default function BoardPage() {
     if (key === "status") {
       // 编辑器以中文标签交互，落库前反查回英文枚举
       value = STATUS_CODE[value as string] ?? value;
+      // 件级「完成」快捷在多人件上弹确认（D17）：挡住「一键宣称全交」的误用
+      const judged = judgedOwners(task.owners);
+      if (
+        value === "done" &&
+        judged.length > 1 &&
+        !window.confirm(`将给 ${judged.length} 位负责人打同一完成日期，确定？`)
+      ) {
+        utils.invalidate();
+        return;
+      }
     }
     if (key === "source") {
       value = SOURCE_CODE[value as string] ?? value;
@@ -758,6 +834,35 @@ export default function BoardPage() {
     }
     if (key === "acceptance" || key === "note" || key === "requester") {
       if (value === "" || value === undefined) value = null;
+    }
+
+    // 负责人编辑器：点数/名单走 update，逐人完成变更走 setOwnerDone（顺序执行，
+    // 先确保负责人行已创建，否则新人的完成状态会撞 NOT_FOUND）
+    if (key === "owners") {
+      const next = value as OwnerDraft[];
+      const prev = (e.oldValue as TaskRow["owners"] | undefined) ?? [];
+      void (async () => {
+        await updateTaskM.mutateAsync({
+          id: task.id,
+          owners: next.map((o) => ({ name: o.name, points: o.points })),
+          actor: actorArg,
+        });
+        for (const o of next) {
+          const before = prev.find((x) => x.name === o.name);
+          if ((before?.doneAt ?? null) !== o.doneAt) {
+            await setOwnerDone({
+              taskId: task.id,
+              owner: o.name,
+              done: o.doneAt !== null,
+              doneAt: o.doneAt ?? undefined,
+              actor: actorArg,
+            });
+          }
+        }
+      })().catch(() => {
+        /* onError 已 toast + invalidate */
+      });
+      return;
     }
 
     updateTaskM.mutate({
