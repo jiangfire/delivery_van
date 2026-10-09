@@ -78,21 +78,39 @@ test.describe("快件增删改", () => {
     await expect(titleCell).toHaveText("优惠券接口联调", { timeout: 5000 });
   });
 
-  test("档位为 1~10 点数可选", async ({ page }) => {
+  test("点数由各负责人各自设置，任务点数 = 各人之和（只读派生）", async ({
+    page,
+  }) => {
+    // 预置成员（编辑中途新增成员会触发列表刷新销毁编辑器，故不走面板新增）
+    await trpcCall(page, "van.members.add", { name: "点数甲" });
+    await trpcCall(page, "van.members.add", { name: "点数乙" });
+    await page.reload();
+    await page.getByText("快递发车台").waitFor();
+
     await addTaskAndWait(page);
-    const sizeCell = dataCell(page, "_size");
-    await sizeCell.dblclick();
-    const combo = sizeCell.getByRole("combobox");
-    await expect(combo).toBeVisible({ timeout: 3000 });
-    await combo.click();
-    // 半天点数制：下拉提供 1~10 十个点档（富下拉选项渲染在页面级浮层）
-    for (const p of ["1", "2", "3", "4", "5", "6", "7", "8", "9", "10"]) {
-      await expect(
-        page.getByRole("option", { name: p, exact: true }),
-      ).toBeVisible();
-    }
-    await page.getByRole("option", { name: "7", exact: true }).click();
-    await expect(sizeCell).toHaveText("7 点");
+    const ownersCell = dataCell(page, "_owners");
+    await ownersCell.dblclick();
+
+    // 勾选负责人 ≠ 设置完成：还有人没填点数就不许确定（v2.5 每人点数制）
+    await page.getByLabel("点数甲", { exact: true }).check();
+    await page.getByLabel("点数乙", { exact: true }).check();
+    await expect(page.getByText("2 人还没设置点数")).toBeVisible();
+    await expect(page.getByRole("button", { name: "确定" })).toBeDisabled();
+
+    // 每人各自填自己的那份：合计随之更新，填满才能确定
+    await page.getByLabel("点数甲 的点数").fill("3");
+    await page.getByLabel("点数乙 的点数").fill("2");
+    await expect(page.getByText("合计 5 点")).toBeVisible();
+    await expect(page.getByRole("button", { name: "确定" })).toBeEnabled();
+
+    const updated = waitForTaskUpdate(page);
+    await page.getByRole("button", { name: "确定" }).click();
+    await updated;
+
+    await expect(ownersCell).toContainText("点数甲");
+    await expect(ownersCell).toContainText("点数乙");
+    // 任务点数是各人之和的只读派生值（原「档位」列已废弃）
+    await expect(dataCell(page, "_points")).toHaveText("5 点");
   });
 
   test("置完成自动记送达日期，取消完成清空日期", async ({ page }) => {
@@ -144,11 +162,10 @@ test.describe("快件增删改", () => {
     const nameInput = page.getByPlaceholder("新成员名称");
     await nameInput.fill("周七");
     await nameInput.press("Enter");
-    await page
-      .locator("label")
-      .filter({ hasText: "吴八" })
-      .locator('input[type="checkbox"]')
-      .check();
+    await page.getByLabel("吴八", { exact: true }).check();
+    // v2.5：每个人都要有自己的点数，填满才能确定
+    await page.getByLabel("周七 的点数").fill("3");
+    await page.getByLabel("吴八 的点数").fill("2");
     // 等更新落库再断言/刷新（单元格会先显示本地值）
     const updated = waitForTaskUpdate(page);
     await page.getByRole("button", { name: "确定" }).click();
@@ -321,14 +338,20 @@ test.describe("滞留件结转与归档", () => {
   });
 
   test("连续滞留两班触发强制复盘，负责人标签随件转运", async ({ page }) => {
+    // 预置成员：面板内即时新增会触发成员列表刷新，销毁正在编辑的编辑器
+    await trpcCall(page, "van.members.add", { name: "郑十" });
+    await page.reload();
+    await page.getByText("快递发车台").waitFor();
+
     await addTaskAndWait(page);
-    // 给快件挂负责人
+    // 给快件挂负责人（v2.5：每个人各自设置自己的点数）
     const ownersCell = dataCell(page, "_owners");
     await ownersCell.dblclick();
-    const nameInput = page.getByPlaceholder("新成员名称");
-    await nameInput.fill("郑十");
-    await nameInput.press("Enter");
+    await page.getByLabel("郑十", { exact: true }).check();
+    await page.getByLabel("郑十 的点数").fill("4");
+    const updated = waitForTaskUpdate(page);
     await page.getByRole("button", { name: "确定" }).click();
+    await updated;
     await expect(ownersCell).toContainText("郑十");
 
     await dispatchVan(page); // 第二班
@@ -390,7 +413,7 @@ test.describe("滞留件结转与归档", () => {
     await trpcCall(page, "van.tasks.add", {
       van,
       title: "元老甲的件",
-      owners: ["元老甲"],
+      owners: [{ name: "元老甲", points: 3 }],
     });
     await page.reload();
     await expect(page.getByText("快递发车台")).toBeVisible();

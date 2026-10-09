@@ -142,13 +142,13 @@ test.describe("v2 签收与博弈机制", () => {
   test("昨日天气与三方占比：建议装载上限取上一班送达点数，source 可编辑", async ({
     page,
   }) => {
-    // 上一班：完成一件 5 点
+    // 上一班：完成一件 5 点（v2.5：点数记在负责人各自那份上）
     await addTaskAndWait(page);
     const van1 = await page.getByLabel("班次").inputValue();
     const [t1] = await tasksOf(page, van1);
     await trpcCall(page, "van.tasks.update", {
       id: t1.id,
-      size: 5,
+      owners: [{ name: "签收人", points: 5 }],
       status: "done",
     });
 
@@ -195,7 +195,7 @@ test.describe("v2 签收与博弈机制", () => {
     let [t] = await tasksOf(page, van);
     await trpcCall(page, "van.tasks.update", {
       id: t.id,
-      owners: ["签收人"],
+      owners: [{ name: "签收人", points: 3 }],
       status: "done",
     });
 
@@ -206,7 +206,7 @@ test.describe("v2 签收与博弈机制", () => {
     [t] = await tasksOf(page, van);
     await trpcCall(page, "van.tasks.update", {
       id: t.id,
-      owners: ["签收人"],
+      owners: [{ name: "签收人", points: 3 }],
       status: "done",
     });
     // 徽章由 stats 实时推导：API 改数据不触发前端缓存刷新，reload 后断言
