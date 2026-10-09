@@ -28,6 +28,7 @@ import {
   isUniqueViolation,
   qAll,
   qRun,
+  type AppDb,
 } from "./dialect";
 
 // 当前方言的表对象（类型标为 sqlite schema，运行时为对应方言版本，见 dialect.ts）
@@ -581,21 +582,57 @@ function taskAuditValue(t: {
 }
 
 /** 事务对象的最小结构约束（业务写与审计同事务，回调内同步调用） */
-type TxDb = AuditDb & Pick<ReturnType<typeof getDb>, "update" | "delete">;
+type TxDb = AuditDb &
+  Pick<ReturnType<typeof getDb>, "update" | "delete" | "select">;
 
-/** 替换快件的负责人（含各自点数；先删后插；事务内调用，执行统一走方言层） */
+/**
+ * 替换快件的负责人（含各自点数）。**同名保留**（D14）：名字仍在的人保留其
+ * `done_at` / `confirmed_at` / `confirmed_by`，新名字三列 NULL，被移除的人整行删除——
+ * 否则「改个点数就抹掉交付与签收」。事务内调用，执行统一走方言层。
+ */
 async function replaceOwners(tx: TxDb, taskId: number, owners: OwnerAlloc[]) {
-  await qRun(tx.delete(taskOwners).where(eq(taskOwners.taskId, taskId)));
-  if (owners.length > 0) {
-    await qRun(
-      tx.insert(taskOwners).values(
-        owners.map((o) => ({
-          taskId,
-          ownerName: o.name,
-          points: o.points,
-        })),
-      ),
-    );
+  const existing = await qAll(
+    tx.select().from(taskOwners).where(eq(taskOwners.taskId, taskId)),
+  );
+  const byName = new Map(existing.map((r) => [r.ownerName, r]));
+  const keep = new Set(owners.map((o) => o.name));
+  for (const r of existing) {
+    if (!keep.has(r.ownerName)) {
+      await qRun(
+        tx
+          .delete(taskOwners)
+          .where(
+            and(
+              eq(taskOwners.taskId, taskId),
+              eq(taskOwners.ownerName, r.ownerName),
+            ),
+          ),
+      );
+    }
+  }
+  for (const o of owners) {
+    const prev = byName.get(o.name);
+    if (prev) {
+      if (prev.points !== o.points) {
+        await qRun(
+          tx
+            .update(taskOwners)
+            .set({ points: o.points })
+            .where(
+              and(
+                eq(taskOwners.taskId, taskId),
+                eq(taskOwners.ownerName, o.name),
+              ),
+            ),
+        );
+      }
+    } else {
+      await qRun(
+        tx
+          .insert(taskOwners)
+          .values({ taskId, ownerName: o.name, points: o.points }),
+      );
+    }
   }
 }
 
@@ -745,22 +782,57 @@ export async function updateTask(
       [...list].sort((a, b) => a.name.localeCompare(b.name, "zh")),
     );
 
-  // 完成日期：打勾时随手填的自动化——置完成且无日期时记今天，取消完成则清空；
-  // 取消完成同时作废签收（重新送达后需重新签收，与 doneAt 同口径）
-  let confirmVoided = false;
-  if (patch.status === "done" && patch.doneAt === undefined) {
-    patch.doneAt = todayStr();
-  } else if (patch.status && patch.status !== "done") {
-    patch.doneAt = null;
-    if (current.confirmedBy !== null || current.confirmedAt !== null) {
-      patch.confirmedBy = null;
-      patch.confirmedAt = null;
-      confirmVoided = true;
+  // ── 件级完成/日期 → 叶子聚合（v2.6）──
+  // 有负责人的件里，件级 status / doneAt 是叶子聚合的物化，不能直接写：把它们翻译成
+  // 对**参与判定全体**的叶子写（D8/D17），再由 recomputeTaskAggregate 收敛件级字段。
+  // 无负责人的件保留原手动路径（D12）。
+  const targetOwners = patch.owners ?? currentOwners;
+  const hasOwners = targetOwners.length > 0;
+  const judged = judgedOf(targetOwners);
+  let leafDoneAt: string | null | undefined; // undefined = 不改叶子
+  if (hasOwners) {
+    if (patch.status === "done") {
+      leafDoneAt = patch.doneAt ?? todayStr();
+    } else if (
+      patch.doneAt !== undefined &&
+      patch.status === undefined &&
+      current.status === "done"
+    ) {
+      // 送达日期手工补录/清除（当前已完成）
+      leafDoneAt = patch.doneAt;
+    } else if (
+      patch.status !== undefined &&
+      current.status === "done"
+    ) {
+      // 取消完成：清全体完成日期并作废全体签收（D6/D8）
+      leafDoneAt = null;
     }
   }
+  const shortcut = leafDoneAt !== undefined;
 
   // 分离 task_owners 字段（不写入 tasks 表）
-  const { owners, ...taskPatch } = patch;
+  const { owners, ...taskPatchBase } = patch;
+  const taskPatch: typeof taskPatchBase = { ...taskPatchBase };
+  // 叶子变更已代表这次完成/日期修改，件级派生字段交给 recompute，不直接落任务行
+  if (hasOwners && shortcut) {
+    delete taskPatch.status;
+    delete taskPatch.doneAt;
+  }
+
+  // 无负责人件的原口径（D12）：打勾自动填今天、取消完成清日期并作废签收
+  let confirmVoided = false;
+  if (!hasOwners) {
+    if (patch.status === "done" && patch.doneAt === undefined) {
+      taskPatch.doneAt = todayStr();
+    } else if (patch.status && patch.status !== "done") {
+      taskPatch.doneAt = null;
+      if (current.confirmedBy !== null || current.confirmedAt !== null) {
+        taskPatch.confirmedBy = null;
+        taskPatch.confirmedAt = null;
+        confirmVoided = true;
+      }
+    }
+  }
 
   // 审计：逐字段 diff，值未变不记；note / acceptance 自由文本以占位符进链
   const FIELD_KEYS = [
@@ -775,7 +847,7 @@ export async function updateTask(
   ] as const;
   const entries: AuditEntry[] = [];
   for (const f of FIELD_KEYS) {
-    const next = patch[f];
+    const next = taskPatch[f];
     if (next === undefined) continue;
     const prev = current[f];
     if (prev === next) continue;
@@ -819,15 +891,30 @@ export async function updateTask(
   }
 
   // 业务写与审计同事务：任何一侧失败整体回滚，不留未记账的写
+  const leafEntries: AuditEntry[] = [];
   await runTx(db, async (tx) => {
     if (Object.keys(taskPatch).length > 0) {
       await qRun(tx.update(tasks).set(taskPatch).where(eq(tasks.id, id)));
     }
-    // 更新负责人标签
+    // 更新负责人标签（同名保留交付/签收记录，D14）
     if (owners !== undefined) {
       await replaceOwners(tx, id, owners);
     }
-    await appendAudit(tx, actor, entries);
+    // 件级完成快捷/工期修改 → 给参与判定全体打/清同一天（D8）
+    if (hasOwners && shortcut) {
+      await applyJudgedDone(
+        tx,
+        id,
+        judged.map((o) => o.name),
+        leafDoneAt!,
+        leafEntries,
+      );
+    }
+    // 叶子有变动才重算件级聚合（单一重算入口，§3.3）
+    if (hasOwners && (owners !== undefined || shortcut)) {
+      await recomputeTaskAggregate(tx, id);
+    }
+    await appendAudit(tx, actor, [...entries, ...leafEntries]);
   });
 
   return listTasksByVan(current.vanCode);
@@ -844,6 +931,152 @@ function ownerAuditValue(o: {
     doneAt: o.doneAt,
     confirmedAt: o.confirmedAt,
   });
+}
+
+/**
+ * 参与件级闭环判定的负责人（D11）：`points > 0` 的人；若一件有 owner 行但全是
+ * 0 点（全挂名），退化回全部 owner——否则既不能闭环、也永远签不掉，成死结。
+ */
+function judgedOf<T extends { points: number }>(owners: T[]): T[] {
+  const positive = owners.filter((o) => o.points > 0);
+  return positive.length > 0 ? positive : owners;
+}
+
+/**
+ * 件级聚合的期望值（纯函数，D2/D7/D9/D11/D12）：由叶子与当前件级状态推导。
+ * 无 owner 行返回 null（D12：件级字段完全手动，聚合跳过）。`recomputeTaskAggregate`
+ * 是其唯一调用方；单测直接验证这里的推导规则。
+ * - `done` = 参与判定集合**全部** `done_at` 非空（D2）；`done_at` = 最后一个完成者的日期（D7）
+ * - 首次有人完成 → `todo` 自动升 `doing`，不自动回落（D9）
+ * - `confirmed_*` = 参与判定集合全部签收时取最后一次签收的 actor 与日期，否则 NULL
+ */
+export function aggregateOf(
+  leaves: {
+    points: number;
+    doneAt: string | null;
+    confirmedAt: string | null;
+    confirmedBy: string | null;
+  }[],
+  currentStatus: Task["status"],
+): {
+  status: Task["status"];
+  doneAt: string | null;
+  confirmedAt: string | null;
+  confirmedBy: string | null;
+} | null {
+  if (leaves.length === 0) return null;
+  const judged = judgedOf(leaves);
+  const allDone = judged.every((o) => o.doneAt !== null);
+  const allConfirmed = judged.every((o) => o.confirmedAt !== null);
+  const anyDone = judged.some((o) => o.doneAt !== null);
+
+  const status: Task["status"] = allDone
+    ? "done"
+    : currentStatus === "carried"
+      ? "carried" // 归档只读，不参与推导
+      : currentStatus === "done" || anyDone
+        ? "doing" // D9：首次有人完成单向升 doing；有人取消则从 done 回落
+        : currentStatus;
+  const doneAt = allDone
+    ? judged.reduce((max, o) => (o.doneAt! > max ? o.doneAt! : max), "")
+    : null;
+  let confirmedAt: string | null = null;
+  let confirmedBy: string | null = null;
+  if (allConfirmed) {
+    const last = judged.reduce((a, b) =>
+      b.confirmedAt! > a.confirmedAt! ? b : a,
+    );
+    confirmedAt = last.confirmedAt;
+    confirmedBy = last.confirmedBy;
+  }
+  return { status, doneAt, confirmedAt, confirmedBy };
+}
+
+/**
+ * 件级聚合重算（v2.6 §3.3 唯一重算入口）：把叶子（task_owners）与任务级聚合字段
+ * 对齐。只在事务内、写叶子之后调用；推导规则全在 `aggregateOf`。
+ */
+async function recomputeTaskAggregate(tx: AppDb, taskId: number) {
+  const leaves = await qAll(
+    tx
+      .select({
+        points: taskOwners.points,
+        doneAt: taskOwners.doneAt,
+        confirmedAt: taskOwners.confirmedAt,
+        confirmedBy: taskOwners.confirmedBy,
+      })
+      .from(taskOwners)
+      .where(eq(taskOwners.taskId, taskId)),
+  );
+  const [task] = await qAll(
+    tx
+      .select({ status: tasks.status })
+      .from(tasks)
+      .where(eq(tasks.id, taskId)),
+  );
+  if (!task) return;
+  const agg = aggregateOf(leaves, task.status);
+  if (!agg) return; // D12：无 owner 的件不推导
+  await qRun(
+    tx.update(tasks).set(agg).where(eq(tasks.id, taskId)),
+  );
+}
+
+/**
+ * 给指定负责人打/清同一完成日期（D8 件级快捷的叶子实现），并把实际变化的行
+ * 以 `owner:<名字>` 紧凑 JSON 记入审计（D13）。幂等的行不写不入链。
+ */
+async function applyJudgedDone(
+  tx: AppDb,
+  taskId: number,
+  names: string[],
+  doneAt: string | null,
+  entries: AuditEntry[],
+) {
+  for (const name of names) {
+    const [row] = await qAll(
+      tx
+        .select()
+        .from(taskOwners)
+        .where(
+          and(
+            eq(taskOwners.taskId, taskId),
+            eq(taskOwners.ownerName, name),
+          ),
+        ),
+    );
+    if (!row) continue;
+    const next = {
+      doneAt,
+      confirmedAt: doneAt === null ? null : row.confirmedAt,
+      confirmedBy: doneAt === null ? null : row.confirmedBy,
+    };
+    if (
+      row.doneAt === next.doneAt &&
+      row.confirmedAt === next.confirmedAt &&
+      row.confirmedBy === next.confirmedBy
+    ) {
+      continue;
+    }
+    await qRun(
+      tx
+        .update(taskOwners)
+        .set(next)
+        .where(
+          and(
+            eq(taskOwners.taskId, taskId),
+            eq(taskOwners.ownerName, name),
+          ),
+        ),
+    );
+    entries.push({
+      entity: "task",
+      entityId: taskId,
+      field: `owner:${name}`,
+      oldValue: ownerAuditValue(row),
+      newValue: ownerAuditValue({ points: row.points, ...next }),
+    });
+  }
 }
 
 /**
@@ -912,6 +1145,8 @@ export async function setOwnerDone(
           ),
         ),
     );
+    // 叶子变动后重算件级聚合（单一重算入口）
+    await recomputeTaskAggregate(tx, taskId);
     await appendAudit(tx, actor, [
       {
         entity: "task",

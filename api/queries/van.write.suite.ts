@@ -196,7 +196,7 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
         expect(list[0].doneAt).toBeNull();
       });
 
-      it("仅更新负责人时不动任务行字段（状态与日期保持）", async () => {
+      it("无负责人的完成件补上负责人后由叶子聚合接管：未交付则回落 doing", async () => {
         await addTask({ van: "DV2607A", title: "甲" });
         const [t] = await listTasksByVan("DV2607A");
         await updateTask(t.id, { status: "done" });
@@ -212,8 +212,9 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
             confirmedBy: null,
           },
         ]);
-        expect(list[0].status).toBe("done");
-        expect(list[0].doneAt).toBe(todayStr());
+        // 参与判定的人未交付，件级不能继续声称完成
+        expect(list[0].status).toBe("doing");
+        expect(list[0].doneAt).toBeNull();
       });
 
       it("显式送达日期不被当天覆盖，删除快件后列表为空", async () => {
@@ -329,6 +330,163 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
           doneAt: "2026-07-18",
           confirmedAt: null,
         });
+      });
+    });
+
+    describe("件级聚合（v2.6 §3.3）", () => {
+      async function seedMulti() {
+        await addTask({
+          van: "DV2607A",
+          title: "多人件",
+          requester: "张三",
+          owners: [
+            { name: "丰智娟", points: 3 },
+            { name: "李子烨", points: 7 },
+          ],
+        });
+        const [t] = await listTasksByVan("DV2607A");
+        return t.id;
+      }
+
+      it("参与判定的人全交完才算 done，件级日期取最后一个完成者（D7）", async () => {
+        const id = await seedMulti();
+        await setOwnerDone(id, "丰智娟", true, "2026-07-18");
+        let [t] = await listTasksByVan("DV2607A");
+        expect(t.status).toBe("doing");
+        expect(t.doneAt).toBeNull();
+
+        await setOwnerDone(id, "李子烨", true, "2026-07-20");
+        [t] = await listTasksByVan("DV2607A");
+        expect(t.status).toBe("done");
+        expect(t.doneAt).toBe("2026-07-20");
+      });
+
+      it("取消某人完成 → 件级从 done 回落 doing 并清空日期（D6）", async () => {
+        const id = await seedMulti();
+        await setOwnerDone(id, "丰智娟", true, "2026-07-18");
+        await setOwnerDone(id, "李子烨", true, "2026-07-20");
+        await setOwnerDone(id, "李子烨", false);
+        const [t] = await listTasksByVan("DV2607A");
+        expect(t.status).toBe("doing");
+        expect(t.doneAt).toBeNull();
+      });
+
+      it("件级完成快捷：给参与判定全体打同一天（D8）", async () => {
+        const id = await seedMulti();
+        const list = await updateTask(id, {
+          status: "done",
+          doneAt: "2026-07-19",
+        });
+        const of = (n: string) => list[0].owners.find((o) => o.name === n)!;
+        expect(of("丰智娟").doneAt).toBe("2026-07-19");
+        expect(of("李子烨").doneAt).toBe("2026-07-19");
+        expect(list[0].status).toBe("done");
+        expect(list[0].doneAt).toBe("2026-07-19");
+      });
+
+      it("件级取消完成：清全体完成日期（D8）", async () => {
+        const id = await seedMulti();
+        await updateTask(id, { status: "done", doneAt: "2026-07-19" });
+        const list = await updateTask(id, { status: "todo" });
+        expect(list[0].owners.every((o) => o.doneAt === null)).toBe(true);
+        expect(list[0].status).toBe("doing"); // 不自动回落（D9）
+        expect(list[0].doneAt).toBeNull();
+      });
+
+      it("改点数不抹交付与签收记录（D14 同名保留）", async () => {
+        const id = await seedMulti();
+        await setOwnerDone(id, "丰智娟", true, "2026-07-18");
+        await ctx
+          .db()
+          .update(S.taskOwners)
+          .set({ confirmedAt: "2026-07-19", confirmedBy: "张三" })
+          .where(
+            and(
+              eq(S.taskOwners.taskId, id),
+              eq(S.taskOwners.ownerName, "丰智娟"),
+            ),
+          );
+        const list = await updateTask(id, {
+          owners: [
+            { name: "丰智娟", points: 5 },
+            { name: "李子烨", points: 7 },
+          ],
+        });
+        const of = (n: string) => list[0].owners.find((o) => o.name === n)!;
+        expect(of("丰智娟").points).toBe(5);
+        expect(of("丰智娟").doneAt).toBe("2026-07-18");
+        expect(of("丰智娟").confirmedAt).toBe("2026-07-19");
+        expect(of("丰智娟").confirmedBy).toBe("张三");
+      });
+
+      it("移除再补回同名负责人会丢失记录（新名字三列 NULL）", async () => {
+        const id = await seedMulti();
+        await setOwnerDone(id, "丰智娟", true, "2026-07-18");
+        let list = await updateTask(id, {
+          owners: [{ name: "李子烨", points: 7 }],
+        });
+        expect(list[0].owners.map((o) => o.name)).toEqual(["李子烨"]);
+        list = await updateTask(id, {
+          owners: [
+            { name: "李子烨", points: 7 },
+            { name: "丰智娟", points: 3 },
+          ],
+        });
+        expect(
+          list[0].owners.find((o) => o.name === "丰智娟")!.doneAt,
+        ).toBeNull();
+      });
+
+      it("全 0 点件退化为按全部 owner 判定（D11）", async () => {
+        await addTask({
+          van: "DV2607A",
+          title: "全挂名件",
+          owners: [
+            { name: "丰智娟", points: 0 },
+            { name: "李子烨", points: 0 },
+          ],
+        });
+        const [t] = await listTasksByVan("DV2607A");
+        await setOwnerDone(t.id, "丰智娟", true, "2026-07-18");
+        expect((await listTasksByVan("DV2607A"))[0].status).toBe("doing");
+        await setOwnerDone(t.id, "李子烨", true, "2026-07-19");
+        const [after] = await listTasksByVan("DV2607A");
+        expect(after.status).toBe("done");
+        expect(after.doneAt).toBe("2026-07-19");
+      });
+
+      it("0 点负责人完成不参与件级闭环判定（D11/D15）", async () => {
+        await addTask({
+          van: "DV2607A",
+          title: "带挂名件",
+          requester: "张三",
+          owners: [
+            { name: "丰智娟", points: 3 },
+            { name: "刘洋", points: 0 },
+          ],
+        });
+        const [t] = await listTasksByVan("DV2607A");
+        await setOwnerDone(t.id, "刘洋", true, "2026-07-18");
+        const [mid] = await listTasksByVan("DV2607A");
+        expect(mid.status).toBe("todo"); // 挂名的勾不算闭环信号
+        expect(mid.owners.find((o) => o.name === "刘洋")!.doneAt).toBe(
+          "2026-07-18",
+        );
+        await setOwnerDone(t.id, "丰智娟", true, "2026-07-20");
+        const [after] = await listTasksByVan("DV2607A");
+        expect(after.status).toBe("done");
+        expect(after.doneAt).toBe("2026-07-20");
+      });
+
+      it("无 owner 的件件级字段完全手动，聚合不降级（D12）", async () => {
+        await addTask({ van: "DV2607A", title: "无主件" });
+        const [t] = await listTasksByVan("DV2607A");
+        const list = await updateTask(t.id, {
+          status: "done",
+          doneAt: "2026-07-18",
+        });
+        expect(list[0].status).toBe("done");
+        expect(list[0].doneAt).toBe("2026-07-18");
       });
     });
 
