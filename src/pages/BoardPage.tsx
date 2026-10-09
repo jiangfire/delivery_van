@@ -474,7 +474,7 @@ export default function BoardPage() {
         valueGetter: (p) => p.data?.owners ?? [],
         valueSetter: (p) => {
           if (p.data) {
-            p.data.owners = p.newValue as OwnerAlloc[];
+            p.data.owners = p.newValue as TaskWithOwners["owners"];
             return true;
           }
           return false;

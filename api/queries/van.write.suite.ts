@@ -2,11 +2,12 @@
  * 同一份用例跑三个方言变体——sqlite 内存库（van.write.test.ts）与
  * pg/mysql CI 容器（dialect.pg.test.ts / dialect.mysql.test.ts）。 */
 import { describe, expect, it } from "vitest";
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import {
   addMember,
   addTask,
+  carryOver,
   confirmTask,
   dispatchVan,
   listMembers,
@@ -14,6 +15,7 @@ import {
   listVans,
   removeMember,
   removeTask,
+  setOwnerDone,
   updateMemberCapacity,
   updateTask,
 } from "./van";
@@ -158,8 +160,20 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
         const list = await listTasksByVan("DV2607A");
         expect(list.map((t) => t.title)).toEqual(["甲", "乙"]);
         expect(list[1].owners).toEqual([
-          { name: "张三", points: 3 },
-          { name: "李四", points: 2 },
+          {
+            name: "张三",
+            points: 3,
+            doneAt: null,
+            confirmedAt: null,
+            confirmedBy: null,
+          },
+          {
+            name: "李四",
+            points: 2,
+            doneAt: null,
+            confirmedAt: null,
+            confirmedBy: null,
+          },
         ]);
         expect(taskPointsOf(list[1].owners)).toBe(5);
         expect(list[1].source).toBe("exploration");
@@ -189,7 +203,15 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
         const list = await updateTask(t.id, {
           owners: [{ name: "张三", points: 4 }],
         });
-        expect(list[0].owners).toEqual([{ name: "张三", points: 4 }]);
+        expect(list[0].owners).toEqual([
+          {
+            name: "张三",
+            points: 4,
+            doneAt: null,
+            confirmedAt: null,
+            confirmedBy: null,
+          },
+        ]);
         expect(list[0].status).toBe("done");
         expect(list[0].doneAt).toBe(todayStr());
       });
@@ -205,6 +227,108 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
 
         await removeTask(t.id);
         expect(await listTasksByVan("DV2607A")).toHaveLength(0);
+      });
+    });
+
+    describe("逐人完成（v2.6）", () => {
+      async function seedOwnersTask() {
+        await addTask({
+          van: "DV2607A",
+          title: "多人件",
+          requester: "张三",
+          owners: [
+            { name: "李子烨", points: 7 },
+            { name: "王思雨", points: 2 },
+          ],
+        });
+        const [t] = await listTasksByVan("DV2607A");
+        return t.id;
+      }
+
+      it("打勾记当天日期，可补录日期，其他人不受影响", async () => {
+        const id = await seedOwnersTask();
+        let list = await setOwnerDone(id, "李子烨", true);
+        const of = (name: string) =>
+          list[0].owners.find((o) => o.name === name)!;
+        expect(of("李子烨").doneAt).toBe(todayStr());
+        expect(of("王思雨").doneAt).toBeNull();
+
+        list = await setOwnerDone(id, "王思雨", true, "2026-07-20");
+        expect(of("王思雨").doneAt).toBe("2026-07-20");
+        expect(of("李子烨").doneAt).toBe(todayStr());
+      });
+
+      it("取消完成只清空该人日期，并作废该人的签收（他人的签收保留）", async () => {
+        const id = await seedOwnersTask();
+        await setOwnerDone(id, "李子烨", true, "2026-07-18");
+        await ctx
+          .db()
+          .update(S.taskOwners)
+          .set({ confirmedAt: "2026-07-19", confirmedBy: "张三" })
+          .where(
+            and(
+              eq(S.taskOwners.taskId, id),
+              eq(S.taskOwners.ownerName, "李子烨"),
+            ),
+          );
+        await setOwnerDone(id, "王思雨", true, "2026-07-20");
+
+        const list = await setOwnerDone(id, "李子烨", false);
+        const of = (name: string) =>
+          list[0].owners.find((o) => o.name === name)!;
+        expect(of("李子烨").doneAt).toBeNull();
+        expect(of("李子烨").confirmedAt).toBeNull();
+        expect(of("李子烨").confirmedBy).toBeNull();
+        expect(of("王思雨").doneAt).toBe("2026-07-20");
+      });
+
+      it("重复打勾同一天幂等：不新增审计条目", async () => {
+        const id = await seedOwnersTask();
+        await setOwnerDone(id, "李子烨", true, "2026-07-18");
+        const before = await ctx.db().select().from(S.auditLog);
+        await setOwnerDone(id, "李子烨", true, "2026-07-18");
+        expect(await ctx.db().select().from(S.auditLog)).toHaveLength(
+          before.length,
+        );
+      });
+
+      it("归档班次拒绝改完成", async () => {
+        const id = await seedOwnersTask();
+        await ctx.db().insert(S.tasks).values({
+          vanCode: "DV2607A",
+          title: "滞留件",
+          status: "todo",
+        });
+        await carryOver("DV2607A", "DV2607B", new Date(2026, 6, 20));
+        await expect(setOwnerDone(id, "李子烨", true)).rejects.toThrow(
+          "归档",
+        );
+      });
+
+      it("负责人不在件上报 NOT_FOUND", async () => {
+        const id = await seedOwnersTask();
+        await expect(setOwnerDone(id, "查无此人", true)).rejects.toThrow(
+          "负责人",
+        );
+      });
+
+      it("审计记 owner:<名字> 紧凑 JSON，含点数与新旧完成日期", async () => {
+        const id = await seedOwnersTask();
+        await setOwnerDone(id, "李子烨", true, "2026-07-18", "张三");
+        const rec = (await ctx.db().select().from(S.auditLog)).find(
+          (a) => a.field === "owner:李子烨",
+        );
+        expect(rec?.actor).toBe("张三");
+        expect(JSON.parse(rec!.oldValue!)).toEqual({
+          points: 7,
+          doneAt: null,
+          confirmedAt: null,
+        });
+        expect(JSON.parse(rec!.newValue!)).toEqual({
+          points: 7,
+          doneAt: "2026-07-18",
+          confirmedAt: null,
+        });
       });
     });
 

@@ -272,10 +272,15 @@ export function badgesOf(
 /* ── 任务带负责人列表的公共类型 ── */
 
 /**
- * 读模型：快件 + 各负责人的点数。`size` 已废弃（v2.5），对外不再暴露——
- * 任务点数一律由 `taskPointsOf(owners)` 求得。
+ * 读模型：快件 + 各负责人的点数与逐人完成/签收状态。`size` 已废弃（v2.5），
+ * 对外不再暴露——任务点数一律由 `taskPointsOf(owners)` 求得。
  */
-export type TaskWithOwners = Omit<Task, "size"> & { owners: OwnerAlloc[] };
+export type OwnerState = OwnerAlloc & {
+  doneAt: string | null;
+  confirmedAt: string | null;
+  confirmedBy: string | null;
+};
+export type TaskWithOwners = Omit<Task, "size"> & { owners: OwnerState[] };
 
 /* ── 班次（手动发新车，不再绑定周五） ── */
 
@@ -522,6 +527,9 @@ async function attachOwners(rows: TaskBaseRow[]): Promise<TaskWithOwners[]> {
       taskId: taskOwners.taskId,
       name: taskOwners.ownerName,
       points: taskOwners.points,
+      doneAt: taskOwners.doneAt,
+      confirmedAt: taskOwners.confirmedAt,
+      confirmedBy: taskOwners.confirmedBy,
     })
     .from(taskOwners)
     .where(
@@ -530,9 +538,15 @@ async function attachOwners(rows: TaskBaseRow[]): Promise<TaskWithOwners[]> {
         rows.map((r) => r.id),
       ),
     );
-  const byTask = new Map<number, OwnerAlloc[]>();
+  const byTask = new Map<number, OwnerState[]>();
   for (const a of allocs) {
-    const alloc = { name: a.name, points: a.points };
+    const alloc = {
+      name: a.name,
+      points: a.points,
+      doneAt: a.doneAt,
+      confirmedAt: a.confirmedAt,
+      confirmedBy: a.confirmedBy,
+    };
     const list = byTask.get(a.taskId);
     if (list) list.push(alloc);
     else byTask.set(a.taskId, [alloc]);
@@ -817,6 +831,102 @@ export async function updateTask(
   });
 
   return listTasksByVan(current.vanCode);
+}
+
+/** 负责人行的审计值（D13）：紧凑 JSON，链上可对质到人 */
+function ownerAuditValue(o: {
+  points: number;
+  doneAt: string | null;
+  confirmedAt: string | null;
+}): string {
+  return JSON.stringify({
+    points: o.points,
+    doneAt: o.doneAt,
+    confirmedAt: o.confirmedAt,
+  });
+}
+
+/**
+ * 逐人完成/取消（v2.6）：打勾记当天日期（可补录），取消清空该人日期并作废
+ * 该人签收（D6，其他人的签收保留）。0 点负责人同样可打勾（D15，只留痕不阻塞件级闭环）。
+ * 幂等：目标状态与现值一致时不写库不入链。件级聚合由 T3 在同一事务内联动。
+ */
+export async function setOwnerDone(
+  taskId: number,
+  ownerName: string,
+  done: boolean,
+  doneAt?: string,
+  actor?: string,
+): Promise<TaskWithOwners[]> {
+  const db = getDb();
+  const [task] = await db.select().from(tasks).where(eq(tasks.id, taskId));
+  if (!task)
+    throw new TRPCError({ code: "NOT_FOUND", message: `任务 ${taskId} 不存在` });
+  if (await isVanArchived(task.vanCode)) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: `班次 ${task.vanCode} 已结转归档，不可修改`,
+    });
+  }
+  const [row] = await db
+    .select()
+    .from(taskOwners)
+    .where(
+      and(
+        eq(taskOwners.taskId, taskId),
+        eq(taskOwners.ownerName, ownerName),
+      ),
+    );
+  if (!row) {
+    throw new TRPCError({
+      code: "NOT_FOUND",
+      message: `快件 ${taskId} 上没有负责人「${ownerName}」`,
+    });
+  }
+
+  const nextDoneAt = done ? (doneAt ?? todayStr()) : null;
+  // 取消完成同时作废该人签收（D6）
+  const nextConfirmedAt = done ? row.confirmedAt : null;
+  const nextConfirmedBy = done ? row.confirmedBy : null;
+  if (
+    row.doneAt === nextDoneAt &&
+    row.confirmedAt === nextConfirmedAt &&
+    row.confirmedBy === nextConfirmedBy
+  ) {
+    return listTasksByVan(task.vanCode); // 幂等：无变化不写库不入链
+  }
+
+  await runTx(db, async (tx) => {
+    await qRun(
+      tx
+        .update(taskOwners)
+        .set({
+          doneAt: nextDoneAt,
+          confirmedAt: nextConfirmedAt,
+          confirmedBy: nextConfirmedBy,
+        })
+        .where(
+          and(
+            eq(taskOwners.taskId, taskId),
+            eq(taskOwners.ownerName, ownerName),
+          ),
+        ),
+    );
+    await appendAudit(tx, actor, [
+      {
+        entity: "task",
+        entityId: taskId,
+        field: `owner:${ownerName}`,
+        oldValue: ownerAuditValue(row),
+        newValue: ownerAuditValue({
+          points: row.points,
+          doneAt: nextDoneAt,
+          confirmedAt: nextConfirmedAt,
+        }),
+      },
+    ]);
+  });
+  return listTasksByVan(task.vanCode);
 }
 
 export async function removeTask(id: number, actor?: string) {

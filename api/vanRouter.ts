@@ -11,6 +11,7 @@ import {
   removeMember,
   removeTask,
   reorderTasks,
+  setOwnerDone,
   updateMemberCapacity,
   updateTask,
   weeklyStats,
@@ -30,6 +31,7 @@ import {
   taskConfirmInput,
   taskRemoveInput,
   taskReorderInput,
+  taskSetOwnerDoneInput,
   taskUpdateInput,
   vanCodeInput,
   vansDispatchInput,
@@ -99,6 +101,18 @@ export const vanRouter = createRouter({
     confirm: publicQuery
       .input(taskConfirmInput)
       .mutation(({ input }) => confirmTask(input.taskId, input.actor)),
+    /* 逐人完成（v2.6）：打勾/取消某个负责人各自的完成 */
+    setOwnerDone: publicQuery
+      .input(taskSetOwnerDoneInput)
+      .mutation(({ input }) =>
+        setOwnerDone(
+          input.taskId,
+          input.owner,
+          input.done,
+          input.doneAt,
+          input.actor,
+        ),
+      ),
   }),
 
   /* ── 结转与统计 ── */

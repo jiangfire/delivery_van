@@ -149,6 +149,18 @@ export const taskReorderInput = z.object({
 /** 签收制（v2.0 WP3）：done 后由提出人一次点击签收，actor 必填且必须是成员 */
 export const taskConfirmInput = z.object({ taskId: idField, actor: memberTag });
 
+/**
+ * 逐人完成（v2.6）：done=true 打勾（doneAt 缺省今天，可补录），false 取消
+ * （同时作废该人签收）。actor 为软身份（审计用，可缺省）。
+ */
+export const taskSetOwnerDoneInput = z.object({
+  taskId: idField,
+  owner: memberTag,
+  done: z.boolean(),
+  doneAt: doneAtField.optional(),
+  actor: actorField,
+});
+
 export const carryRunInput = z.object({
   fromVan: vanCode,
   toVan: vanCode,

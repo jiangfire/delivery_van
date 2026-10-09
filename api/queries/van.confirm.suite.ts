@@ -196,8 +196,20 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
 
         const [copy] = await listTasksByVan("DV2607B");
         expect(copy.owners).toEqual([
-          { name: "张三", points: 3 },
-          { name: "李四", points: 2 },
+          {
+            name: "张三",
+            points: 3,
+            doneAt: null,
+            confirmedAt: null,
+            confirmedBy: null,
+          },
+          {
+            name: "李四",
+            points: 2,
+            doneAt: null,
+            confirmedAt: null,
+            confirmedBy: null,
+          },
         ]);
         expect(taskPointsOf(copy.owners)).toBe(5);
       });
