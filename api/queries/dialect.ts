@@ -98,9 +98,14 @@ export function writeLockSql(): SQL | null {
  * postgres.js 抛 error.code = 23505（unique_violation）、mysql2 抛
  * error.code = ER_DUP_ENTRY（errno 1062）。识别不了返回 false，由上层按
  * 未知错误处理。
+ *
+ * pg/mysql 的写语句经 drizzle 的 QueryPromise（thenable）抛出时会被包成
+ * message 为 "Failed query: …" 的包装错误，驱动错误码在 `cause` 上（顶层
+ * code 为 undefined）；sqlite 是同步驱动、直接抛原生错误。故两处都查。
  */
 export function isUniqueViolation(e: unknown): boolean {
-  const code = (e as { code?: unknown } | null)?.code;
+  const err = e as { code?: unknown; cause?: { code?: unknown } | null } | null;
+  const code = err?.code ?? err?.cause?.code;
   return (
     code === "SQLITE_CONSTRAINT_PRIMARYKEY" ||
     code === "SQLITE_CONSTRAINT_UNIQUE" ||

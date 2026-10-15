@@ -77,6 +77,16 @@ describe("isUniqueViolation（唯一约束冲突的方言归一）", () => {
     expect(isUniqueViolation({ code: "ER_DUP_ENTRY" })).toBe(true);
   });
 
+  it("pg/mysql 经 drizzle QueryPromise 抛出时是 DrizzleQueryError 包装（Failed query: …），驱动错误码在 cause 上", () => {
+    // 形态见 node_modules/drizzle-orm/errors.js：super(`Failed query: ${query}`) + this.cause = cause。
+    // v2.7 曾因此漏判：addSource 撞重名在真实 pg/mysql 上裸抛（CI 方言变体抓出）
+    expect(isUniqueViolation({ cause: { code: "23505" } })).toBe(true); // postgres.js 包在 cause 里
+    expect(isUniqueViolation({ cause: { code: "ER_DUP_ENTRY" } })).toBe(true); // mysql2 包在 cause 里
+    expect(isUniqueViolation({ cause: { code: "SOMETHING_ELSE" } })).toBe(
+      false,
+    );
+  });
+
   it("非约束错误与异常形状返回 false", () => {
     expect(isUniqueViolation({ code: "SQLITE_CONSTRAINT_FOREIGNKEY" })).toBe(
       false,
