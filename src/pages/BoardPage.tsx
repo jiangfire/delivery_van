@@ -17,19 +17,10 @@ import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { carryTargetCode } from "@contracts/vans";
 import { taskPointsOf } from "@contracts/points";
-import {
-  CARRY_REASON_LABELS,
-  SOURCE_LABELS,
-  type CarryReason,
-} from "@contracts/enums";
+import { CARRY_REASON_LABELS, type CarryReason } from "@contracts/enums";
 import { getActor, saveActor } from "@/lib/actor";
-import {
-  RARITY_CLASS,
-  SOURCE_CODE,
-  SOURCE_COLOR,
-  STATUS_CODE,
-  STATUS_LABEL,
-} from "@/lib/display";
+import { RARITY_CLASS, STATUS_CODE, STATUS_LABEL } from "@/lib/display";
+import { SOURCE_ADD_SENTINEL, buildSourceStyle } from "@/lib/sources";
 import type { TaskWithOwners } from "../../api/queries/van";
 import MultiSelectCellEditor from "@/components/MultiSelectCellEditor";
 import type { OwnerDraft } from "@/components/MultiSelectEditor";
@@ -39,6 +30,7 @@ import DateCellEditorComp from "@/components/DateCellEditorComp";
 import { StatsBar } from "@/components/StatsBar";
 import { StatsPanel } from "@/components/StatsPanel";
 import { CarryDialog } from "@/components/CarryDialog";
+import { SourceManagerDialog } from "@/components/SourceManagerDialog";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -72,9 +64,21 @@ export default function BoardPage() {
     { enabled: curVan !== null },
   );
   const membersQ = trpc.van.members.list.useQuery();
+  const sourcesQ = trpc.van.sources.list.useQuery();
 
   const tasks = useMemo(() => tasksQ.data ?? [], [tasksQ.data]);
   const members = useMemo(() => membersQ.data ?? [], [membersQ.data]);
+  /** 需求类型动态列表（v2.7）：下拉候选 / label↔code 反查 / 配色。
+   *  经 ref 供给列定义与编辑回调——columnDefs 不因 sources 加载完成而重建
+   *  （AG Grid 收到新数组会销毁正在编辑的编辑器，见下方 columnDefs 注释）。 */
+  const sourceStyle = useMemo(
+    () => buildSourceStyle(sourcesQ.data ?? []),
+    [sourcesQ.data],
+  );
+  const sourceStyleRef = useRef(sourceStyle);
+  useEffect(() => {
+    sourceStyleRef.current = sourceStyle;
+  }, [sourceStyle]);
   const stats = statsQ.data;
   /** 当前班次是否已结转归档（存在 carried 任务）→ 整班只读 */
   const vanArchived = useMemo(
@@ -177,6 +181,30 @@ export default function BoardPage() {
       utils.invalidate();
     },
   });
+
+  /* ── 需求类型管理（v2.7）：成功后 invalidate 由 refresh 统一刷新 ── */
+  const addSourceM = trpc.van.sources.add.useMutation({
+    onSuccess: () => {
+      toast.success("需求类型已新增，回到来源列选择即可");
+      refresh();
+    },
+    onError,
+  });
+  const renameSourceM = trpc.van.sources.rename.useMutation({
+    onSuccess: () => {
+      toast.success("已改名（历史快件显示名同步生效）");
+      refresh();
+    },
+    onError,
+  });
+  const removeSourceM = trpc.van.sources.remove.useMutation({
+    onSuccess: () => {
+      toast.success("需求类型已删除");
+      refresh();
+    },
+    onError,
+  });
+  const [sourceMgrOpen, setSourceMgrOpen] = useState(false);
 
   const { mutate: removeTask } = removeTaskM;
   const { mutate: addMember } = addMemberM;
@@ -284,8 +312,30 @@ export default function BoardPage() {
     [stats],
   );
 
+  /* ── 稳定引用层：让 columnDefs 只构建一次 ──
+   * 任何编辑后的 invalidate 都会刷新 stats / members（引用必换），直接进
+   * columnDefs 依赖会高频重建列并销毁正在编辑的编辑器。动态值统一经 ref
+   * 读取——editable / cellEditorParams / cellRenderer 都是 AG Grid 在交互
+   * 或刷新时才调用的函数，读 ref 拿到的就是最新值。 */
+  const vanReadonlyRef = useRef(vanReadonly);
+  const vanArchivedRef = useRef(vanArchived);
+  const memberNamesRef = useRef(memberNames);
+  const actorRef = useRef(actorArg);
+  const loadByMemberExcludingRef = useRef(loadByMemberExcluding);
+  const onConfirmRef = useRef(onConfirm);
+  const confirmPendingRef = useRef(confirmM.isPending);
+  useEffect(() => {
+    vanReadonlyRef.current = vanReadonly;
+    vanArchivedRef.current = vanArchived;
+    memberNamesRef.current = memberNames;
+    actorRef.current = actorArg;
+    loadByMemberExcludingRef.current = loadByMemberExcluding;
+    onConfirmRef.current = onConfirm;
+    confirmPendingRef.current = confirmM.isPending;
+  });
+
   // columnDefs 引用必须稳定：AG Grid 收到新数组会重建列并销毁正在编辑的编辑器。
-  // react-query 的 structural sharing 保证数据不变时引用稳定；编辑参数延迟到编辑时求值。
+  // 动态值经上方 ref 层读取（交互时求值），依赖数组里只剩恒定引用 → 列终身只建一次。
   const columnDefs = useMemo<TaskColDef[]>(
     () => [
       // 拖拽排序手柄列（仅无列排序时可拖，managed 模式约束；归档班由 suppressRowDrag 禁用）
@@ -307,7 +357,7 @@ export default function BoardPage() {
         minWidth: 200,
         wrapText: true,
         autoHeight: true,
-        editable: !vanReadonly,
+        editable: () => !vanReadonlyRef.current,
         editField: "title",
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
@@ -319,7 +369,7 @@ export default function BoardPage() {
         colId: "_rarity",
         headerName: "稀有度",
         width: 80,
-        editable: !vanReadonly,
+        editable: () => !vanReadonlyRef.current,
         editField: "rarity",
         cellEditor: RarityCellEditor,
         valueGetter: (p) => p.data?.rarity ?? "",
@@ -345,12 +395,13 @@ export default function BoardPage() {
         colId: "_requester",
         headerName: "提出人",
         width: 150,
-        editable: !vanReadonly,
+        editable: () => !vanReadonlyRef.current,
         editField: "requester",
         cellEditor: RequesterCellEditor,
         cellEditorParams: () => ({
-          members: memberNames,
-          onAddMember: (name: string) => addMember({ name, actor: actorArg }),
+          members: memberNamesRef.current,
+          onAddMember: (name: string) =>
+            addMember({ name, actor: actorRef.current }),
         }),
         valueGetter: (p) => p.data?.requester ?? "",
         valueSetter: (p) => {
@@ -392,26 +443,29 @@ export default function BoardPage() {
           );
         },
       },
-      // 来源列（三方占比口径，v2.0 起采集）
+      // 来源列（需求类型，v2.7 动态化：下拉来自 sources 表，尾部挂「新增」哨兵项）
       {
         colId: "_source",
         headerName: "来源",
         width: 84,
-        editable: !vanReadonly,
+        editable: () => !vanReadonlyRef.current,
         editField: "source",
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: {
-          values: Object.values(SOURCE_LABELS),
-        },
-        valueGetter: (p) =>
-          (p.data?.source && SOURCE_LABELS[p.data.source]) || "",
+        cellEditorParams: () => ({
+          values: [...sourceStyleRef.current.labels, SOURCE_ADD_SENTINEL],
+        }),
+        valueGetter: (p) => sourceStyleRef.current.label(p.data?.source ?? ""),
         valueSetter: (p) => {
-          if (p.data) {
-            const code = SOURCE_CODE[p.newValue as string];
-            if (code) p.data.source = code;
-            return true;
+          if (!p.data) return false;
+          // 哨兵项不是合法值：不写行数据、返回 false（AG Grid 视为值未变，
+          // 不 fire change event），直接打开类型管理弹层
+          if (p.newValue === SOURCE_ADD_SENTINEL) {
+            setSourceMgrOpen(true);
+            return false;
           }
-          return false;
+          const code = sourceStyleRef.current.codeOfLabel(p.newValue as string);
+          if (code) p.data.source = code;
+          return true;
         },
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
@@ -427,9 +481,9 @@ export default function BoardPage() {
             >
               <span
                 className="inline-block h-2 w-2 rounded-full"
-                style={{ background: SOURCE_COLOR[d.source] }}
+                style={{ background: sourceStyleRef.current.color(d.source) }}
               />
-              {SOURCE_LABELS[d.source]}
+              {sourceStyleRef.current.label(d.source)}
             </span>
           );
         },
@@ -440,13 +494,14 @@ export default function BoardPage() {
         width: 300,
         wrapText: true,
         autoHeight: true,
-        editable: !vanReadonly,
+        editable: () => !vanReadonlyRef.current,
         editField: "owners",
         cellEditor: MultiSelectCellEditor,
         cellEditorParams: (p: { data?: TaskRow }) => ({
-          members: memberNames,
-          onAddMember: (name: string) => addMember({ name, actor: actorArg }),
-          loadByMember: loadByMemberExcluding(p.data),
+          members: memberNamesRef.current,
+          onAddMember: (name: string) =>
+            addMember({ name, actor: actorRef.current }),
+          loadByMember: loadByMemberExcludingRef.current(p.data),
         }),
         cellRenderer: (p: ICellRendererParams<TaskRow>) => {
           const d = p.data;
@@ -463,7 +518,7 @@ export default function BoardPage() {
             <span className="flex flex-wrap items-center content-center gap-1 py-1">
               {owners.map((o) => {
                 const canSign =
-                  !vanReadonly &&
+                  !vanReadonlyRef.current &&
                   Boolean(d.requester) &&
                   o.doneAt !== null &&
                   o.confirmedAt === null;
@@ -509,15 +564,17 @@ export default function BoardPage() {
                     {canSign && (
                       <button
                         className="btn btn-glass px-1 py-0 text-[10px] leading-none"
-                        disabled={vanReadonly || confirmM.isPending}
+                        disabled={
+                          vanReadonlyRef.current || confirmPendingRef.current
+                        }
                         title={
-                          vanArchived
+                          vanArchivedRef.current
                             ? "班次已结转归档，不可签收"
                             : `签收「${o.name}」的交付`
                         }
                         onClick={(e) => {
                           e.stopPropagation();
-                          onConfirm(d, o.name);
+                          onConfirmRef.current(d, o.name);
                         }}
                       >
                         签收
@@ -571,10 +628,18 @@ export default function BoardPage() {
         colId: "_status",
         headerName: "状态",
         width: 150,
-        editable: !vanReadonly,
+        editable: () => !vanReadonlyRef.current,
         editField: "status",
         cellEditor: "agSelectCellEditor",
-        cellEditorParams: { values: ["未开始", "进行中", "完成"] },
+        // 选项按当前状态过滤（D25）：done 不可弃；drop 只有恢复项（要完成先恢复）
+        cellEditorParams: (p: { data?: TaskRow }) => ({
+          values:
+            p.data?.status === "drop"
+              ? ["放弃", "未开始", "进行中"]
+              : p.data?.status === "done"
+                ? ["未开始", "进行中", "完成"]
+                : ["未开始", "进行中", "完成", "放弃"],
+        }),
         // 网格值用中文标签（编辑器直接以 values 展示），valueSetter 反查回枚举存储
         valueGetter: (p) => STATUS_LABEL[p.data?.status ?? ""] ?? "",
         valueSetter: (p) => {
@@ -590,6 +655,15 @@ export default function BoardPage() {
           if (!d || !d.status) return null;
           if (d.status === "carried")
             return <span className="status-badge status-carried">🔁 结转</span>;
+          if (d.status === "drop")
+            return (
+              <span
+                className="status-badge status-drop"
+                title="已放弃：不进任何统计口径、结转不带走；可改回「未开始」恢复"
+              >
+                ✕ 放弃
+              </span>
+            );
           const judged = judgedOwners(d.owners);
           const doneCount = judged.filter((o) => o.doneAt !== null).length;
           return (
@@ -605,7 +679,7 @@ export default function BoardPage() {
         colId: "_doneAt",
         headerName: "送达日期",
         width: 130,
-        editable: (p) => !vanReadonly && p.data?.status === "done",
+        editable: (p) => !vanReadonlyRef.current && p.data?.status === "done",
         editField: "doneAt",
         cellEditor: DateCellEditorComp,
         valueGetter: (p) => p.data?.doneAt ?? "",
@@ -646,7 +720,7 @@ export default function BoardPage() {
         minWidth: 240,
         wrapText: true,
         autoHeight: true,
-        editable: !vanReadonly,
+        editable: () => !vanReadonlyRef.current,
         editField: "acceptance",
         valueGetter: (p) => p.data?.acceptance ?? "",
         valueSetter: (p) => {
@@ -665,7 +739,7 @@ export default function BoardPage() {
         minWidth: 200,
         wrapText: true,
         autoHeight: true,
-        editable: !vanReadonly,
+        editable: () => !vanReadonlyRef.current,
         editField: "note",
         valueGetter: (p) => p.data?.note ?? "",
         valueSetter: (p) => {
@@ -732,11 +806,13 @@ export default function BoardPage() {
           return (
             <button
               className="btn btn-danger text-xs"
-              disabled={vanReadonly}
-              title={vanArchived ? "班次已结转归档，不可删除" : undefined}
+              disabled={vanReadonlyRef.current}
+              title={
+                vanArchivedRef.current ? "班次已结转归档，不可删除" : undefined
+              }
               onClick={() => {
                 if (window.confirm(`删除快件「${d.title}」？`)) {
-                  removeTask({ id: d.id, actor: actorArg });
+                  removeTask({ id: d.id, actor: actorRef.current });
                 }
               }}
             >
@@ -746,21 +822,27 @@ export default function BoardPage() {
         },
       },
     ],
-    [
-      memberNames,
-      loadByMemberExcluding,
-      removeTask,
-      addMember,
-      vanReadonly,
-      vanArchived,
-      actorArg,
-      onConfirm,
-      confirmM.isPending,
-    ],
+    // removeTask / addMember 是 useMutation 解构出的恒定引用；其余动态值均经 ref
+    [removeTask, addMember],
   );
 
   /* ── 长文本列显隐开关（v2.2 任务 2）：默认隐藏，命令式调 GridApi，state 不进 columnDefs 依赖 ── */
   const gridApiRef = useRef<GridApi<TaskRow> | null>(null);
+
+  // 列定义稳定化后，AG Grid「行数据更新时 valueGetter 值未变的列跳过重渲染」
+  // 的默认行为会漏掉**渲染依赖别的字段**的列（正在编辑的单元格自动跳过不误伤）：
+  // - _source：sources 异步到位后 label/配色映射已变（ref 已同步）；
+  // - _requester：「待签收 n/m」徽标派生自 owners 叶子，而列值（提出人）没变；
+  // - _status：「进行中 · n/m 人已交」同样派生自 owners。
+  useEffect(() => {
+    const api = gridApiRef.current;
+    if (api && !api.isDestroyed()) {
+      api.refreshCells({
+        columns: ["_source", "_requester", "_status"],
+        force: true,
+      });
+    }
+  }, [sourceStyle, tasks]);
   const [showAcceptance, setShowAcceptance] = useState(false);
   const [showNote, setShowNote] = useState(false);
 
@@ -820,7 +902,13 @@ export default function BoardPage() {
       }
     }
     if (key === "source") {
-      value = SOURCE_CODE[value as string] ?? value;
+      const code = sourceStyleRef.current.codeOfLabel(String(value));
+      if (!code) {
+        // label 反查不到（类型刚被改名/删除的窗口期）：回滚到服务端数据
+        utils.invalidate();
+        return;
+      }
+      value = code;
     }
     if (key === "doneAt") {
       if (value instanceof Date) {
@@ -1055,7 +1143,31 @@ export default function BoardPage() {
         </div>
 
         {/* ── 统一面板（成员运力默认页签 + 复盘维度页签） ── */}
-        <StatsPanel stats={stats} onRemoveMember={onRemoveMember} />
+        <StatsPanel
+          stats={stats}
+          onRemoveMember={onRemoveMember}
+          onManageSources={() => setSourceMgrOpen(true)}
+        />
+
+        {/* ── 需求类型管理弹层（v2.7） ── */}
+        {sourceMgrOpen && (
+          <SourceManagerDialog
+            sources={sourcesQ.data ?? []}
+            pending={
+              addSourceM.isPending ||
+              renameSourceM.isPending ||
+              removeSourceM.isPending
+            }
+            onAdd={(label) =>
+              addSourceM.mutateAsync({ label, actor: actorArg })
+            }
+            onRename={(code, label) =>
+              renameSourceM.mutateAsync({ code, label, actor: actorArg })
+            }
+            onRemove={(code) => removeSourceM.mutate({ code, actor: actorArg })}
+            onClose={() => setSourceMgrOpen(false)}
+          />
+        )}
 
         {/* ── 结转确认弹层 ── */}
         {carryAsk && (

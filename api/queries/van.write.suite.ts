@@ -18,7 +18,9 @@ import {
   setOwnerDone,
   updateMemberCapacity,
   updateTask,
+  weeklyStats,
 } from "./van";
+import { addSource, listSources, removeSource, renameSource } from "./sources";
 import { execRaw } from "./dialect";
 import { todayStr } from "../../contracts/vans";
 import { taskPointsOf } from "../../contracts/points";
@@ -520,6 +522,214 @@ export function registerWriteSuite(ctx: DataLayerCtx) {
         });
         expect(list[0].status).toBe("done");
         expect(list[0].doneAt).toBe("2026-07-18");
+      });
+    });
+
+    describe("放弃状态（v2.7 drop）", () => {
+      it("todo 可标放弃、可恢复；审计记两笔 status 变更", async () => {
+        await addTask({ van: "DV2607A", title: "甲" });
+        const [t] = await listTasksByVan("DV2607A");
+        let list = await updateTask(t.id, { status: "drop" });
+        expect(list[0].status).toBe("drop");
+        expect(list[0].doneAt).toBeNull();
+        list = await updateTask(t.id, { status: "todo" });
+        expect(list[0].status).toBe("todo");
+        const rows = await ctx.db().select().from(S.auditLog);
+        const flips = rows
+          .filter((a) => a.entity === "task" && a.field === "status")
+          .map((a) => [a.oldValue, a.newValue]);
+        expect(flips).toContainEqual(["todo", "drop"]);
+        expect(flips).toContainEqual(["drop", "todo"]);
+      });
+
+      it("已送达的件不能放弃（D25）", async () => {
+        await addTask({ van: "DV2607A", title: "甲" });
+        const [t] = await listTasksByVan("DV2607A");
+        await updateTask(t.id, { status: "done" });
+        await expect(updateTask(t.id, { status: "drop" })).rejects.toThrow(
+          "不能放弃",
+        );
+      });
+
+      it("drop 件上拒绝逐人完成（D26）", async () => {
+        await addMember("张三", 10);
+        await addTask({
+          van: "DV2607A",
+          title: "甲",
+          owners: [{ name: "张三", points: 3 }],
+        });
+        const [t] = await listTasksByVan("DV2607A");
+        await updateTask(t.id, { status: "drop" });
+        await expect(setOwnerDone(t.id, "张三", true)).rejects.toThrow(
+          "已放弃",
+        );
+      });
+
+      it("drop 彻底出清：不进统计分母（D28）", async () => {
+        await addTask({ van: "DV2607A", title: "甲" });
+        await addTask({ van: "DV2607A", title: "乙" });
+        const [甲, 乙] = await listTasksByVan("DV2607A");
+        await updateTask(乙.id, { status: "done" });
+        await updateTask(甲.id, { status: "drop" });
+        const stats = await weeklyStats("DV2607A");
+        expect(stats.total).toBe(1);
+        expect(stats.done).toBe(1);
+        expect(stats.remaining).toBe(0);
+        expect(stats.completionRate).toBe(1);
+        expect(stats.loadPoints).toBe(0); // 未指派件本就 0 点
+      });
+
+      it("结转不带走 drop 件：留在原班保持 drop（D27）", async () => {
+        await addTask({ van: "DV2607A", title: "留班弃置" });
+        await addTask({ van: "DV2607A", title: "正常滞留" });
+        const [甲, 乙] = await listTasksByVan("DV2607A");
+        await updateTask(甲.id, { status: "drop" });
+        const carry = await carryOver(
+          "DV2607A",
+          "DV2607B",
+          new Date(2026, 6, 20),
+        );
+        expect(carry.carried).toBe(1); // 只有 todo 件跟车
+        const src = await listTasksByVan("DV2607A");
+        expect(src.find((x) => x.title === "留班弃置")?.status).toBe("drop");
+        expect(src.find((x) => x.title === "正常滞留")?.status).toBe("carried");
+        expect((await listTasksByVan("DV2607B")).map((x) => x.title)).toEqual([
+          "正常滞留",
+        ]);
+        expect(乙.status).toBe("todo");
+      });
+
+      it("drop 件上直接完成/补录日期被拒（先恢复，双向守卫）", async () => {
+        await addTask({
+          van: "DV2607A",
+          title: "甲",
+          owners: [{ name: "张三", points: 3 }],
+        });
+        const [t] = await listTasksByVan("DV2607A");
+        await updateTask(t.id, { status: "drop" });
+        await expect(updateTask(t.id, { status: "done" })).rejects.toThrow(
+          "请先恢复",
+        );
+        await expect(
+          updateTask(t.id, { doneAt: "2026-07-20" }),
+        ).rejects.toThrow("请先恢复");
+        // 守卫挡在叶子写之前：全体 done_at 保持空，不存在「drop 且叶子全齐」
+        const after = (await listTasksByVan("DV2607A"))[0];
+        expect(after.status).toBe("drop");
+        expect(after.owners.every((o) => o.doneAt === null)).toBe(true);
+        expect(after.doneAt).toBeNull();
+      });
+
+      it("drop 件上拒绝签收（D26）", async () => {
+        await addMember("张三", 10);
+        await addMember("李四", 10);
+        await addMember("产品", 10);
+        await addTask({
+          van: "DV2607A",
+          title: "甲",
+          requester: "产品",
+          // 双人件：一人交付后件级是 doing（不是 done），仍可放弃
+          owners: [
+            { name: "张三", points: 3 },
+            { name: "李四", points: 2 },
+          ],
+        });
+        const [t] = await listTasksByVan("DV2607A");
+        await setOwnerDone(t.id, "张三", true);
+        await updateTask(t.id, { status: "drop" });
+        await expect(confirmTask(t.id, "张三", "产品")).rejects.toThrow(
+          "已放弃",
+        );
+      });
+
+      it("只有 done + drop 件的班结转：零滞留跟车、原班不归档", async () => {
+        await addTask({ van: "DV2607A", title: "已送达" });
+        await addTask({ van: "DV2607A", title: "已放弃" });
+        const [甲, 乙] = await listTasksByVan("DV2607A");
+        await updateTask(甲.id, { status: "done" });
+        await updateTask(乙.id, { status: "drop" });
+        const carry = await carryOver(
+          "DV2607A",
+          "DV2607B",
+          new Date(2026, 6, 20),
+        );
+        expect(carry.carried).toBe(0);
+        // 原班无 carried 任务 → 不归档，drop 件仍可手动恢复
+        const list = await updateTask(乙.id, { status: "todo" });
+        expect(list.find((x) => x.title === "已放弃")?.status).toBe("todo");
+      });
+    });
+
+    describe("需求类型管理（v2.7 sources）", () => {
+      it("内置三项由种子保证存在，内置在前", async () => {
+        const list = await listSources();
+        expect(list.map((x) => x.code)).toEqual([
+          "customer",
+          "platform",
+          "exploration",
+        ]);
+        expect(list.every((x) => x.builtIn)).toBe(true);
+      });
+
+      it("新增自定义类型（code == 显示名）并可被快件选用、进统计桶", async () => {
+        await addSource("运营", "管理员");
+        await addTask({ van: "DV2607A", title: "甲", source: "运营" });
+        const [t] = await listTasksByVan("DV2607A");
+        expect(t.source).toBe("运营");
+        const stats = await weeklyStats("DV2607A");
+        expect(stats.source.find((x) => x.source === "运营")?.total).toBe(1);
+      });
+
+      it("重名拒绝（CONFLICT，撞 code 或 label 同罪）", async () => {
+        await addSource("运营");
+        await expect(addSource("运营")).rejects.toThrow("已存在");
+      });
+
+      it("新增撞他人 label（如内置显示名）拒绝；改名撞他人 label 拒绝", async () => {
+        // 内置 customer 的 label 是「客户」：新类型想叫「客户」→ 撞 label 唯一约束
+        await expect(addSource("客户")).rejects.toThrow("已存在");
+        await addSource("运营");
+        await expect(renameSource("运营", "客户")).rejects.toThrow("占用");
+      });
+
+      it("改名只动 label：历史件零迁移（code 不变）", async () => {
+        await addSource("运营");
+        await addTask({ van: "DV2607A", title: "甲", source: "运营" });
+        await renameSource("运营", "运营需求");
+        const [t] = await listTasksByVan("DV2607A");
+        expect(t.source).toBe("运营");
+        expect(
+          (await listSources()).find((x) => x.code === "运营")?.label,
+        ).toBe("运营需求");
+      });
+
+      it("内置可改名不可删", async () => {
+        await renameSource("customer", "甲方");
+        await expect(removeSource("customer")).rejects.toThrow("不可删除");
+        expect(
+          (await listSources()).find((x) => x.code === "customer")?.label,
+        ).toBe("甲方");
+      });
+
+      it("有引用的类型不可删（报引用数），零引用可删", async () => {
+        await addSource("运营");
+        await addTask({ van: "DV2607A", title: "甲", source: "运营" });
+        await expect(removeSource("运营")).rejects.toThrow("1 个快件");
+        const [t] = await listTasksByVan("DV2607A");
+        await removeTask(t.id);
+        await removeSource("运营");
+        expect((await listSources()).map((x) => x.code)).not.toContain("运营");
+      });
+
+      it("快件选用不存在的类型被拒（值域校验在数据层，列出可用值）", async () => {
+        await addTask({ van: "DV2607A", title: "甲" });
+        const [t] = await listTasksByVan("DV2607A");
+        await expect(
+          addTask({ van: "DV2607A", title: "乙", source: "幽灵" }),
+        ).rejects.toThrow("需求类型「幽灵」不存在");
+        await expect(updateTask(t!.id, { source: "幽灵" })).rejects.toThrow(
+          "不存在",
+        );
       });
     });
 

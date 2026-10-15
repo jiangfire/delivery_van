@@ -492,8 +492,15 @@ describe("周统计", () => {
           case 2:
             return createQueryable(mockOwnerRows);
           case 3:
-            return createQueryable(mockMembers);
+            // 需求类型列表（v2.7 动态化，weeklyStats 读 sources 表出桶）
+            return createQueryable([
+              { code: "customer", label: "客户", builtIn: 1 },
+              { code: "platform", label: "平台", builtIn: 1 },
+              { code: "exploration", label: "探索", builtIn: 1 },
+            ]);
           case 4:
+            return createQueryable(mockMembers);
+          case 5:
             return createQueryable([{ code: "DV2607B" }, { code: "DV2607A" }]);
           // 全部快件（空，故不再触发负责人查询）/ 审计链尾
           default:

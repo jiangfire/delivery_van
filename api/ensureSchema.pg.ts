@@ -77,6 +77,25 @@ export async function ensureSchemaPg() {
       confirmed_by text
     )`,
   );
+  // 需求类型（快件来源，v2.7 动态化）：表 + 内置三项种子。ON CONFLICT 按
+  // code 主键幂等——改过内置显示名的库重启后不会被种子覆盖回去
+  await execRaw(
+    db,
+    sql`CREATE TABLE IF NOT EXISTS sources (
+      code text PRIMARY KEY,
+      label text NOT NULL UNIQUE,
+      built_in integer NOT NULL DEFAULT 0,
+      created_at integer NOT NULL DEFAULT ((extract(epoch from now()))::int)
+    )`,
+  );
+  await execRaw(
+    db,
+    sql`INSERT INTO sources (code, label, built_in) VALUES
+      ('customer', '客户', 1),
+      ('platform', '平台', 1),
+      ('exploration', '探索', 1)
+    ON CONFLICT (code) DO NOTHING`,
+  );
   // 链式审计日志表（WP2）：只追加不改写，读链校验见 queries/audit.ts
   await execRaw(
     db,

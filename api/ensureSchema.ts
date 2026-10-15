@@ -93,7 +93,7 @@ async function ensureSchemaSqlite() {
     // 列已存在，忽略
   }
   await db.run(sql`UPDATE tasks SET sort_order = id WHERE sort_order IS NULL`);
-  // v2.0 兼容旧库：source（三方占比口径，存量统一客户件）与结转原因列，幂等添加
+  // v2.0 兼容旧库：source（来源口径，存量统一客户件）与结转原因列，幂等添加
   try {
     db.run(
       sql`ALTER TABLE tasks ADD COLUMN source text NOT NULL DEFAULT 'customer'`,
@@ -144,6 +144,22 @@ async function ensureSchemaSqlite() {
       confirmed_at text,
       confirmed_by text
     )
+  `);
+  // 需求类型（快件来源，v2.7 动态化）：表 + 内置三项种子。INSERT OR IGNORE 按
+  // code 主键幂等——改过内置显示名的库重启后不会被种子覆盖回去
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS sources (
+      code text PRIMARY KEY,
+      label text NOT NULL UNIQUE,
+      built_in integer NOT NULL DEFAULT 0,
+      created_at integer NOT NULL DEFAULT (unixepoch())
+    )
+  `);
+  await db.run(sql`
+    INSERT OR IGNORE INTO sources (code, label, built_in) VALUES
+      ('customer', '客户', 1),
+      ('platform', '平台', 1),
+      ('exploration', '探索', 1)
   `);
   // 兼容旧库：task_owners 可能没有 points 列（v2.5 每人点数制），幂等添加
   try {

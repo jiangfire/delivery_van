@@ -17,6 +17,12 @@ import {
   weeklyStats,
 } from "./queries/van";
 import {
+  addSource,
+  listSources,
+  removeSource,
+  renameSource,
+} from "./queries/sources";
+import {
   carryReasonField,
   carryRunInput,
   doneAtField,
@@ -26,7 +32,10 @@ import {
   memberTag,
   ownerPointsField,
   requesterField,
+  sourceAddInput,
   sourceField,
+  sourceRemoveInput,
+  sourceRenameInput,
   taskAddInput,
   taskConfirmInput,
   taskRemoveInput,
@@ -77,6 +86,25 @@ export const vanRouter = createRouter({
     remove: publicQuery
       .input(memberRemoveInput)
       .mutation(({ input }) => removeMember(input.name, input.actor)),
+  }),
+
+  /* ── 需求类型（快件来源，v2.7 动态化） ── */
+  sources: createRouter({
+    list: publicQuery.query(() => listSources()),
+    /** 新增自定义类型（code == 显示名，此后 code 永不变） */
+    add: publicQuery
+      .input(sourceAddInput)
+      .mutation(({ input }) => addSource(input.label, input.actor)),
+    /** 改显示名：code 不动，历史数据零迁移 */
+    rename: publicQuery
+      .input(sourceRenameInput)
+      .mutation(({ input }) =>
+        renameSource(input.code, input.label, input.actor),
+      ),
+    /** 有守卫的硬删：内置不可删、有快件引用不可删 */
+    remove: publicQuery
+      .input(sourceRemoveInput)
+      .mutation(({ input }) => removeSource(input.code, input.actor)),
   }),
 
   /* ── 快件 ── */

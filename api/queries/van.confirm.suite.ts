@@ -401,7 +401,7 @@ export function registerConfirmSuite(ctx: DataLayerCtx) {
         expect(s.unconfirmed).toBe(1);
         // 昨日天气：上一班（DV2607A）done 件点数 = 3
         expect(s.suggestedLoad).toBe(3);
-        // 三方占比：本班 platform 1 件、customer 1 件（结转件默认 customer）
+        // 来源占比：本班 platform 1 件、customer 1 件（结转件默认 customer）
         const bySrc = Object.fromEntries(
           s.source.map((x) => [x.source, x.total]),
         );

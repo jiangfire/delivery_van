@@ -1,13 +1,8 @@
-import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { TRPCError } from "@trpc/server";
 import { getDb } from "./connection";
 import { RARITIES, type Rarity, type Task } from "../../db/schema";
-import {
-  CARRY_REASONS,
-  SOURCES,
-  type CarryReason,
-  type Source,
-} from "../../contracts/enums";
+import { CARRY_REASONS, type CarryReason } from "../../contracts/enums";
 import {
   carryTargetCode,
   firstVanCodeOf,
@@ -22,6 +17,7 @@ import {
   type AuditEntry,
 } from "./audit";
 import { runTx } from "./tx";
+import { ensureSourceExists, listSources } from "./sources";
 import {
   getSchema,
   insertReturningId,
@@ -63,16 +59,18 @@ export function toStrandedTask(
 
 /**
  * 班次任务统计（纯函数）：结转率 = 结转出去的任务数 / 总数（见设计方案「结转率」指标），
- * carriedIn 则记录本班承接的上一班滞留件数。
+ * carriedIn 则记录本班承接的上一班滞留件数。drop（放弃，v2.7）彻底出清：不进任何
+ * 分母/分子——total/remaining 与两率的分母均剔除 drop 件，它只在表格里可见。
  */
 export function taskStatsOf(
   rows: Pick<Task, "status" | "carriedFrom" | "carryCount">[],
 ) {
-  const total = rows.length;
-  const done = rows.filter((t) => t.status === "done").length;
-  const carriedOut = rows.filter((t) => t.status === "carried").length;
-  const carriedIn = rows.filter((t) => t.carriedFrom !== null).length;
-  const reviewNeeded = rows.filter((t) => t.carryCount >= 2).length;
+  const active = rows.filter((t) => t.status !== "drop");
+  const total = active.length;
+  const done = active.filter((t) => t.status === "done").length;
+  const carriedOut = active.filter((t) => t.status === "carried").length;
+  const carriedIn = active.filter((t) => t.carriedFrom !== null).length;
+  const reviewNeeded = active.filter((t) => t.carryCount >= 2).length;
   return {
     total,
     done,
@@ -118,6 +116,7 @@ export function requesterStatsOf(
     }
   >();
   for (const t of rows) {
+    if (t.status === "drop") continue; // 放弃出清（D28）：不进记分卡任何口径
     const key = t.requester ?? "未标注";
     const b = buckets.get(key) ?? {
       key,
@@ -160,6 +159,7 @@ export function rarityInflationOf(rows: Pick<Task, "rarity" | "status">[]): {
     { total: number; done: number; stranded: number }
   >();
   for (const t of rows) {
+    if (t.status === "drop") continue; // 放弃出清（D28）
     const b = buckets.get(t.rarity) ?? { total: 0, done: 0, stranded: 0 };
     b.total += 1;
     if (t.status === "done") b.done += 1;
@@ -177,16 +177,24 @@ export function rarityInflationOf(rows: Pick<Task, "rarity" | "status">[]): {
   return { byRarity, urStrandRate: rate("ur"), nStrandRate: rate("n") };
 }
 
-/** 三方占比（WP1）：全部三个来源桶都返回（含零桶，迷你条需要完整结构）+ 各方滞留率 */
-export function sourceStatsOf(rows: Pick<Task, "source" | "status">[]): {
-  source: Source;
+/**
+ * 来源占比（WP1，v2.7 动态化）：按传入的 code 列表出桶（含零桶，迷你条需要完整
+ * 结构），drop 件出清（D28）。列表来自 sources 表（listSources），
+ * 删除守卫保证不会出现「不在列表里的幽灵 code」。
+ */
+export function sourceStatsOf(
+  rows: Pick<Task, "source" | "status">[],
+  codes: string[],
+): {
+  source: string;
   total: number;
   done: number;
   stranded: number;
   strandRate: number | null;
 }[] {
-  return SOURCES.map((source) => {
-    const mine = rows.filter((t) => t.source === source);
+  const active = rows.filter((t) => t.status !== "drop");
+  return codes.map((source) => {
+    const mine = active.filter((t) => t.source === source);
     const total = mine.length;
     const stranded = mine.filter((t) => t.status === "carried").length;
     return {
@@ -240,6 +248,7 @@ export function carryReasonStatsOf(
  * - 🚚 整班准点：本班有件且全部送达（stranded 滞留 = 0）；
  * - 📦 送达连击：成员在连续 2 个「实际负责过件的班次」零滞留（跳班不补给，
  *   最新班实时乐观计数——尚未结转即视为暂无滞留，结转后如滞留会自动熄灭）。
+ * drop 件出清（D28）：既不挡整班准点、也不断连击——被放弃的件视同没上过车。
  * vans 为最新在前的编码列表。
  */
 export function badgesOf(
@@ -247,18 +256,19 @@ export function badgesOf(
   vans: string[],
   rows: (Pick<Task, "vanCode" | "status"> & { owners: { name: string }[] })[],
 ): { teamPunctual: boolean; streaks: string[] } {
-  const mine = rows.filter((t) => t.vanCode === van);
+  const activeRows = rows.filter((t) => t.status !== "drop");
+  const mine = activeRows.filter((t) => t.vanCode === van);
   const teamPunctual =
     mine.length > 0 && mine.every((t) => t.status === "done");
 
   const orderedVans = [...vans].sort().reverse(); // 最新在前
   const streaks: string[] = [];
   for (const name of new Set(
-    rows.flatMap((t) => t.owners.map((o) => o.name)),
+    activeRows.flatMap((t) => t.owners.map((o) => o.name)),
   )) {
     let streak = 0;
     for (const v of orderedVans) {
-      const mineInVan = rows.filter(
+      const mineInVan = activeRows.filter(
         (t) => t.vanCode === v && t.owners.some((o) => o.name === name),
       );
       if (mineInVan.length === 0) continue; // 未参与的班次不补给连击
@@ -653,7 +663,7 @@ export async function addTask(input: {
   requester?: string;
   owners?: OwnerAlloc[];
   acceptance?: string | null;
-  source?: Source;
+  source?: string;
   actor?: string;
 }) {
   if (await isVanArchived(input.van)) {
@@ -661,6 +671,10 @@ export async function addTask(input: {
       code: "BAD_REQUEST",
       message: `班次 ${input.van} 已结转归档，不可新增快件`,
     });
+  }
+  // 值域校验在数据层（zod 只管形状）：source 必须命中 sources 表（v2.7 动态化）
+  if (input.source !== undefined) {
+    await ensureSourceExists(input.source);
   }
   const db = getDb();
   // 新快件排在班次末尾
@@ -761,10 +775,10 @@ export async function updateTask(
     requester: string | null;
     owners: OwnerAlloc[];
     acceptance: string | null;
-    status: "todo" | "doing" | "done";
+    status: "todo" | "doing" | "done" | "drop";
     doneAt: string | null;
     note: string | null;
-    source: Source;
+    source: string;
     /* confirmed_* 仅数据层内部使用：取消完成时作废签收，路由层不暴露 */
     confirmedBy?: string | null;
     confirmedAt?: string | null;
@@ -780,6 +794,28 @@ export async function updateTask(
       code: "BAD_REQUEST",
       message: `班次 ${current.vanCode} 已结转归档，不可修改`,
     });
+  }
+  // 放弃守卫（D25，双向）：放弃是独立动线——已送达的件不能直接弃（先取消完成）；
+  // 已放弃的件也不能直接完成/补日期（先恢复），否则件级完成快捷会给叶子打勾、
+  // doneAt 直写会绕过聚合，造出「drop 且叶子全齐/带完成日期」的歧义状态（D26）
+  if (patch.status === "drop" && current.status === "done") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "已送达的快件不能放弃，请先取消完成",
+    });
+  }
+  if (
+    current.status === "drop" &&
+    (patch.status === "done" || patch.doneAt !== undefined)
+  ) {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "已放弃的快件不能直接完成或补录日期，请先恢复（未开始/进行中）",
+    });
+  }
+  // 值域校验在数据层（zod 只管形状）：source 必须命中 sources 表（v2.7 动态化）
+  if (patch.source !== undefined && patch.source !== current.source) {
+    await ensureSourceExists(patch.source);
   }
   // 现任负责人（含各自点数，审计对比用）。负责人顺序无语义（点数各归各人），
   // 故对比前按名字归一，避免仅顺序变化就记一条无意义的链。
@@ -981,16 +1017,23 @@ export function aggregateOf(
   const allConfirmed = judged.every((o) => o.confirmedAt !== null);
   const anyDone = judged.some((o) => o.doneAt !== null);
 
-  const status: Task["status"] = allDone
-    ? "done"
-    : currentStatus === "carried"
-      ? "carried" // 归档只读，不参与推导
-      : currentStatus === "done" || anyDone
-        ? "doing" // D9：首次有人完成单向升 doing；有人取消则从 done 回落
-        : currentStatus;
-  const doneAt = allDone
-    ? judged.reduce((max, o) => (o.doneAt! > max ? o.doneAt! : max), "")
-    : null;
+  const status: Task["status"] =
+    currentStatus === "drop"
+      ? "drop" // 放弃粘性（D26）：优先于 allDone，不被叶子推导覆盖，恢复只能手动改状态
+      : allDone
+        ? "done"
+        : currentStatus === "carried"
+          ? "carried" // 归档只读，不参与推导
+          : currentStatus === "done" || anyDone
+            ? "doing" // D9：首次有人完成单向升 doing；有人取消则从 done 回落
+            : currentStatus;
+  // 件级完成日期与 status 同源：放弃的件不在交付动线上，不携带件级完成日期
+  const doneAt =
+    currentStatus === "drop"
+      ? null
+      : allDone
+        ? judged.reduce((max, o) => (o.doneAt! > max ? o.doneAt! : max), "")
+        : null;
   let confirmedAt: string | null = null;
   let confirmedBy: string | null = null;
   if (allConfirmed) {
@@ -1102,6 +1145,13 @@ export async function setOwnerDone(
     throw new TRPCError({
       code: "BAD_REQUEST",
       message: `班次 ${task.vanCode} 已结转归档，不可修改`,
+    });
+  }
+  // 放弃的件不在交付动线上（D26）：杜绝「drop 且叶子全齐」的歧义状态
+  if (task.status === "drop") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "已放弃的快件不能操作完成，请先恢复（未开始/进行中）",
     });
   }
   const [row] = await db
@@ -1238,11 +1288,17 @@ export async function carryOver(
       await qRun(tx.insert(vans).values({ code: toVan }));
     }
 
+    // 未完成 = todo/doing（done 已送达、drop 已放弃都不跟车，D27：放弃不是滞留）
     const unfinished = await qAll(
       tx
         .select()
         .from(tasks)
-        .where(and(eq(tasks.vanCode, fromVan), ne(tasks.status, "done"))),
+        .where(
+          and(
+            eq(tasks.vanCode, fromVan),
+            notInArray(tasks.status, ["done", "drop"]),
+          ),
+        ),
     );
 
     // 结转快件追加到目标班末尾（拖拽排序列：从目标班现有 max(sort_order) 起递增）
@@ -1294,7 +1350,7 @@ export async function carryOver(
         await recomputeTaskAggregate(tx, newId);
       }
     }
-    // 源班次的快件标记为 🔁结转，旧车数据同步可见（四态：未开始/进行中/完成/结转）
+    // 源班次的快件标记为 🔁结转，旧车数据同步可见（五态：未开始/进行中/完成/结转/放弃）
     if (unfinished.length > 0) {
       await qRun(
         tx
@@ -1392,6 +1448,13 @@ export async function confirmTask(
       message: `班次 ${task.vanCode} 已结转归档，不可签收`,
     });
   }
+  // 放弃的件不在交付动线上（D26）：签收的前提是有效交付
+  if (task.status === "drop") {
+    throw new TRPCError({
+      code: "BAD_REQUEST",
+      message: "已放弃的快件不能签收，请先恢复（未开始/进行中）",
+    });
+  }
   const [member] = await db
     .select({ id: members.id })
     .from(members)
@@ -1463,12 +1526,16 @@ export async function confirmTask(
 export async function weeklyStats(van: string) {
   const rows = await listTasksByVan(van);
   const taskStats = taskStatsOf(rows);
+  // 放弃出清（D28）：个人运力/整车装载/来源占比的输入都剔除 drop 件
+  // （requester/inflation/badges/carryReasons 在各自纯函数内出清）
+  const active = rows.filter((t) => t.status !== "drop");
+  const sourceOptions = await listSources();
 
   // 按负责人聚合运力统计（v2.5 每人点数制：每人只计**自己那份**点数，
   // 不再"一件多人则每人各计全量"——那会把 5 点的活记成 3 个人各 5 点）
   const memberRows = await listMembers();
   const byMember = memberRows.map((m) => {
-    const mine = rows.filter((t) => t.owners.some((o) => o.name === m.name));
+    const mine = active.filter((t) => t.owners.some((o) => o.name === m.name));
     const ownPoints = (t: (typeof mine)[number]) =>
       t.owners.find((o) => o.name === m.name)?.points ?? 0;
     return {
@@ -1499,14 +1566,17 @@ export async function weeklyStats(van: string) {
     ...taskStats,
     members: byMember,
     /** 整车装载点数 = 本班各件点数（各负责人点数之和）的合计；对照个人条看口径 */
-    loadPoints: rows.reduce((s, t) => s + taskPointsOf(t.owners), 0),
+    loadPoints: active.reduce((s, t) => s + taskPointsOf(t.owners), 0),
     /* ── v2.0（Phase 1）统计扩展 ── */
     // 未签收：done 且不满足签收口径（自驱件视同签收，不计入）
     unconfirmed: rows.filter((t) => t.status === "done" && !isConfirmed(t))
       .length,
     requester: requesterStatsOf(rows),
     inflation: rarityInflationOf(rows),
-    source: sourceStatsOf(rows),
+    source: sourceStatsOf(
+      rows,
+      sourceOptions.map((s) => s.code),
+    ),
     suggestedLoad: suggestedLoadOf(van, allVans, allTasks),
     badges: badgesOf(van, allVans, allTasks),
     carryReasons: carryReasonStatsOf(rows),

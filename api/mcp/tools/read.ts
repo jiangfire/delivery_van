@@ -2,9 +2,10 @@
  * 只读工具集（开发向）。tRPC 对照：
  *   van_list     → van.list            （经 caller）
  *   tasks_by_van → van.tasks.byVan     （经 caller）
- *   members_list → van.members.list    （经 caller）
- *   stats_by_van → van.stats.byVan     （经 caller）
  *   tasks_all    → —（无对应过程，直调 listAllTasks 读函数）
+ *   members_list → van.members.list    （经 caller）
+ *   sources_list → van.sources.list    （经 caller，v2.7 需求类型动态化）
+ *   stats_by_van → van.stats.byVan     （经 caller）
  *   audit_verify → —（无对应过程，直调 audit 读函数）
  *
  * 规则：能走 caller 的一律走 caller；**读**工具在没有对应 tRPC 过程时可以直调
@@ -42,7 +43,7 @@ export const readTools = [
     name: "tasks_by_van",
     title: "List packages on one van",
     description:
-      "List the packages (tasks) on one van, in board display order. Fields include status (todo/doing/done/carried), owners, rarity, requester, source, doneAt and carry info. Each owner carries their OWN points (`owners[].points`, 1 point = half a day, 0-10) plus their personal delivery state: `owners[].doneAt` (non-null = that person delivered), `owners[].confirmedAt` (non-null = that person's share was signed off) and `owners[].confirmedBy` (who signed). A package's total points is the sum over its owners, and a package with no owners counts as 0 points. There is no longer a task-level `size` field. Pass `limit` to cap the rows; when the cap is hit the response sets `truncated: true` and reports the true total, so nothing is ever silently dropped.",
+      "List the packages (tasks) on one van, in board display order. Fields include status (todo/doing/done/carried/drop — `drop` means abandoned: the package stays visible on its van but is excluded from every statistic and is never carried to the next van; a done package cannot be dropped), owners, rarity, requester, source (a code from `sources_list`), doneAt and carry info. Each owner carries their OWN points (`owners[].points`, 1 point = half a day, 0-10) plus their personal delivery state: `owners[].doneAt` (non-null = that person delivered), `owners[].confirmedAt` (non-null = that person's share was signed off) and `owners[].confirmedBy` (who signed). A package's total points is the sum over its owners, and a package with no owners counts as 0 points. There is no longer a task-level `size` field. Pass `limit` to cap the rows; when the cap is hit the response sets `truncated: true` and reports the true total, so nothing is ever silently dropped.",
     inputSchema: z.object({
       van: vanCode.describe(
         "Van code, e.g. DV2609A. Use van_list to discover valid codes.",
@@ -107,10 +108,22 @@ export const readTools = [
   }),
 
   defineTool({
+    name: "sources_list",
+    title: "List requirement types",
+    description:
+      "List the requirement types (package sources) usable as the `source` field of a package. Since v2.7 this list is dynamic: built-ins customer/platform/exploration plus any custom types the team added. Each entry has `code` (the value stored on packages), `label` (display name, editable) and `builtIn` (built-ins cannot be deleted, only renamed). Always call this before setting `source` — custom codes exist that are not in the built-in list.",
+    inputSchema: z.object({}),
+    annotations: { readOnlyHint: true },
+    async run() {
+      return createCaller().van.sources.list();
+    },
+  }),
+
+  defineTool({
     name: "stats_by_van",
     title: "Weekly statistics for one van",
     description:
-      "Weekly statistics for one van. Counts and rates: `total`, `done`, `carriedOut`, `carriedIn`, `reviewNeeded`, `remaining`, `completionRate` (done/total), `carryRate` (carriedOut/total), plus `unconfirmed` (delivered but NOT yet signed by every judged owner; packages with no requester are self-driven and count as signed). Also `members` (per-owner `assigned`/`capacity` — `assigned` sums only the points each person holds themselves, not the full points of every package they appear on — plus `deliveredPoints`, the points of that person's own shares that are marked delivered; delivered shares do NOT count toward any delivery rate while the package as a whole is unfinished), `loadPoints` (the van's total points = sum over packages of their owners' points = committed load, including delivered shares), `requester` scorecards, `inflation` by rarity, `source` split, `carryReasons` breakdown, `suggestedLoad`, `badges`, and `auditFingerprint`. IMPORTANT: these metrics deliberately use different definitions — `completionRate`/`carryRate`/`suggestedLoad`/`badges` count a package as delivered only when the WHOLE package is done, while `unconfirmed` uses the stricter signed-receipt rule. Partial per-owner delivery never counts as delivered. Do not recompute one from another; use the values as returned.",
+      "Weekly statistics for one van. Counts and rates: `total`, `done`, `carriedOut`, `carriedIn`, `reviewNeeded`, `remaining`, `completionRate` (done/total), `carryRate` (carriedOut/total), plus `unconfirmed` (delivered but NOT yet signed by every judged owner; packages with no requester are self-driven and count as signed). DROPPED packages (status=drop, v2.7) are excluded from every count and rate here — they are fully cleared from all statistics. Also `members` (per-owner `assigned`/`capacity` — `assigned` sums only the points each person holds themselves, not the full points of every package they appear on — plus `deliveredPoints`, the points of that person's own shares that are marked delivered; delivered shares do NOT count toward any delivery rate while the package as a whole is unfinished), `loadPoints` (the van's total points = sum over packages of their owners' points = committed load, including delivered shares, excluding dropped packages), `requester` scorecards, `inflation` by rarity, `source` split (one bucket per requirement type from `sources_list`), `carryReasons` breakdown, `suggestedLoad`, `badges`, and `auditFingerprint`. IMPORTANT: these metrics deliberately use different definitions — `completionRate`/`carryRate`/`suggestedLoad`/`badges` count a package as delivered only when the WHOLE package is done, while `unconfirmed` uses the stricter signed-receipt rule. Partial per-owner delivery never counts as delivered. Do not recompute one from another; use the values as returned.",
     inputSchema: z.object({
       van: vanCode.describe(
         "Van code, e.g. DV2609A. Use van_list to discover valid codes.",

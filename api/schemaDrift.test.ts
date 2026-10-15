@@ -14,6 +14,7 @@ const TABLE_EXPORTS = [
   "members",
   "vans",
   "poolItems",
+  "sources",
   "tasks",
   "taskOwners",
   "auditLog",

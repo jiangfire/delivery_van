@@ -18,9 +18,12 @@ export interface DataLayerCtx {
   S: typeof sqliteSchema;
 }
 
-/** 清空业务表（pg/mysql 变体每用例前置调用；_dv_meta 版本表不动）。先子表后主表。 */
+/** 清空业务表（pg/mysql 变体每用例前置调用；_dv_meta 版本表不动）。先子表后主表。
+ *  sources 只清自定义项：内置三项（customer/platform/exploration）是种子保证的
+ *  环境常量（label 可能被用例改过，保留即保持真实部署形态）。 */
 export async function cleanAllTables(db: AppDb): Promise<void> {
   for (const t of ["task_owners", "tasks", "audit_log", "members", "vans"]) {
     await execRaw(db, sql`DELETE FROM ${sql.identifier(t)}`);
   }
+  await execRaw(db, sql`DELETE FROM sources WHERE built_in = 0`);
 }

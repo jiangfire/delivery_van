@@ -163,13 +163,16 @@ describe("rarityInflationOf（稀有度通胀报表）", () => {
   });
 });
 
-describe("sourceStatsOf（三方占比）", () => {
-  it("三方各计数 + 各方滞留率，空桶也返回（迷你条需要完整结构）", () => {
-    const stats = sourceStatsOf([
-      t({ source: "customer", status: "done" }),
-      t({ source: "customer", status: "carried" }),
-      t({ source: "platform", status: "todo" }),
-    ]);
+describe("sourceStatsOf（来源占比，v2.7 动态列表）", () => {
+  it("按传入列表各计数 + 各方滞留率，空桶也返回（迷你条需要完整结构）", () => {
+    const stats = sourceStatsOf(
+      [
+        t({ source: "customer", status: "done" }),
+        t({ source: "customer", status: "carried" }),
+        t({ source: "platform", status: "todo" }),
+      ],
+      ["customer", "platform", "exploration"],
+    );
     expect(stats).toEqual([
       {
         source: "customer",
@@ -189,9 +192,40 @@ describe("sourceStatsOf（三方占比）", () => {
     ]);
   });
 
-  it("空班次返回三方零桶", () => {
-    expect(sourceStatsOf([])).toHaveLength(3);
-    expect(sourceStatsOf([])[0].total).toBe(0);
+  it("自定义类型按传入列表出桶（v2.7 动态化）", () => {
+    const stats = sourceStatsOf(
+      [t({ source: "运营", status: "done" })],
+      ["customer", "运营"],
+    );
+    expect(stats[1]).toEqual({
+      source: "运营",
+      total: 1,
+      done: 1,
+      stranded: 0,
+      strandRate: 0,
+    });
+  });
+
+  it("drop 件彻底出清：不进任何来源桶（D28）", () => {
+    const stats = sourceStatsOf(
+      [
+        t({ source: "customer", status: "drop" }),
+        t({ source: "customer", status: "done" }),
+      ],
+      ["customer"],
+    );
+    expect(stats[0]).toEqual({
+      source: "customer",
+      total: 1,
+      done: 1,
+      stranded: 0,
+      strandRate: 0,
+    });
+  });
+
+  it("空班次返回全零桶", () => {
+    expect(sourceStatsOf([], ["customer", "platform"])).toHaveLength(2);
+    expect(sourceStatsOf([], ["customer"])[0].total).toBe(0);
   });
 });
 

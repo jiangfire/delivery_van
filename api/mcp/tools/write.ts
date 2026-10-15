@@ -8,10 +8,12 @@
  *   tasks_reorder   → van.tasks.reorder   members_add     → van.members.add
  *   members_remove  → van.members.remove  members_set_capacity → van.members.setCapacity
  *   tasks_set_owner_done → van.tasks.setOwnerDone
+ *   sources_add     → van.sources.add     sources_rename  → van.sources.rename
+ *   sources_remove  → van.sources.remove
  *
  * 两条纪律：
  * 1. **actor 必填**：软身份，落链式审计日志（AGENTS.md「写操作一律带 actor」）。
- *    全部 11 个写工具的 schema 里都有**必填** actor——`write.test.ts` 对
+ *    全部写工具的 schema 里都有**必填** actor——`write.test.ts` 对
  *    「actor 字段存在」与「actor 非 optional」各有一条断言，勿用「空对象被拒」
  *    之类的代理条件代替（那只会证明存在别的必填字段）。
  * 2. **description 必须明写不可逆后果**：模型读的是 description，不是
@@ -26,6 +28,9 @@ import {
   memberRemoveInput,
   memberSetCapacityInput,
   memberTag,
+  sourceAddInput,
+  sourceRemoveInput,
+  sourceRenameInput,
   taskAddInput,
   taskConfirmInput,
   taskRemoveInput,
@@ -56,7 +61,7 @@ export const writeTools = [
     name: "tasks_add",
     title: "Add a package to a van",
     description:
-      "Add a package to a van. `owners` is one entry per person, each carrying their own points: `[{ name, points }]` with points 0-10 (1 point = half a day; 0 means listed but not loaded). Every owner MUST be given an explicit points value — there is no default, and there is no task-level `size` field anymore: a package's total points is the sum over its owners. A package may also be added with no owners, in which case it counts as 0 points until someone is assigned. The van must not be archived (a van that already has carried packages is permanently read-only). `actor` is required and is recorded in the audit log.",
+      "Add a package to a van. `owners` is one entry per person, each carrying their own points: `[{ name, points }]` with points 0-10 (1 point = half a day; 0 means listed but not loaded). Every owner MUST be given an explicit points value — there is no default, and there is no task-level `size` field anymore: a package's total points is the sum over its owners. A package may also be added with no owners, in which case it counts as 0 points until someone is assigned. `source` is a requirement-type code — call `sources_list` first; the value must exist there (built-ins: customer/platform/exploration; custom codes allowed). The van must not be archived (a van that already has carried packages is permanently read-only). `actor` is required and is recorded in the audit log.",
     inputSchema: taskAddInput.extend({ actor: actorRequired }),
     annotations: { readOnlyHint: false, destructiveHint: false },
     async run(input) {
@@ -68,7 +73,7 @@ export const writeTools = [
     name: "tasks_update",
     title: "Update a package",
     description:
-      "Update fields on an existing package. Only the fields you pass are changed. Passing `owners` REPLACES the entire owner list, so include every person together with their own points: `[{ name, points }]`, points 0-10 (1 point = half a day). Each owner must be given an explicit points value; there is no task-level `size` field anymore. The van must not be archived. `actor` is required and is recorded in the audit log.",
+      "Update fields on an existing package. Only the fields you pass are changed. Passing `owners` REPLACES the entire owner list, so include every person together with their own points: `[{ name, points }]`, points 0-10 (1 point = half a day). Each owner must be given an explicit points value; there is no task-level `size` field anymore. `status` accepts todo/doing/done, plus `drop` since v2.7 (abandon: the package is excluded from all statistics and never carried to the next van; recoverable by setting status back to todo/doing; a done package cannot be dropped — un-done it first; an abandoned package cannot be directly completed or given a done date — restore it first). `source` must be a valid requirement-type code from `sources_list`. The van must not be archived. `actor` is required and is recorded in the audit log.",
     inputSchema: taskUpdateInput.extend({ actor: actorRequired }),
     annotations: { readOnlyHint: false, destructiveHint: false },
     async run({ id, actor, ...patch }) {
@@ -175,8 +180,44 @@ export const writeTools = [
       "DESTRUCTIVE. Remove a member by name tag. This is a guarded hard delete: it is REJECTED if the name appears anywhere on any package as an owner, requester, or confirmer, because those are plain-text references with no foreign keys — deleting would leave dangling tags that corrupt the statistics. Only members with zero history can be removed. There is no undo.",
     inputSchema: memberRemoveInput.extend({ actor: actorRequired }),
     annotations: { readOnlyHint: false, destructiveHint: true },
+    async run({ name, actor }) {
+      return createCaller().van.members.remove({ name, actor });
+    },
+  }),
+
+  defineWriteTool({
+    name: "sources_add",
+    title: "Add a requirement type",
+    description:
+      "Add a custom requirement type (package source) by display name, 1-16 chars, and it must NOT start with the full-width plus sign `＋` (that prefix is reserved for the board's inline add-entry sentinel). The name becomes BOTH the stored code and the label; the code never changes afterwards (renaming later only changes the label). Duplicate names are rejected by the server. Packages can then use this value as their `source` (see `sources_list`). `actor` is required and is recorded in the audit log.",
+    inputSchema: sourceAddInput.extend({ actor: actorRequired }),
+    annotations: { readOnlyHint: false, destructiveHint: false },
     async run(input) {
-      return createCaller().van.members.remove(input);
+      return createCaller().van.sources.add(input);
+    },
+  }),
+
+  defineWriteTool({
+    name: "sources_rename",
+    title: "Rename a requirement type",
+    description:
+      "Change the DISPLAY name (`label`) of a requirement type identified by its immutable `code`. Historical packages are unaffected (they store the code, so the rename applies everywhere instantly with zero data migration). Built-in types (customer/platform/exploration) can be renamed too. Idempotent: renaming to the current label writes nothing. `actor` is required and is recorded in the audit log.",
+    inputSchema: sourceRenameInput.extend({ actor: actorRequired }),
+    annotations: { readOnlyHint: false, destructiveHint: false },
+    async run(input) {
+      return createCaller().van.sources.rename(input);
+    },
+  }),
+
+  defineWriteTool({
+    name: "sources_remove",
+    title: "Remove a requirement type (DESTRUCTIVE)",
+    description:
+      "DESTRUCTIVE. Remove a custom requirement type by code. This is a guarded hard delete: it is REJECTED for built-in types (customer/platform/exploration) and REJECTED while any package still uses the type — those plain-text references would dangle and corrupt the statistics. Only zero-reference custom types can be removed. There is no undo.",
+    inputSchema: sourceRemoveInput.extend({ actor: actorRequired }),
+    annotations: { readOnlyHint: false, destructiveHint: true },
+    async run({ code, actor }) {
+      return createCaller().van.sources.remove({ code, actor });
     },
   }),
 ];

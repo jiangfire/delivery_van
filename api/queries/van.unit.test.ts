@@ -48,6 +48,21 @@ describe("aggregateOf", () => {
     ).toBe("carried");
   });
 
+  it("放弃粘性（D26）：drop 不被叶子推导覆盖——即便叶子全交也保持 drop，恢复只能手动", () => {
+    // 叶子全齐（防御位：守卫应杜绝此状态出现，但聚合必须保守不复活）
+    expect(
+      aggregateOf([leaf(3, "2026-07-18"), leaf(7, "2026-07-19")], "drop"),
+    ).toMatchObject({ status: "drop", doneAt: null });
+    // 有人交付过 → 仍是 drop
+    expect(aggregateOf([leaf(3, "2026-07-18"), leaf(7)], "drop")).toMatchObject(
+      { status: "drop" },
+    );
+    // 从 drop 恢复（手动改 todo）后：有人交付过 → 聚合收回 doing（v2.6 不变量延续）
+    expect(aggregateOf([leaf(3, "2026-07-18"), leaf(7)], "todo")).toMatchObject(
+      { status: "doing" },
+    );
+  });
+
   it("0 点负责人不参与判定：挂名的勾不阻塞全件闭环（D11/D15）", () => {
     // 有正点数负责人：只看他，挂名者未交不影响 done
     expect(

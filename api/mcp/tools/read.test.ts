@@ -60,12 +60,13 @@ beforeEach(async () => {
 });
 
 describe("只读工具集", () => {
-  it("恰好提供约定的 6 个只读工具", () => {
+  it("恰好提供约定的 7 个只读工具", () => {
     expect(readTools.map((t) => t.name)).toEqual([
       "van_list",
       "tasks_by_van",
       "tasks_all",
       "members_list",
+      "sources_list",
       "stats_by_van",
       "audit_verify",
     ]);

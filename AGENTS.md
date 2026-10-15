@@ -6,7 +6,7 @@
 
 delivery_van 是一个**周度发车管理工具**：团队每周五发一班"厢式快递车"，任务是快件，周五验收只看"这班的件送没送到"；没送完的滞留件跟下一班车走。机制设计见 `docs/周度发车机制设计方案.md`。
 
-- 当前版本 **v2.6.0**，主版本线代号 `STEINS;GATE`（v2.x.y 全系通用，谱系见 `README.md`）：v2.6 个人完成与签收（完成/签收拆到人，件级字段降为叶子聚合物化）、v2.5 每人点数制（点数归属到人，任务点数 = 各负责人点数之和；件级档位 `tasks.size` 废弃）、v2.4 MCP 接入（`/mcp` 端点，只读工具默认开放、写工具须 `MCP_WRITES=on`）、v2.3 统计面板统一与成员删除、v2.2 表格体验与多数据库、v2.0 博弈机制（签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章，随 v2.2.0 合并首发）。**Phase 2「议价台 + 预测投票」纸面运行中（2026-09-01 启动，零开发零发版，手册见 `docs/doing/v2.1-Phase2-议价台与预测投票纸面运行手册.md`）**。
+- 当前版本 **v2.7.0**，主版本线代号 `STEINS;GATE`（v2.x.y 全系通用，谱系见 `README.md`）：v2.7 需求类型动态化与放弃状态（来源改为存库可增改的动态列表；状态新增 drop 彻底出清）、v2.6 个人完成与签收（完成/签收拆到人，件级字段降为叶子聚合物化）、v2.5 每人点数制（点数归属到人，任务点数 = 各负责人点数之和；件级档位 `tasks.size` 废弃）、v2.4 MCP 接入（`/mcp` 端点，只读工具默认开放、写工具须 `MCP_WRITES=on`）、v2.3 统计面板统一与成员删除、v2.2 表格体验与多数据库、v2.0 博弈机制（签收制 / 链式审计日志 / 统计三件套 / 昨日天气 / 结转原因 / 徽章，随 v2.2.0 合并首发）。**Phase 2「议价台 + 预测投票」纸面运行中（2026-09-01 启动，零开发零发版，手册见 `docs/doing/v2.1-Phase2-议价台与预测投票纸面运行手册.md`）**。
 - 单页应用：`src/pages/BoardPage.tsx` 承载全部功能——班次切换、AG Grid 快件表（行内编辑）、统计条、统一统计面板（负责人 / 提出人 / 稀有度 / 结转原因 / 来源五维度页签，负责人默认，设计见 `docs/archived/统计面板统一设计方案.md`）。
 - **快件即一切**：工作条目只有 `tasks` 表一种，直接携带稀有度与提出人。旧「任务大厅」（`pool_items` 表）已废弃：表结构保留但不读写。
 - 无账号无鉴权，成员用名字标签。成员删除是**有守卫的硬删**：零历史成员可删（删除与审计同事务），名字出现在任何快件上（负责人 / 提出人 / 签收人，均无外键的纯文本引用）即拒绝（方案见 `docs/archived/成员删除功能设计方案.md`）。
@@ -19,16 +19,17 @@ delivery_van 是一个**周度发车管理工具**：团队每周五发一班"�
 - **个人完成与签收（v2.6）**：完成与签收都拆到**人**——`task_owners` 的 `done_at` / `confirmed_at` / `confirmed_by` 是唯一事实来源（`done_at` 非空 = 已交付，无单独布尔标记）。**件级 `tasks.status` / `done_at` / `confirmed_*` 降为叶子聚合的物化**，只由 `api/queries/van.ts` 的 `recomputeTaskAggregate`（纯函数 `aggregateOf`）在写叶子的同一事务内重算——下游统计（`taskStatsOf` / `suggestedLoadOf` / `badgesOf` / `isConfirmed` / `requesterStatsOf`）零改动，口径连续性自然成立。**参与判定集合** = `points > 0` 的负责人；一件全是 0 点时退化为全部 owner（否则全挂名件永不能闭环）；**无 owner 的件件级字段完全手动、聚合跳过（D12）**。`done` 仍需参与判定集合**全部**交付（没有完成 80%），`done_at` 取最后一个完成者的日期；`todo` 首次有人完成单向升 `doing`，不自动回落。0 点负责人也能打勾/被签收，只是不参与件级闭环判定。**部分完成的份额不计入任何送达口径**——完成率/滞留率/昨日天气/徽章仍按件。改负责人列表时**同名保留**三列（改点数不抹交付与签收，D14）。
 - **多人负责**：一个任务多人负责（勾选式多选编辑器，可即时新增成员标签），**每个人各自持有自己的那份点数**——勾选负责人 ≠ 设置完成：每人必须显式填点数（入参 `points` 必填、重名拦截），没填满不许确定；没填满而关闭（点外部 / Esc）会明确提示「已放弃修改」，不静默回滚。
 - **送达二值化（逐人，v2.6）**：没有"完成 80%"；某个负责人打勾即记**他自己**的送达日期，取消即清空并作废**他自己**的签收（其他人的签收保留）；日期可逐人手工补录。件级状态列的「完成」快捷保留（勾 = 给**参与判定全体**打同一日期、取消 = 清全体），多人件点击时弹确认。
-- **滞留结转**：只能转**紧邻的下一班**（服务端 `carryTargetCode` 校验：已存在则必须转已存在的最近一班，否则按当前日期推导，目标班不存在自动创建）；同一事务把源班任务标 `carried`（四态 todo/doing/done/carried 仅由结转写入）；同一对班次幂等；`carryCount >= 2` 仅提示不拦截；**结转归档只读**——班次存在 carried 任务则整班不可增/改/删（`isVanArchived`）。**整件跟车但份额继承（v2.6/D3）**：owner 行连同 `points` / `done_at` / `confirmed_*` 一起复制——已交付已签收的份额在新副本里保持、不重做，装载仍按**承诺量**（Σ 各人点数，含已交付份额）。
+- **放弃状态（v2.7）**：`drop` = 不做了的件，**手动双向**——todo/doing 可在状态列选「放弃」，drop 可改回「未开始/进行中」恢复；**done 不可弃**（服务端守卫：先取消完成）；**聚合粘性**——`aggregateOf` 里 drop 优先于一切推导（叶子交付不打回也不升 done），`setOwnerDone`/`confirm` 对 drop 件直接拒绝，直连 API 对 drop 件传 `status:"done"` 或 `doneAt` 同样拒绝（先恢复）；恢复后按叶子聚合收敛（有人交付过 → doing）。同班结转归档后，留下的 drop 件与 done 件一样整班只读锁定，不可恢复。
+- **滞留结转**：只能转**紧邻的下一班**（服务端 `carryTargetCode` 校验：已存在则必须转已存在的最近一班，否则按当前日期推导，目标班不存在自动创建）；同一事务把源班任务标 `carried`（五态 todo/doing/done/carried/drop 中 carried 仅由结转写入）；结转只带走 todo/doing——**drop 件不跟车**，留在原班保持放弃、不触发归档；同一对班次幂等；`carryCount >= 2` 仅提示不拦截；**结转归档只读**——班次存在 carried 任务则整班不可增/改/删（`isVanArchived`）。**整件跟车但份额继承（v2.6/D3）**：owner 行连同 `points` / `done_at` / `confirmed_*` 一起复制——已交付已签收的份额在新副本里保持、不重做，装载仍按**承诺量**（Σ 各人点数，含已交付份额）。
 - **稀有度/提出人**：五级 `n/r/sr/ssr/ur`（显示 N/R/SR/SSR/UR）与提出人只是标记，系统不做任何校验或上车拦截。
 - **行内拖拽排序**：按班次持久化到 `sort_order`；拖后按传入 id 顺序全量重写该班序号（幂等）；新建与结转快件排班末尾。
 - **签收制（逐人，v2.6）**：done 拆两拍——送达（逐人打勾）→ 签收（提出人**对每个人的交付分别点一次**）；被签收的人必须已交付、班次未归档、actor 必须是成员；**无提出人的自驱件不写库直接视同签收**（能推导不落库）；重签幂等不覆盖首签；参与判定全体签完才写件级 `confirmed_*`。
-- **快件来源**：三枚举 `customer/platform/exploration`，默认 customer，仅供统计不拦截。
+- **需求类型（快件来源，v2.7 动态化）**：值域存 `sources` 表（code 主键 + label 唯一 + built_in 标记），内置三项 customer/platform/exploration 由 ensureSchema 幂等种子（不可删、可改名）；自定义类型**新增时 code == 显示名、此后 code 永不变**（改名只动 label，历史件零迁移）；删除双守卫（内置拒绝、有引用拒绝并报引用数）。`tasks.source` 存 code，zod 只校验形状（1~16 字符，与 mysql 列宽对齐），「必须命中 sources 表」在数据层校验（`ensureSourceExists`）。
 - **结转原因**：五枚举，默认空=未分类；滞留原因瀑布只统计本班 status=carried 的件（与滞留率同口径）。**Phase 2 纸面约定（改代码/清理数据不得破坏）**：让位件结转选 `priority` 且 note 以 `swap：` 开头——Gate 2 工具化时凭此前缀回溯补录。
 - **链式审计日志**：`audit_log` 以 SHA256 hash 链记录一切写操作（读不记）。**业务写与审计追加同一事务**，统一走 `api/queries/tx.ts` 的 `runTx` + `api/queries/audit.ts` 的 `appendAudit`（事务回调内 await 调用）；**铁律：事务 body 内禁止任何真实 I/O 的 await**（sqlite 手写 BEGIN IMMEDIATE 包裹 async body，better-sqlite3 驱动事务回调必须同步，传 async 会在首个 await 提前 COMMIT）；**序列化格式锁定**（`serializeAudit`），改格式 = 旧链全量失效，必须同步改锁定单测；自由文本以 `'(text)'` 占位进链。actor 是软身份（页头「我是谁」单选），缺省 `'(unknown)'`。
 - **昨日天气**：建议装载上限 = 上一班 done 件的点数合计（件点数 = 各负责人点数之和），无历史班返回 null，只提示不拦截。
 - **徽章**：🚚 整班准点、📦 送达连击，实时推导不落库（`badgesOf` 纯函数）。
-- **口径连续性**：滞留率/完成率/三方占比/通胀沿用 done/carried 定义；记分卡「送达」用签收口径（`isConfirmed`）；昨日天气与徽章用 done 口径——一处函数一个口径，禁止混用。
+- **口径连续性**：滞留率/完成率/来源占比/通胀沿用 done/carried 定义；记分卡「送达」用签收口径（`isConfirmed`）；昨日天气与徽章用 done 口径——一处函数一个口径，禁止混用。**drop 彻底出清（v2.7）**：各统计纯函数（`taskStatsOf`/`requesterStatsOf`/`rarityInflationOf`/`sourceStatsOf`/`badgesOf`）与 `weeklyStats` 内联段（byMember / loadPoints）自行剔除 drop 件——不进任何分母/分子、不挡徽章、不算滞留，仅在表格可见；无 drop 件时全部数值与 v2.6 逐位一致。
 
 ## 技术栈
 
@@ -43,11 +44,11 @@ delivery_van 是一个**周度发车管理工具**：团队每周五发一班"�
 ## 目录结构
 
 ```
-api/          Hono + tRPC 薄后端：boot.ts（入口，含 /mcp 挂载）/ schemas.ts（入参 zod，tRPC 与 MCP 共享）/ vanRouter.ts（转发）/ ensureSchema*.ts（幂等建表）/ queries/（业务与 SQL：van.ts、audit.ts、tx.ts、dialect.ts 方言层）/ mcp/（MCP 适配层：server.ts + caller.ts + tools/）
+api/          Hono + tRPC 薄后端：boot.ts（入口，含 /mcp 挂载）/ schemas.ts（入参 zod，tRPC 与 MCP 共享）/ vanRouter.ts（转发）/ ensureSchema*.ts（幂等建表）/ queries/（业务与 SQL：van.ts、sources.ts、audit.ts、tx.ts、dialect.ts 方言层）/ mcp/（MCP 适配层：server.ts + caller.ts + tools/）
 contracts/    前后端共享：vans.ts（班次编码）、enums.ts（枚举）、points.ts（每人点数与 taskPointsOf）——会被前端打包，勿 import 服务端依赖
 db/           三方言 Drizzle 表定义 schema.ts / schema.pg.ts / schema.mysql.ts + 种子脚本
 src/          React 前端：pages/BoardPage.tsx（看板页）、components/（单元格编辑器 + 统计组件）、lib/、providers/
-e2e/          Playwright E2E（board / bugs / v2 三套 + helpers.ts + pre-test.mjs）
+e2e/          Playwright E2E（board / bugs / v2 / v27 四套 + helpers.ts + pre-test.mjs）
 scripts/      start.mjs：跨平台生产启动
 docs/         文档目录（生命周期见下文「文档组织」）
 dist/         构建产物，勿手改
@@ -110,7 +111,7 @@ npm run db:seed    # 写入示例成员（会先自动建表）；db:seed:demo �
 
 - 三方言一份业务代码：方言差异全部收敛在 `api/queries/dialect.ts`；启动时自动幂等建表（`api/ensureSchema*.ts` 按方言分发），无需手动迁移。
 - **新增列/表必须同步改三份 schema + ensureSchema**：`db/schema.ts` / `schema.pg.ts` / `schema.mysql.ts` 与 `api/ensureSchema.ts`（+ `.pg/.mysql` 建表 SQL），防漂移单测 `api/schemaDrift.test.ts` 兜底；sqlite 旧库补列用 `try ALTER TABLE ... catch 忽略` 的幂等模式。
-- 无法幂等的值域迁移（仅 sqlite 有历史库）用 `PRAGMA user_version` 门控只执行一次；pg/mysql 对应 `_dv_meta` 版本表。**现有门控**：`1` = 半天点数制（旧三档 ×2）、`2` = 存量 done 回填签收、`3` = v2.5 把旧件级档位按均分回填到各负责人（`splitLegacyPoints`，余数按名字拼音序）、`4` = v2.6 把存量 done 件的件级完成/签收日期复制给每个负责人行（`backfillOwnerDelivery`，历史件视为整件一起交）——下一个新迁移从 `5` 起。
+- `sources` 表（v2.7）建表 + 内置三项种子全幂等（`INSERT OR IGNORE` / `ON CONFLICT DO NOTHING` / `INSERT IGNORE`，按 code 主键去重，改过内置显示名的库重启不回写），无迁移门控。无法幂等的值域迁移（仅 sqlite 有历史库）用 `PRAGMA user_version` 门控只执行一次；pg/mysql 对应 `_dv_meta` 版本表。**现有门控**：`1` = 半天点数制（旧三档 ×2）、`2` = 存量 done 回填签收、`3` = v2.5 把旧件级档位按均分回填到各负责人（`splitLegacyPoints`，余数按名字拼音序）、`4` = v2.6 把存量 done 件的件级完成/签收日期复制给每个负责人行（`backfillOwnerDelivery`，历史件视为整件一起交）——下一个新迁移从 `5` 起。
 - drizzle-kit 脚本（`db:generate/migrate/push`）存在但不是主流程，`drizzle.config.ts` 只覆盖 sqlite 方言。
 
 ## 部署

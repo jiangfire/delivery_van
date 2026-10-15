@@ -11,7 +11,7 @@
  */
 import { z } from "zod";
 import { VAN_CODE_RE } from "../contracts/vans";
-import { CARRY_REASONS, SOURCES } from "../contracts/enums";
+import { CARRY_REASONS } from "../contracts/enums";
 import { OWNER_POINTS_MAX } from "../contracts/points";
 import { RARITIES } from "../db/schema";
 
@@ -25,8 +25,19 @@ export const vanCode = z
 export const ownerPointsField = z.number().int().min(0).max(OWNER_POINTS_MAX);
 export const idField = z.number().int().positive();
 export const rarity = z.enum(RARITIES);
-/** 快件来源（三方占比口径，v2.0） */
-export const sourceField = z.enum(SOURCES);
+/**
+ * 快件来源（需求类型，v2.7 动态化）：zod 只管形状（trim 后 1~16 字符，与 mysql
+ * source 列宽对齐），「必须命中 sources 表」的值域校验在数据层（ensureSourceExists）。
+ */
+export const sourceField = z
+  .string()
+  .trim()
+  .min(1)
+  .max(16)
+  .refine(
+    (v) => !v.startsWith("＋"),
+    "显示名不能以「＋」开头（与下拉新增入口冲突）",
+  );
 /** 结转原因五枚举（v2.0 WP5；swap 让位原因 Phase 2 另加） */
 export const carryReasonField = z.enum(CARRY_REASONS);
 /** 操作人标签（软身份，缺省 '(unknown)'，链式审计日志用） */
@@ -131,7 +142,8 @@ export const taskUpdateInput = z.object({
   requester: requesterField.nullable().optional(),
   owners: ownerAllocList.optional(),
   acceptance: z.string().max(255).nullable().optional(),
-  status: z.enum(["todo", "doing", "done"]).optional(),
+  /** 五态的手动可选项：carried 仅由结转写入不入参；done→drop 由数据层守卫拒绝 */
+  status: z.enum(["todo", "doing", "done", "drop"]).optional(),
   doneAt: doneAtField.nullable().optional(),
   note: z.string().max(255).nullable().optional(),
   source: sourceField.optional(),
@@ -171,5 +183,26 @@ export const carryRunInput = z.object({
   fromVan: vanCode,
   toVan: vanCode,
   carryReason: carryReasonField.optional(),
+  actor: actorField,
+});
+
+/* ── 需求类型管理（v2.7 动态化）：code 即 tasks.source 存储值 ── */
+
+/** 新增：入参是显示名，code == 显示名（此后 code 永不变） */
+export const sourceAddInput = z.object({
+  label: sourceField,
+  actor: actorField,
+});
+
+/** 改名：只改显示名，历史数据零迁移（内置三项同样可改） */
+export const sourceRenameInput = z.object({
+  code: sourceField,
+  label: sourceField,
+  actor: actorField,
+});
+
+/** 删除（有守卫的硬删）：内置不可删、有引用不可删 */
+export const sourceRemoveInput = z.object({
+  code: sourceField,
   actor: actorField,
 });

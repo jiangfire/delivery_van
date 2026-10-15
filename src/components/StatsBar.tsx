@@ -1,9 +1,10 @@
-import { SOURCE_LABELS } from "@contracts/enums";
-import { SOURCE_COLOR } from "@/lib/display";
+import { buildSourceStyle } from "@/lib/sources";
 import type { VanStats } from "@/lib/trpc";
+import { trpc } from "@/lib/trpc";
 
 /* ── 统计条（看板表头下的核心指标一览）：
- * 基础四项 + 未签收/昨日天气（v2）+ 三方占比迷你条 + 徽章角标 + 日志指纹 + 快捷操作 ── */
+ * 基础四项 + 未签收/昨日天气（v2）+ 来源占比迷你条（v2.7 动态类型）+ 徽章角标
+ * + 日志指纹 + 快捷操作。放弃（drop）的件已由服务端从全部口径出清，此处数字即净额 ── */
 
 export function StatsBar({
   stats,
@@ -26,6 +27,9 @@ export function StatsBar({
 }) {
   const badges = stats?.badges;
   const sourceTotal = stats?.source.reduce((s, x) => s + x.total, 0) ?? 0;
+  // 需求类型动态列表（v2.7）：迷你条标签与配色按列表序（BoardPage 同源缓存）
+  const sourcesQ = trpc.van.sources.list.useQuery();
+  const style = buildSourceStyle(sourcesQ.data ?? []);
 
   return (
     <div className="glass-card mb-6 flex flex-wrap items-center gap-8 px-6 py-5">
@@ -62,9 +66,9 @@ export function StatsBar({
       {stats?.suggestedLoad != null && (
         <Stat label="建议装载上限" value={`${stats.suggestedLoad} 点`} />
       )}
-      {/* 三方占比迷你条（WP1）：一眼看快件结构 */}
+      {/* 来源占比迷你条（WP1，v2.7 动态类型）：一眼看快件结构 */}
       <div>
-        <div className="label-caps">三方占比</div>
+        <div className="label-caps">来源占比</div>
         {sourceTotal > 0 ? (
           <div className="mt-1.5">
             <div className="flex h-2 w-44 overflow-hidden rounded-full border border-white/60">
@@ -73,19 +77,20 @@ export function StatsBar({
                 .map((s) => (
                   <span
                     key={s.source}
-                    title={`${SOURCE_LABELS[s.source]} ${s.total} 件`}
+                    title={`${style.label(s.source)} ${s.total} 件`}
                     style={{
                       width: `${(s.total / sourceTotal) * 100}%`,
-                      background: SOURCE_COLOR[s.source],
+                      background: style.color(s.source),
                     }}
                   />
                 ))}
             </div>
             <div className="mt-1 text-xs text-muted-foreground">
               {stats!.source
+                .filter((s) => s.total > 0)
                 .map(
                   (s) =>
-                    `${SOURCE_LABELS[s.source]} ${Math.round((s.total / sourceTotal) * 100)}%`,
+                    `${style.label(s.source)} ${Math.round((s.total / sourceTotal) * 100)}%`,
                 )
                 .join(" · ")}
             </div>

@@ -156,6 +156,7 @@ describe("写工具入参纪律", () => {
     expect(destructive.sort()).toEqual([
       "carry_run",
       "members_remove",
+      "sources_remove",
       "tasks_remove",
     ]);
   });

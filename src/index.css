@@ -316,6 +316,12 @@ body {
   color: var(--train-amber);
   border: 1px solid rgba(217, 119, 6, 0.25);
 }
+/* 放弃（v2.7）：已出清，淡玫红示「弃置」，不与滞留琥珀混淆 */
+.status-drop {
+  background: rgba(244, 63, 94, 0.08);
+  color: #e11d48;
+  border: 1px solid rgba(244, 63, 94, 0.22);
+}
 
 /* ── 滞留标签 ── */
 .carry-badge {

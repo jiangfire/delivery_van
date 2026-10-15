@@ -1,14 +1,11 @@
 import { useState } from "react";
-import {
-  CARRY_REASON_LABELS,
-  SOURCE_LABELS,
-  type CarryReason,
-} from "@contracts/enums";
-import { RARITY_CLASS, SOURCE_COLOR, fmtRate } from "@/lib/display";
-import type { VanStats } from "@/lib/trpc";
+import { CARRY_REASON_LABELS, type CarryReason } from "@contracts/enums";
+import { RARITY_CLASS, fmtRate } from "@/lib/display";
+import { buildSourceStyle } from "@/lib/sources";
+import { trpc, type VanStats } from "@/lib/trpc";
 
 /* ── 统一统计面板：同一批快件按维度切片（measure × slice）——
- * 负责人（默认，日常看运力）/ 提出人记分卡 / 稀有度通胀 / 滞留原因瀑布 / 三方来源明细。
+ * 负责人（默认，日常看运力）/ 提出人记分卡 / 稀有度通胀 / 滞留原因瀑布 / 来源明细。
  * 行式统一骨架：维度值 + 主条形 + 数字组；复盘维度收进页签，默认不主动展示
  * （v2.0 隐形预算：统计不占主界面、不制造日常 KPI 压力）。各视图标题常驻、
  * 空态放标题下（空班也知道这一页在看什么）。设计见 docs/archived/统计面板统一设计方案.md ── */
@@ -26,10 +23,13 @@ const TABS: { key: Dimension; label: string }[] = [
 export function StatsPanel({
   stats,
   onRemoveMember,
+  onManageSources,
 }: {
   stats: VanStats | undefined;
   /** 负责人视图行内「删除成员」入口（确认弹窗与守卫提示逻辑留在 BoardPage） */
   onRemoveMember: (name: string) => void;
+  /** 来源页签「管理类型」入口（弹层在 BoardPage） */
+  onManageSources: () => void;
 }) {
   const [dim, setDim] = useState<Dimension>("owner");
 
@@ -56,16 +56,22 @@ export function StatsPanel({
       {dim === "requester" && <RequesterView stats={stats} />}
       {dim === "rarity" && <RarityView stats={stats} />}
       {dim === "carryReason" && <CarryReasonView stats={stats} />}
-      {dim === "source" && <SourceView stats={stats} />}
+      {dim === "source" && (
+        <SourceView stats={stats} onManageSources={onManageSources} />
+      )}
       <p className="mt-4 text-xs text-muted-foreground">
-        口径说明：三方占比与来源自 v2.0 起采集，历史快件统一记为客户件；
-        记分卡「送达」为签收口径，滞留率/完成率仍为 v1 口径（基线连续）。 点数自
-        v2.5 起归属到人（任务点数 = 各负责人点数之和，未指派的件不计点数）；
+        口径说明：来源自 v2.0 起采集，历史快件统一记为客户件；v2.7
+        起类型可自定义增改（改名只改显示名，历史零迁移）。
+        记分卡「送达」为签收口径， 滞留率/完成率仍为 v1 口径（基线连续）。
+        点数自 v2.5 起归属到人（任务点数 =
+        各负责人点数之和，未指派的件不计点数）；
         历史快件按旧档位均分回填，因此历史周的个人点数与改造前不可比。
         <br />自 v2.6 起完成与签收拆到人：
         <strong>部分完成的份额不计入任何送达口径</strong>
         ——完成率/滞留率/昨日天气/徽章仍按件（整件 status=done 才算），
         个人「已交付 x/y 点」只是留痕，不代表本周送达。
+        <br />自 v2.7 起<strong>放弃（drop）的件彻底出清</strong>
+        ：不进任何统计的分母/分子，结转不带走，仅在表格中可见。
       </p>
     </section>
   );
@@ -289,15 +295,33 @@ function CarryReasonView({ stats }: { stats: VanStats | undefined }) {
   );
 }
 
-/** 三方来源明细（StatsBar 速览迷你条的同口径展开） */
-function SourceView({ stats }: { stats: VanStats | undefined }) {
+/** 来源明细（StatsBar 速览迷你条的同口径展开；v2.7 动态类型 + 管理入口） */
+function SourceView({
+  stats,
+  onManageSources,
+}: {
+  stats: VanStats | undefined;
+  onManageSources: () => void;
+}) {
   const rows = stats?.source ?? [];
   const total = rows.reduce((s, x) => s + x.total, 0);
+  // 需求类型动态列表（v2.7）：标签与配色按列表序（BoardPage / StatsBar 同源缓存）
+  const sourcesQ = trpc.van.sources.list.useQuery();
+  const style = buildSourceStyle(sourcesQ.data ?? []);
   return (
     <div>
-      <h3 className="mb-2 text-xs font-bold text-muted-foreground">
-        三方占比（统计条迷你条的同口径明细）
-      </h3>
+      <div className="mb-2 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <h3 className="text-xs font-bold text-muted-foreground">
+          来源占比（统计条迷你条的同口径明细）
+        </h3>
+        <button
+          className="btn btn-glass px-2 py-0.5 text-xs"
+          title="新增/改名/删除需求类型（内置类型不可删）"
+          onClick={onManageSources}
+        >
+          管理类型
+        </button>
+      </div>
       {total === 0 ? (
         <p className="text-xs text-muted-foreground">本班暂无快件</p>
       ) : (
@@ -307,11 +331,13 @@ function SourceView({ stats }: { stats: VanStats | undefined }) {
               <span className="flex w-24 shrink-0 items-center gap-1.5 font-semibold">
                 <span
                   className="inline-block h-2 w-2 rounded-full"
-                  style={{ background: SOURCE_COLOR[s.source] }}
+                  style={{ background: style.color(s.source) }}
                 />
-                {SOURCE_LABELS[s.source]}
+                <span className="truncate" title={style.label(s.source)}>
+                  {style.label(s.source)}
+                </span>
               </span>
-              <Bar ratio={s.total / total} color={SOURCE_COLOR[s.source]} />
+              <Bar ratio={s.total / total} color={style.color(s.source)} />
               <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                 {s.total} 件 · {Math.round((s.total / total) * 100)}%
               </span>

@@ -8,7 +8,7 @@ import {
   trpcCall,
 } from "./helpers";
 
-/* ── v2.0 Phase 1 动线：签收制 / 结转原因 / 审计指纹 / 昨日天气 / 三方占比 / 徽章 ──
+/* ── v2.0 Phase 1 动线：签收制 / 结转原因 / 审计指纹 / 昨日天气 / 来源占比 / 徽章 ──
  * 测试库由 global-setup 整轮清空一次，班次跨用例累积；
  * 每个用例从「发新车」拿独立班次，不依赖执行顺序。
  */
@@ -148,7 +148,7 @@ test.describe("v2 签收与博弈机制", () => {
     expect(clipped).toMatch(/^[0-9a-f]{8}$/);
   });
 
-  test("昨日天气与三方占比：建议装载上限取上一班送达点数，source 可编辑", async ({
+  test("昨日天气与来源占比：建议装载上限取上一班送达点数，source 可编辑", async ({
     page,
   }) => {
     // 上一班：完成一件 5 点（v2.5：点数记在负责人各自那份上）
@@ -167,7 +167,7 @@ test.describe("v2 签收与博弈机制", () => {
     });
     await expect(page.getByText("5 点", { exact: true })).toBeVisible();
 
-    // 来源列：编辑为探索件 → 三方占比迷你条显示探索
+    // 来源列：编辑为探索件 → 来源占比迷你条显示探索
     await addTaskAndWait(page);
     await selectEditorOption(page, "_source", "探索");
     await expect(dataCell(page, "_source")).toHaveText("探索", {
@@ -192,7 +192,7 @@ test.describe("v2 签收与博弈机制", () => {
     // 来源页签：统计条迷你条的同口径明细（本班 1 件探索件 = 100%）
     await page.getByRole("button", { name: "来源", exact: true }).click();
     await expect(
-      page.getByText("三方占比（统计条迷你条的同口径明细）"),
+      page.getByText("来源占比（统计条迷你条的同口径明细）"),
     ).toBeVisible();
     await expect(page.getByText("1 件 · 100%")).toBeVisible();
   });

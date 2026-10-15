@@ -88,16 +88,25 @@ describe("taskAddInput.owners（一个需求多个负责人时各自设置点数
   });
 });
 
-describe("sourceField（三方占比枚举）", () => {
-  it("接受 customer / platform / exploration", () => {
-    for (const s of ["customer", "platform", "exploration"]) {
+describe("sourceField（需求类型，v2.7 动态化）", () => {
+  it("接受内置三项与自定义类型（zod 只管形状，值域在数据层查 sources 表）", () => {
+    for (const s of ["customer", "platform", "exploration", "运营", "技术债"]) {
       expect(sourceField.safeParse(s).success).toBe(true);
     }
   });
 
-  it("拒绝任意字符串与空值（默认值在数据层兜底）", () => {
-    expect(sourceField.safeParse("顾客").success).toBe(false);
+  it("拒绝空值、超长与首尾空白（16 字符与 mysql source 列宽对齐）", () => {
     expect(sourceField.safeParse("").success).toBe(false);
+    expect(sourceField.safeParse("  ").success).toBe(false);
+    expect(
+      sourceField.safeParse("十七字十七字十七字十七字十七字十七字17").success,
+    ).toBe(false);
+  });
+
+  it("拒绝「＋」开头（与来源下拉的新增哨兵项冲突）", () => {
+    expect(sourceField.safeParse("＋ 新增类型…").success).toBe(false);
+    expect(sourceField.safeParse("＋运营").success).toBe(false);
+    expect(sourceField.safeParse("运营＋").success).toBe(true);
   });
 });
 

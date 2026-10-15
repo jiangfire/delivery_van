@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
-import { CARRY_REASONS, SOURCES } from "../contracts/enums";
+import { CARRY_REASONS } from "../contracts/enums";
 
 /** 团队成员 */
 export const members = sqliteTable("members", {
@@ -69,8 +69,10 @@ export const tasks = sqliteTable(
     size: integer("size"),
     /** 验收标准：周五凭什么说它做完了 */
     acceptance: text("acceptance"),
-    /** 四态：未开始 / 进行中 / 完成 / 结转（结转由「滞留件转下一班」自动标记） */
-    status: text("status", { enum: ["todo", "doing", "done", "carried"] })
+    /** 五态：未开始 / 进行中 / 完成 / 结转 / 放弃（结转由「滞留件转下一班」自动标记；放弃手动双向，v2.7） */
+    status: text("status", {
+      enum: ["todo", "doing", "done", "carried", "drop"],
+    })
       .notNull()
       .default("todo"),
     /** 结转自哪个车次 */
@@ -82,8 +84,8 @@ export const tasks = sqliteTable(
     note: text("note"),
     /** 班次内手动排序序号（拖拽排序），班次内按 sort_order ASC, id ASC 展示 */
     sortOrder: integer("sort_order"),
-    /** 快件来源（三方占比口径）：v2.0 起采集，存量统一回填 customer */
-    source: text("source", { enum: SOURCES }).notNull().default("customer"),
+    /** 快件来源（需求类型）：存 sources 表的 code（v2.7 起动态可管理，值域不再收窄） */
+    source: text("source").notNull().default("customer"),
     /** 结转原因（五枚举，可空 = 未分类），swap 让位原因 Phase 2 另加 */
     carryReason: text("carry_reason", { enum: CARRY_REASONS }),
     /** 签收人（WP3 签收制：done 后由提出人签收；无提出人的自驱件不落库视同签收） */
@@ -123,6 +125,22 @@ export const taskOwners = sqliteTable("task_owners", {
 });
 
 /**
+ * 需求类型（快件来源，v2.7 动态化）：code 即 `tasks.source` 的存储值（自定义类型
+ * 创建时 code == 显示名，此后 code 永不变、改名只动 label——历史数据零迁移）。
+ * 内置三项 customer/platform/exploration 由 ensureSchema 幂等种子（built_in=1 不可删）。
+ */
+export const sources = sqliteTable("sources", {
+  code: text("code").primaryKey(),
+  /** 显示名（可改），全表唯一（前端下拉以 label 交互、反查回 code） */
+  label: text("label").notNull().unique(),
+  /** 内置标记：内置三项不可删（历史数据与默认值依赖），可改名 */
+  builtIn: integer("built_in").notNull().default(0),
+  createdAt: integer("created_at", { mode: "timestamp" })
+    .notNull()
+    .default(sql`(unixepoch())`),
+});
+
+/**
  * 链式审计日志（WP2）：hash 链记录一切写操作。
  * hash = SHA256(prev_hash ‖ 本行内容序列化)，序列化格式锁定在 queries/audit.ts。
  * ts 为 Unix 秒原始整数（不经过 timestamp 模式），保证入链字节确定。
@@ -146,6 +164,7 @@ export const auditLog = sqliteTable("audit_log", {
 export type Member = typeof members.$inferSelect;
 export type Van = typeof vans.$inferSelect;
 export type PoolItem = typeof poolItems.$inferSelect;
+export type SourceRow = typeof sources.$inferSelect;
 export type Task = typeof tasks.$inferSelect;
 export type TaskOwner = typeof taskOwners.$inferSelect;
 export type AuditLogRow = typeof auditLog.$inferSelect;
